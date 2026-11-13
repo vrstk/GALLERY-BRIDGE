@@ -1,6 +1,8 @@
 package com.gallerybridge.app.network
 
 import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import com.gallerybridge.app.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -136,6 +138,42 @@ object Services {
         }
     }
 
+
+    // Android system picker: user-granted directory tree, optionally from a cloud DocumentsProvider.
+    private fun documentTreeFolder(context: Context, rootUri: String, path: List<String>): DocumentFile {
+        val tree = Uri.parse(rootUri)
+        require(tree.scheme == "content") { "Сначала выбери папку через системный проводник Android" }
+        var current = DocumentFile.fromTreeUri(context, tree)
+            ?: error("Выбранная папка Android недоступна")
+        require(current.isDirectory && current.canWrite()) { "Нет разрешения на запись в выбранную папку" }
+        for (segment in path) {
+            val name = Paths.clean(segment)
+            val existing = current.findFile(name)
+            current = if (existing == null) {
+                current.createDirectory(name) ?: error("Не удалось создать папку $name")
+            } else {
+                require(existing.isDirectory) { "$name существует, но это не папка" }
+                existing
+            }
+        }
+        return current
+    }
+
+    private fun documentTreeUpload(context: Context, folder: DocumentFile, name: String, file: File, mime: String): Boolean {
+        val safeName = Paths.clean(name)
+        if (folder.findFile(safeName) != null) return false
+        val created = folder.createFile(mime, safeName) ?: error("Не удалось создать файл $safeName")
+        try {
+            val stream = context.contentResolver.openOutputStream(created.uri, "w")
+                ?: error("Нет возможности записать $safeName")
+            stream.use { output -> file.inputStream().use { input -> input.copyTo(output) } }
+        } catch (e: Exception) {
+            try { created.delete() } catch (_: Exception) {}
+            throw e
+        }
+        return true
+    }
+
     private fun driveRequest(token: String, body: RequestBody, url: String): Request = Request.Builder().url(url).header("Authorization", "Bearer $token").post(body).build()
     private fun driveFolders(token: String, root: String, path: List<String>): String {
         var parent = root
@@ -203,7 +241,9 @@ object Services {
         val failures = mutableListOf<String>()
         val readyMailFolders = mutableSetOf<Kind>()
         val driveFoldersByKind = mutableMapOf<Kind, String>()
+        val documentFoldersByKind = mutableMapOf<Kind, DocumentFile>()
         val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
+        require(target in setOf("Mail WebDAV", "Google Drive", "Папка Android")) { "Неизвестное облако" }
 
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()
@@ -243,6 +283,28 @@ object Services {
                         consecutiveNetworkFailures = 0
                     } finally {
                         local.delete()
+                    }
+                } else if (target == "Папка Android") {
+                    val destFolder = documentFoldersByKind.getOrPut(item.kind) {
+                        documentTreeFolder(context, root, folders)
+                    }
+                    if (destFolder.findFile(Paths.clean(item.name)) != null) {
+                        skipped++
+                        onItemResult(item, "SKIPPED")
+                    } else {
+                        val (local, mime) = download(context, item)
+                        try {
+                            coroutineContext.ensureActive()
+                            if (documentTreeUpload(context, destFolder, item.name, local, mime)) {
+                                uploaded++
+                                onItemResult(item, "DONE")
+                            } else {
+                                skipped++
+                                onItemResult(item, "SKIPPED")
+                            }
+                        } finally {
+                            local.delete()
+                        }
                     }
                 } else {
                     val folderId = driveFoldersByKind.getOrPut(item.kind) {

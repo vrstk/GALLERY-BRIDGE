@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,6 +43,8 @@ class MainActivity : ComponentActivity() {
     private var email by mutableStateOf("")
     private var password by mutableStateOf("")
     private var driveId by mutableStateOf("1vWsFWxllS6aOh6a0iD58w30moPHiDP4T")
+    private var treeUri by mutableStateOf("")
+    private var treeName by mutableStateOf("Папка не выбрана")
     private var mailRoot by mutableStateOf("Models")
     private var target by mutableStateOf("Mail WebDAV")
     private var dark by mutableStateOf(false)
@@ -60,6 +64,26 @@ class MainActivity : ComponentActivity() {
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
     private var screen by mutableIntStateOf(0)
     private var queueFilter by mutableStateOf("ALL")
+
+    private val treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                val dir = DocumentFile.fromTreeUri(this, uri)
+                require(dir != null && dir.canWrite()) { "Папка не разрешает запись" }
+                treeUri = uri.toString()
+                treeName = dir.name ?: "Выбранная папка"
+                getSharedPreferences("settings", MODE_PRIVATE).edit().putString("treeUri", treeUri).apply()
+                status = "Выбрана папка: $treeName"
+            } catch (e: Exception) {
+                treeUri = ""
+                treeName = "Нет доступа"
+                status = "Ошибка выбора папки: ${e.message}"
+            }
+        }
+    }
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Notification permission is optional for running a dataSync foreground service.
@@ -83,6 +107,12 @@ class MainActivity : ComponentActivity() {
             rememberMailPassword = true
         }
         driveId = p.getString("driveId", driveId) ?: driveId
+        treeUri = p.getString("treeUri", "") ?: ""
+        if (treeUri.isNotBlank()) {
+            try {
+                treeName = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))?.name ?: "Сохранённая папка"
+            } catch (_: Exception) { treeName = "Папка недоступна" }
+        }
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
         savedQueue = QueueStore.load(this)
@@ -129,7 +159,7 @@ class MainActivity : ComponentActivity() {
             val chosen = items.filter { it.url in selected }
             TransferService.begin(
                 this, chosen, model, title, date, target, email, password,
-                if (target == "Google Drive") driveId else mailRoot, token
+                if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token
             )
             savedQueue = QueueStore.load(this)
             transferRunning = true
@@ -144,6 +174,9 @@ class MainActivity : ComponentActivity() {
     private fun beginResumeTransfer(token: String?) {
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
+            if (queue.target == "Папка Android") {
+                require(queue.root.isNotBlank()) { "Выбранная папка Android отсутствует" }
+            }
             if (queue.target == "Mail WebDAV") {
                 if (email.isBlank() || password.isBlank()) {
                     error("Укажи почту и пароль приложения Mail для возобновления")
@@ -166,7 +199,7 @@ class MainActivity : ComponentActivity() {
     private fun resumeUpload() {
         val queue = QueueStore.load(this) ?: run { status = "Нет сохранённой очереди"; return }
         if (transferRunning || working || queue.remaining == 0) return
-        if (queue.target == "Mail WebDAV") {
+        if (queue.target != "Google Drive") {
             uploadResume(null)
         } else {
             resumeRequest = true
@@ -190,6 +223,10 @@ class MainActivity : ComponentActivity() {
         if (model.isBlank() || title.isBlank()) { status = "Укажите имя модели и название публикации перед загрузкой"; return }
         if (target == "Mail WebDAV") {
             if (email.isBlank() || password.isBlank()) { status = "Укажите почту и пароль приложения Mail"; return }
+            upload(null); return
+        }
+        if (target == "Папка Android") {
+            if (treeUri.isBlank()) { status = "Сначала выбери папку назначения"; return }
             upload(null); return
         }
         beginGoogleAuthorization()
@@ -318,7 +355,8 @@ class MainActivity : ComponentActivity() {
             }}
             Row { FilterChip(target=="Mail WebDAV", onClick={target="Mail WebDAV"}, label={Text("Mail WebDAV")})
                 Spacer(Modifier.width(8.dp))
-                FilterChip(target=="Google Drive", onClick={target="Google Drive"}, label={Text("Google Drive")}) }
+                FilterChip(target=="Google Drive", onClick={target="Google Drive"}, label={Text("Google Drive API")}) }
+            FilterChip(target=="Папка Android", onClick={target="Папка Android"}, label={Text("Папка устройства / облака")})
             if (target=="Mail WebDAV") {
                 OutlinedTextField(email,{ newEmail ->
                     if (newEmail != email) {
@@ -343,9 +381,15 @@ class MainActivity : ComponentActivity() {
                 }
                 Text("Пароль шифруется Android Keystore и не загружается в GitHub. Чтобы сохранить его, нажми «Сохранить настройки».", style=MaterialTheme.typography.bodySmall)
                 OutlinedTextField(mailRoot,{mailRoot=it},label={Text("Путь в Облаке Mail")},modifier=Modifier.fillMaxWidth(),supportingText={ Text("Папки разделяются /, например Images/xxx/") })
-            } else {
+            } else if (target == "Google Drive") {
                 OutlinedTextField(driveId,{driveId=it},label={Text("ID папки Google Drive")},modifier=Modifier.fillMaxWidth())
-                Text("Для Google OAuth необходимы Google Cloud Drive API, Android package name и SHA-1 подписи APK.", style=MaterialTheme.typography.bodySmall)
+                Text("Google Drive API требует OAuth-клиент для package com.gallerybridge.app и SHA-1 подписи APK.", style=MaterialTheme.typography.bodySmall)
+            } else {
+                Text("Папка: $treeName", style=MaterialTheme.typography.bodyMedium)
+                OutlinedButton(onClick={ treePicker.launch(null) }, modifier=Modifier.fillMaxWidth()) {
+                    Text("Выбрать папку в Android")
+                }
+                Text("Можно выбрать локальную папку или совместимое облако. Google Drive может не предоставлять выбор каталога через Android — это зависит от его приложения.", style=MaterialTheme.typography.bodySmall)
             }
             OutlinedButton(onClick={
                 getSharedPreferences("settings", MODE_PRIVATE).edit().putString("model",model).putString("email",email).putString("driveId",driveId).putString("mailRoot",mailRoot).putBoolean("dark",dark).apply()
@@ -362,7 +406,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.8 • Понятный общий прогресс по всей галерее и удобная очередь. Одно активное задание.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.9 • Загрузка в выбранную папку Android или совместимого облака. Google Drive API по-прежнему требует OAuth.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }

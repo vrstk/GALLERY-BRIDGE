@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.8.0"
+        versionCode = 9
+        versionName = "0.9.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -30,6 +30,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jsoup:jsoup:1.21.2")
+    implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.android.gms:play-services-auth:21.6.0")
     testImplementation("junit:junit:4.13.2")
 }
