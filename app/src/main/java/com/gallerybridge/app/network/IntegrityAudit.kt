@@ -121,7 +121,7 @@ object IntegrityAudit {
         }
     }
 
-    private fun dimensions(context: Context, uri: Uri): String {
+    private fun imageDimensions(context: Context, uri: Uri): String {
         return try {
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri)?.use {
@@ -161,7 +161,7 @@ object IntegrityAudit {
                 if (src == dest) {
                     matched++
                     if (item.kind == Kind.PHOTO && dimensions.size < 6) {
-                        val size = dimensions(context, uri)
+                        val size = imageDimensions(context, uri)
                         if (size.isNotBlank()) dimensions.add(item.name + ": " + size)
                     }
                 } else {
