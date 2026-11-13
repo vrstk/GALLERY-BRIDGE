@@ -14,10 +14,52 @@ import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.UUID
 
 object Services {
     private val http = OkHttpClient.Builder().followRedirects(true).build()
+
+    // Повторяем только временные сетевые ошибки и перегрузку сервера.
+    // Ограниченный backoff: не зацикливаемся при недоступности DNS.
+    private fun isTemporaryNetworkFailure(e: Throwable): Boolean =
+        generateSequence(e) { it.cause }.any {
+            it is UnknownHostException || it is SocketTimeoutException || it is ConnectException
+        }
+
+    private fun mailCall(request: Request): Response {
+        for (attempt in 0..2) {
+            try {
+                val response = http.newCall(request).execute()
+                if (response.code !in setOf(429, 500, 502, 503, 504) || attempt == 2) {
+                    return response
+                }
+                response.close()
+            } catch (e: IOException) {
+                if (attempt == 2 || !isTemporaryNetworkFailure(e)) throw e
+            }
+            Thread.sleep(if (attempt == 0) 1500L else 3500L)
+        }
+        error("Нет ответа от Mail WebDAV")
+    }
+
+    private fun mailUrl(path: List<String>): HttpUrl =
+        path.fold("https://webdav.cloud.mail.ru/".toHttpUrl()) { url, segment ->
+            url.newBuilder().addPathSegment(Paths.clean(segment)).build()
+        }
+
+    private fun mailExists(url: HttpUrl, auth: String): Boolean =
+        mailCall(Request.Builder().url(url).header("Authorization", auth)
+            .header("Depth", "0").method("PROPFIND", null).build()).use { r ->
+            when (r.code) {
+                200, 207 -> true
+                404 -> false
+                else -> error("Mail WebDAV PROPFIND: HTTP ${r.code}")
+            }
+        }
     private val ext = Regex("\\.(jpe?g|png|webp|gif|avif|bmp|mp4|m4v|mov|webm)$", RegexOption.IGNORE_CASE)
     private fun kind(path: String) = if (Regex("\\.(mp4|m4v|mov|webm)$", RegexOption.IGNORE_CASE).containsMatchIn(path)) Kind.VIDEO else Kind.PHOTO
     private fun request(url: String) = Request.Builder().url(url).header("User-Agent", "GalleryBridge/0.1").build()
@@ -78,12 +120,12 @@ object Services {
         for (segment in path) {
             current = current.toHttpUrl().newBuilder().addPathSegment(Paths.clean(segment)).build().toString()
             val check = Request.Builder().url(current).header("Authorization", auth).header("Depth", "0").method("PROPFIND", null).build()
-            val exists = http.newCall(check).execute().use { r ->
+            val exists = mailCall(check).use { r ->
                 when (r.code) { 200, 207 -> true; 404 -> false; else -> error("WebDAV проверка HTTP ${r.code}") }
             }
             if (!exists) {
                 val mkcol = Request.Builder().url(current).header("Authorization", auth).method("MKCOL", null).build()
-                http.newCall(mkcol).execute().use { r -> if (r.code !in listOf(200, 201, 204, 405)) error("WebDAV папка HTTP ${r.code}") }
+                mailCall(mkcol).use { r -> if (r.code !in listOf(200, 201, 204, 405)) error("WebDAV папка HTTP ${r.code}") }
             }
         }
     }
@@ -132,43 +174,105 @@ object Services {
         return true
     }
 
-    suspend fun transfer(context: Context, media: List<Media>, model: String, title: String, date: String, target: String, username: String, password: String, root: String, token: String?, progress: suspend (String) -> Unit): String = withContext(Dispatchers.IO) {
-        var ok = 0; var skipped = 0; var failed = 0
+    suspend fun transfer(
+        context: Context,
+        media: List<Media>,
+        model: String,
+        title: String,
+        date: String,
+        target: String,
+        username: String,
+        password: String,
+        root: String,
+        token: String?,
+        progress: suspend (String) -> Unit
+    ): String = withContext(Dispatchers.IO) {
+        var uploaded = 0
+        var skipped = 0
+        var failed = 0
+        var attempted = 0
+        var consecutiveNetworkFailures = 0
+        var stoppedReason: String? = null
         val failures = mutableListOf<String>()
+        val readyMailFolders = mutableSetOf<Kind>()
+        val driveFoldersByKind = mutableMapOf<Kind, String>()
+        val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
+
         for ((index, item) in media.withIndex()) {
-            progress("${index+1}/${media.size}: ${item.name}")
+            attempted++
+            progress("${index + 1}/${media.size}: ${item.name}")
             try {
                 val folders = Paths.folders(model, date, title, item.kind)
-                val driveFolder = if (target == "Google Drive") driveFolders(token ?: error("Нет Google OAuth"), root, folders) else ""
-                if (target == "Mail WebDAV") webdavFolders(username, password, Paths.splitRoot(root) + folders)
-                val (file, mime) = download(context, item)
-                try {
-                    val uploaded = if (target == "Google Drive") driveUpload(token!!, driveFolder, Paths.clean(item.name), file, mime) else {
-                        val components = Paths.splitRoot(root) + folders + Paths.clean(item.name)
-                        val url = components.fold("https://webdav.cloud.mail.ru/".toHttpUrl()) { acc, segment -> acc.newBuilder().addPathSegment(Paths.clean(segment)).build() }
-                        val auth = Credentials.basic(username, password)
-                        val check = http.newCall(Request.Builder().url(url).header("Authorization", auth).header("Depth", "0").method("PROPFIND", null).build()).execute().use { r ->
-                            when (r.code) { 200, 207 -> true; 404 -> false; else -> error("WebDAV проверка HTTP ${r.code}") }
-                        }
-                        if (check) false else {
-                            http.newCall(Request.Builder().url(url).header("Authorization", auth).put(file.asRequestBody(mime.toMediaType())).build()).execute().use { r -> if (r.code !in listOf(200,201,204)) error("WebDAV загрузка HTTP ${r.code}") }
-                            true
-                        }
+                if (target == "Mail WebDAV") {
+                    val cloudPath = Paths.splitRoot(root) + folders
+                    // После успеха не проверяем одни и те же папки перед каждым файлом.
+                    if (item.kind !in readyMailFolders) {
+                        webdavFolders(username, password, cloudPath)
+                        readyMailFolders += item.kind
                     }
-                    if (uploaded) ok++ else skipped++
-                } finally { file.delete() }
+                    val destination = mailUrl(cloudPath + Paths.clean(item.name))
+                    // Пропускаем ранее сохранённый файл до повторного скачивания.
+                    if (mailExists(destination, mailAuth)) {
+                        skipped++
+                        consecutiveNetworkFailures = 0
+                        continue
+                    }
+                    val (local, mime) = download(context, item)
+                    try {
+                        mailCall(Request.Builder().url(destination)
+                            .header("Authorization", mailAuth)
+                            .put(local.asRequestBody(mime.toMediaType())).build()).use { response ->
+                            if (response.code !in listOf(200, 201, 204)) {
+                                error("Mail WebDAV PUT: HTTP ${response.code}")
+                            }
+                        }
+                        uploaded++
+                        consecutiveNetworkFailures = 0
+                    } finally {
+                        local.delete()
+                    }
+                } else {
+                    val folderId = driveFoldersByKind.getOrPut(item.kind) {
+                        driveFolders(token ?: error("Нет Google OAuth"), root, folders)
+                    }
+                    val (local, mime) = download(context, item)
+                    try {
+                        if (driveUpload(token ?: error("Нет Google OAuth"), folderId, Paths.clean(item.name), local, mime)) {
+                            uploaded++
+                        } else {
+                            skipped++
+                        }
+                    } finally {
+                        local.delete()
+                    }
+                }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 failed++
-                if (failures.size < 30) failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
+                if (failures.size < 20) {
+                    failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
+                }
+                if (target == "Mail WebDAV" && isTemporaryNetworkFailure(e)) {
+                    consecutiveNetworkFailures++
+                    if (consecutiveNetworkFailures >= 2) {
+                        stoppedReason = "Передача остановлена: нет связи с Mail WebDAV (DNS или сеть). Проверь интернет и повтори позже."
+                        break
+                    }
+                } else {
+                    consecutiveNetworkFailures = 0
+                }
             }
         }
+        val remaining = media.size - attempted
         buildString {
-            append("Загружено: $ok; пропущено: $skipped; ошибок: $failed")
+            append("Загружено: $uploaded; пропущено: $skipped; ошибок: $failed")
+            if (remaining > 0) append("; не обработано: $remaining")
+            if (stoppedReason != null) append("\n").append(stoppedReason)
             if (failures.isNotEmpty()) {
-                append("\\nПричины ошибок (первые ${failures.size}):")
-                failures.forEach { append("\\n• ").append(it) }
-                append("\\nПри повторной попытке уже существующие файлы будут пропущены.")
+                append("\nПричины ошибок:")
+                failures.forEach { append("\n• ").append(it) }
             }
+            append("\nУже существующие файлы пропускаются по имени. Целостность старых файлов ещё не проверяется.")
         }
     }
 }

@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
     private var selected by mutableStateOf<Set<String>>(emptySet())
     private var reveal by mutableStateOf(false)
     private var showOtherMedia by mutableStateOf(false)
+    private var reportDetails by mutableStateOf("")
+    private var showReportDetails by mutableStateOf(false)
 
     private val auth = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         try { val token = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(r.data).accessToken
@@ -59,7 +61,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
     private fun scan() {
         if (working) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); showOtherMedia = false
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
             title = s.title; date = s.date; items = s.media
@@ -69,10 +71,23 @@ class MainActivity : ComponentActivity() {
     }
     private fun upload(token: String?) {
         working = true
+        reportDetails = ""
+        showReportDetails = false
         val chosen = items.filter { it.url in selected }
-        scope.launch { try {
-            status = Services.transfer(applicationContext, chosen, model, title, date, target, email, password, if (target == "Google Drive") driveId else mailRoot, token) { status = it }
-        } catch (e: Exception) { status = "Ошибка: ${e.message}" } finally { working = false } }
+        scope.launch {
+            try {
+                val result = Services.transfer(
+                    applicationContext, chosen, model, title, date, target,
+                    email, password, if (target == "Google Drive") driveId else mailRoot, token
+                ) { status = it }
+                status = result.substringBefore('\n')
+                reportDetails = result.substringAfter('\n', "")
+            } catch (e: Exception) {
+                status = "Ошибка: ${e.message}"
+            } finally {
+                working = false
+            }
+        }
     }
     private fun beginUpload() {
         if (selected.isEmpty()) { status = "Нет выбранных файлов"; return }
@@ -109,6 +124,19 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(url, {url=it}, label={Text("HTTPS-ссылка")}, modifier=Modifier.fillMaxWidth())
             Button(onClick=::scan, enabled=!working && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
             Text(status)
+            if (reportDetails.isNotBlank()) {
+                TextButton(onClick = { showReportDetails = !showReportDetails }) {
+                    Text(if (showReportDetails) "Скрыть подробности" else "Показать подробности и причины ошибок")
+                }
+                if (showReportDetails) {
+                    Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 2.dp) {
+                        Column(Modifier.fillMaxWidth().heightIn(max = 260.dp)
+                            .verticalScroll(rememberScrollState()).padding(12.dp)) {
+                            Text(reportDetails, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
             if (working) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
             OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
@@ -146,7 +174,7 @@ class MainActivity : ComponentActivity() {
                 status="Настройки сохранены (пароль не сохраняется)"
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.2 • Только прямые HTTPS-медиа и статический HTML. Для Google Drive нужен зарегистрированный OAuth-клиент.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.3 • Mail WebDAV: повторные попытки при временных сетевых ошибках. Google Drive требует зарегистрированный OAuth-клиент.",style=MaterialTheme.typography.bodySmall)
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
