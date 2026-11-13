@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private var reveal by mutableStateOf(false)
     private var rememberMailPassword by mutableStateOf(false)
     private var showOtherMedia by mutableStateOf(false)
+    private var mediaPageLimit by mutableIntStateOf(MediaResults.PAGE_SIZE)
+    private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
     private var transferRunning by mutableStateOf(false)
@@ -129,11 +131,17 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
     private fun scan() {
         if (working || transferRunning) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); showOtherMedia = false; reportDetails = ""; showReportDetails = false
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
-            title = s.title; date = s.date; items = s.media
-            selected = QualitySelector.recommended(s.media)
+            val recommended = withContext(Dispatchers.Default) {
+                QualitySelector.recommended(s.media)
+            }
+            title = s.title
+            date = s.date
+            recommendedUrls = recommended
+            selected = recommended
+            items = s.media
             status = "Найдено ${items.size} медиа-ссылок. Рекомендовано ${selected.size} кандидатов по URL и HTML. Это не гарантия оригинального качества."
         } catch (e: Exception) { status = "Ошибка поиска: ${e.message}" } finally { working = false } }
     }
@@ -368,9 +376,11 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
             Text("Найдено: ${items.size}; выбрано: ${selected.size}")
-            val visibleItems = items.filter {
-                showOtherMedia || it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") ||
-                    it.url in QualitySelector.recommended(items)
+            val visibleItems = remember(items, showOtherMedia, recommendedUrls) {
+                MediaResults.visible(items, showOtherMedia, recommendedUrls)
+            }
+            val displayedItems = remember(visibleItems, mediaPageLimit) {
+                MediaResults.page(visibleItems, mediaPageLimit)
             }
             if (items.isNotEmpty()) {
                 Row {
@@ -378,14 +388,14 @@ class MainActivity : ComponentActivity() {
                     TextButton(onClick={selected=emptySet()}) { Text("Снять выделение") }
                 }
                 if (visibleItems.size < items.size || showOtherMedia) {
-                    TextButton(onClick={showOtherMedia=!showOtherMedia}) {
+                    TextButton(onClick={showOtherMedia=!showOtherMedia; mediaPageLimit=MediaResults.PAGE_SIZE}) {
                         Text(if (showOtherMedia) "Скрыть остальные варианты" else "Показать остальные ${items.size-visibleItems.size} ссылок")
                     }
                 }
             }
             if (items.isNotEmpty()) {
                 OutlinedButton(
-                    onClick={selected=QualitySelector.recommended(items)},
+                    onClick={selected=recommendedUrls},
                     modifier=Modifier.fillMaxWidth(),
                     enabled=!working
                 ) { Text("Выбрать лучшие найденные варианты") }
@@ -395,7 +405,15 @@ class MainActivity : ComponentActivity() {
                     style=MaterialTheme.typography.bodySmall
                 )
             }
-            visibleItems.forEach { item -> Row {
+            if (visibleItems.size > displayedItems.size) {
+                Text("Показано ${displayedItems.size} из ${visibleItems.size} ссылок", style=MaterialTheme.typography.bodySmall)
+                OutlinedButton(
+                    onClick={mediaPageLimit = (mediaPageLimit + MediaResults.PAGE_SIZE).coerceAtMost(visibleItems.size)},
+                    modifier=Modifier.fillMaxWidth(),
+                    enabled=!working
+                ) { Text("Показать ещё ${minOf(MediaResults.PAGE_SIZE, visibleItems.size-displayedItems.size)}") }
+            }
+            displayedItems.forEach { item -> Row {
                 Checkbox(item.url in selected, onCheckedChange={v -> selected=if(v) selected+item.url else selected-item.url}, enabled=!working)
                 Column {
                     Text(item.name)
@@ -456,7 +474,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.13 • Умный предварительный выбор вариантов по исходным ссылкам и HTML srcset.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.14 • Оптимизация списка: рекомендации вычисляются один раз, ссылки отображаются порциями.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
