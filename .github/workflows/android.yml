@@ -3,8 +3,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+
 permissions:
-  contents: read
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,9 +25,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - run: gradle --no-daemon testDebugUnitTest assembleDebug
+      - name: Build and test
+        run: gradle --no-daemon testDebugUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: GalleryBridge-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Public repo: publish an APK download that works without an Actions artifact login.
+      # Github Actions artifact links are not consistently downloadable on mobile.
+      - name: Publish public APK in GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$VERSION"
+          TAG="v$VERSION"
+          FILE="GalleryBridge-v$VERSION.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$FILE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --clobber
+          else
+            gh release create "$TAG" "$FILE" \
+              --target "$GITHUB_SHA" \
+              --title "Gallery Bridge $TAG" \
+              --notes "Тестовая Android APK GALLERY BRIDGE $TAG. Скачайте APK в разделе Assets. Сборка с отладочной подписью; для постоянных обновлений нужна стабильная подпись."
+          fi
