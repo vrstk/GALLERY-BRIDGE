@@ -4,6 +4,9 @@ import android.content.Context
 import com.gallerybridge.app.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.CancellationException
+import kotlin.coroutines.coroutineContext
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -22,6 +25,9 @@ import java.util.UUID
 
 object Services {
     private val http = OkHttpClient.Builder().followRedirects(true).build()
+
+    /** Abort already-running OkHttp network calls when the user presses Stop. */
+    fun cancelActiveTransfers() { http.dispatcher.cancelAll() }
 
     // Повторяем только временные сетевые ошибки и перегрузку сервера.
     // Ограниченный backoff: не зацикливаемся при недоступности DNS.
@@ -185,7 +191,8 @@ object Services {
         password: String,
         root: String,
         token: String?,
-        progress: suspend (String) -> Unit
+        progress: suspend (String) -> Unit,
+        onItemResult: suspend (Media, String) -> Unit = { _, _ -> }
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -199,6 +206,7 @@ object Services {
         val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
 
         for ((index, item) in media.withIndex()) {
+            coroutineContext.ensureActive()
             attempted++
             progress("${index + 1}/${media.size}: ${item.name}")
             try {
@@ -213,12 +221,15 @@ object Services {
                     val destination = mailUrl(cloudPath + Paths.clean(item.name))
                     // Пропускаем ранее сохранённый файл до повторного скачивания.
                     if (mailExists(destination, mailAuth)) {
+                        coroutineContext.ensureActive()
                         skipped++
+                        onItemResult(item, "SKIPPED")
                         consecutiveNetworkFailures = 0
                         continue
                     }
                     val (local, mime) = download(context, item)
                     try {
+                        coroutineContext.ensureActive()
                         mailCall(Request.Builder().url(destination)
                             .header("Authorization", mailAuth)
                             .put(local.asRequestBody(mime.toMediaType())).build()).use { response ->
@@ -226,7 +237,9 @@ object Services {
                                 error("Mail WebDAV PUT: HTTP ${response.code}")
                             }
                         }
+                        coroutineContext.ensureActive()
                         uploaded++
+                        onItemResult(item, "DONE")
                         consecutiveNetworkFailures = 0
                     } finally {
                         local.delete()
@@ -237,25 +250,32 @@ object Services {
                     }
                     val (local, mime) = download(context, item)
                     try {
+                        coroutineContext.ensureActive()
                         if (driveUpload(token ?: error("Нет Google OAuth"), folderId, Paths.clean(item.name), local, mime)) {
+                            coroutineContext.ensureActive()
                             uploaded++
+                            onItemResult(item, "DONE")
                         } else {
+                            coroutineContext.ensureActive()
                             skipped++
+                            onItemResult(item, "SKIPPED")
                         }
                     } finally {
                         local.delete()
                     }
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is CancellationException) throw e
+                coroutineContext.ensureActive()
                 failed++
+                onItemResult(item, "FAILED")
                 if (failures.size < 20) {
                     failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
                 }
                 if (target == "Mail WebDAV" && isTemporaryNetworkFailure(e)) {
                     consecutiveNetworkFailures++
                     if (consecutiveNetworkFailures >= 2) {
-                        stoppedReason = "Передача остановлена: нет связи с Mail WebDAV (DNS или сеть). Проверь интернет и повтори позже."
+                        stoppedReason = "Передача остановлена: нет связи с источником или облаком (DNS/сеть). Проверь интернет и повтори позже."
                         break
                     }
                 } else {
@@ -263,6 +283,7 @@ object Services {
                 }
             }
         }
+        coroutineContext.ensureActive()
         val remaining = media.size - attempted
         buildString {
             append("Загружено: $uploaded; пропущено: $skipped; ошибок: $failed")
