@@ -197,8 +197,16 @@ class TransferService : Service() {
                     }
                 )
                 if (mySession != session || cancelRequested) return@launch
-                val summary = result.substringBefore('\n')
+                val lastRunSummary = result.substringBefore('\n')
                 val details = result.substringAfter('\n', "")
+                val currentQueue = QueueStore.load(applicationContext)?.takeIf { it.id == queue.id }
+                val summary = if (currentQueue != null) {
+                    val totalDone = currentQueue.entries.count { it.state == "DONE" }
+                    val totalSkipped = currentQueue.entries.count { it.state == "SKIPPED" }
+                    val errors = currentQueue.entries.count { it.state == "FAILED" }
+                    val prefix = if (queue.target == "Папка Android") "Передано Android" else "Загружено"
+                    "$prefix: $totalDone; уже было: $totalSkipped; ошибок: $errors; осталось: ${currentQueue.remaining}"
+                } else lastRunSummary
                 if (mySession == session && !cancelRequested) {
                     save(false, summary, details)
                     QueueStore.load(applicationContext)?.let { updated ->

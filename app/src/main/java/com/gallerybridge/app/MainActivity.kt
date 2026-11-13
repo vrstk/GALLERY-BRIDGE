@@ -406,7 +406,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.9 • Загрузка в выбранную папку Android или совместимого облака. Google Drive API по-прежнему требует OAuth.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.10 • Защита от повторного создания папок при возобновлении. Синхронизация облака проверяется отдельно.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -426,7 +426,18 @@ class MainActivity : ComponentActivity() {
         Text("Облако: ${queue.target} · Файлов: ${queue.entries.size}", style=MaterialTheme.typography.bodySmall)
         val inCloud = done + skipped
         val percent = if (queue.entries.isEmpty()) 0 else (inCloud * 100 / queue.entries.size)
-        Text("В облаке: $inCloud из ${queue.entries.size} ($percent%)", style=MaterialTheme.typography.titleMedium)
+        Text(
+            if (queue.target == "Папка Android")
+                "Передано провайдеру: $inCloud из ${queue.entries.size} ($percent%)"
+            else "В облаке: $inCloud из ${queue.entries.size} ($percent%)",
+            style=MaterialTheme.typography.titleMedium
+        )
+        if (queue.target == "Папка Android") {
+            Text(
+                "Передача Android-провайдеру не подтверждает завершение синхронизации Google Диска.",
+                style=MaterialTheme.typography.bodySmall
+            )
+        }
         if (queue.entries.isNotEmpty()) {
             LinearProgressIndicator(progress={ inCloud.toFloat() / queue.entries.size.toFloat() }, modifier=Modifier.fillMaxWidth())
         }
@@ -473,8 +484,8 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.weight(1f)) {
                     Text(item.media.name, style=MaterialTheme.typography.bodyMedium)
                     Text(when(item.state) {
-                        "DONE" -> "Загружен"
-                        "SKIPPED" -> "Уже был в облаке"
+                        "DONE" -> if (queue.target == "Папка Android") "Передан провайдеру" else "Загружен"
+                        "SKIPPED" -> if (queue.target == "Папка Android") "Существует у провайдера" else "Уже был в облаке"
                         "FAILED" -> "Ошибка, можно повторить"
                         else -> "Ожидает"
                     }, style=MaterialTheme.typography.bodySmall)
@@ -497,7 +508,7 @@ class MainActivity : ComponentActivity() {
                     Text(record.model, style=MaterialTheme.typography.titleMedium)
                     Text(record.title, maxLines=2, style=MaterialTheme.typography.bodyMedium)
                     Text("${record.target} · ${record.outcome}", style=MaterialTheme.typography.bodySmall)
-                    Text("В облаке ${record.uploaded + record.skipped}/${record.total} · Новых ${record.uploaded} · Уже было ${record.skipped}", style=MaterialTheme.typography.bodySmall)
+                    Text("${if (record.target == "Папка Android") "Передано провайдеру" else "В облаке"} ${record.uploaded + record.skipped}/${record.total} · Новых ${record.uploaded} · Уже было ${record.skipped}", style=MaterialTheme.typography.bodySmall)
                     Text("Ошибок ${record.failed} · Осталось ${record.remaining}", style=MaterialTheme.typography.bodySmall)
                     Text(SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(record.updatedAt)), style=MaterialTheme.typography.bodySmall)
                 }
