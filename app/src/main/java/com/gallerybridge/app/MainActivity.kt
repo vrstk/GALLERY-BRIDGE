@@ -1,6 +1,9 @@
 package com.gallerybridge.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +20,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
+import com.gallerybridge.app.transfer.TransferService
 import com.google.android.gms.auth.api.identity.*
 import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.*
@@ -41,6 +45,14 @@ class MainActivity : ComponentActivity() {
     private var showOtherMedia by mutableStateOf(false)
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
+    private var transferRunning by mutableStateOf(false)
+    private var notificationToken: String? = null
+
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        // Notification permission is optional for running a dataSync foreground service.
+        beginServiceTransfer(notificationToken)
+        notificationToken = null
+    }
 
     private val auth = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         try { val token = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(r.data).accessToken
@@ -55,12 +67,14 @@ class MainActivity : ComponentActivity() {
         driveId = p.getString("driveId", driveId) ?: driveId
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
+        transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+            .getBoolean(TransferService.KEY_RUNNING, false)
         url = intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
         setContent { MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) { Surface(Modifier.fillMaxSize().safeDrawingPadding()) { Ui() } } }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
     private fun scan() {
-        if (working) return
+        if (working || transferRunning) return
         working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
@@ -70,26 +84,40 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) { status = "Ошибка поиска: ${e.message}" } finally { working = false } }
     }
     private fun upload(token: String?) {
-        working = true
+        if (transferRunning) {
+            working = false
+            status = "Загрузка уже выполняется в фоне"
+            return
+        }
         reportDetails = ""
         showReportDetails = false
-        val chosen = items.filter { it.url in selected }
-        scope.launch {
-            try {
-                val result = Services.transfer(
-                    applicationContext, chosen, model, title, date, target,
-                    email, password, if (target == "Google Drive") driveId else mailRoot, token
-                ) { status = it }
-                status = result.substringBefore('\n')
-                reportDetails = result.substringAfter('\n', "")
-            } catch (e: Exception) {
-                status = "Ошибка: ${e.message}"
-            } finally {
-                working = false
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationToken = token
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            beginServiceTransfer(token)
+        }
+    }
+
+    private fun beginServiceTransfer(token: String?) {
+        try {
+            val chosen = items.filter { it.url in selected }
+            TransferService.begin(
+                this, chosen, model, title, date, target, email, password,
+                if (target == "Google Drive") driveId else mailRoot, token
+            )
+            transferRunning = true
+            status = "Фоновая передача запущена. Можно переключаться на другие приложения."
+        } catch (e: Exception) {
+            status = "Не удалось запустить фоновую передачу: ${e.message}"
+        } finally {
+            working = false
         }
     }
     private fun beginUpload() {
+        if (transferRunning) { status = "Загрузка уже выполняется в фоне"; return }
         if (selected.isEmpty()) { status = "Нет выбранных файлов"; return }
         if (model.isBlank() || title.isBlank()) { status = "Укажите имя модели и название публикации перед загрузкой"; return }
         if (target == "Mail WebDAV") {
@@ -117,12 +145,26 @@ class MainActivity : ComponentActivity() {
         }
     }
     @Composable private fun Ui() {
+        LaunchedEffect(Unit) {
+            var lastRevision = -1L
+            while (isActive) {
+                val p = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                val revision = p.getLong(TransferService.KEY_REVISION, 0L)
+                if (revision > 0L && revision != lastRevision) {
+                    lastRevision = revision
+                    transferRunning = p.getBoolean(TransferService.KEY_RUNNING, false)
+                    status = p.getString(TransferService.KEY_STATUS, "").orEmpty()
+                    reportDetails = p.getString(TransferService.KEY_DETAILS, "").orEmpty()
+                }
+                delay(800)
+            }
+        }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row { Text("GALLERY BRIDGE", style=MaterialTheme.typography.headlineSmall, modifier=Modifier.weight(1f))
                 TextButton(onClick={dark=!dark}) { Text(if (dark) "Светлая" else "Тёмная") } }
             HorizontalDivider()
             OutlinedTextField(url, {url=it}, label={Text("HTTPS-ссылка")}, modifier=Modifier.fillMaxWidth())
-            Button(onClick=::scan, enabled=!working && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
+            Button(onClick=::scan, enabled=!working && !transferRunning && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
             Text(status)
             if (reportDetails.isNotBlank()) {
                 TextButton(onClick = { showReportDetails = !showReportDetails }) {
@@ -137,7 +179,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            if (working) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+            if (working || transferRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+            if (transferRunning) {
+                Text("Передача продолжается при сворачивании. Прогресс — в уведомлениях.", style=MaterialTheme.typography.bodySmall)
+                TextButton(onClick={ TransferService.cancel(this@MainActivity) }) { Text("Остановить передачу") }
+            }
             OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
@@ -173,8 +219,8 @@ class MainActivity : ComponentActivity() {
                 getSharedPreferences("settings", MODE_PRIVATE).edit().putString("model",model).putString("email",email).putString("driveId",driveId).putString("mailRoot",mailRoot).putBoolean("dark",dark).apply()
                 status="Настройки сохранены (пароль не сохраняется)"
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
-            Button(onClick=::beginUpload,enabled=!working&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.3 • Mail WebDAV: повторные попытки при временных сетевых ошибках. Google Drive требует зарегистрированный OAuth-клиент.",style=MaterialTheme.typography.bodySmall)
+            Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
+            Text("MVP v0.4 • Передача работает в отдельной службе Android. При принудительной остановке приложения задание может прерваться.",style=MaterialTheme.typography.bodySmall)
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
