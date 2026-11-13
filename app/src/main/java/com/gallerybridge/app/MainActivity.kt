@@ -133,8 +133,8 @@ class MainActivity : ComponentActivity() {
         scope.launch { try {
             val s = Services.scan(url)
             title = s.title; date = s.date; items = s.media
-            selected = s.media.filter { it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") }.map { it.url }.toSet()
-            status = "Найдено ${items.size} медиа-ссылок. Выбрано ${selected.size} ссылок на файлы; остальные изображения могут быть миниатюрами. Оригинальное качество не подтверждено."
+            selected = QualitySelector.recommended(s.media)
+            status = "Найдено ${items.size} медиа-ссылок. Рекомендовано ${selected.size} кандидатов по URL и HTML. Это не гарантия оригинального качества."
         } catch (e: Exception) { status = "Ошибка поиска: ${e.message}" } finally { working = false } }
     }
     private fun upload(token: String?) {
@@ -368,7 +368,10 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
             Text("Найдено: ${items.size}; выбрано: ${selected.size}")
-            val visibleItems = items.filter { showOtherMedia || it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") }
+            val visibleItems = items.filter {
+                showOtherMedia || it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") ||
+                    it.url in QualitySelector.recommended(items)
+            }
             if (items.isNotEmpty()) {
                 Row {
                     TextButton(onClick={selected=visibleItems.map { it.url }.toSet()}) { Text("Выбрать видимые") }
@@ -376,13 +379,29 @@ class MainActivity : ComponentActivity() {
                 }
                 if (visibleItems.size < items.size || showOtherMedia) {
                     TextButton(onClick={showOtherMedia=!showOtherMedia}) {
-                        Text(if (showOtherMedia) "Скрыть миниатюры и прочие" else "Показать остальные ${items.size-visibleItems.size} ссылок")
+                        Text(if (showOtherMedia) "Скрыть остальные варианты" else "Показать остальные ${items.size-visibleItems.size} ссылок")
                     }
                 }
             }
+            if (items.isNotEmpty()) {
+                OutlinedButton(
+                    onClick={selected=QualitySelector.recommended(items)},
+                    modifier=Modifier.fillMaxWidth(),
+                    enabled=!working
+                ) { Text("Выбрать лучшие найденные варианты") }
+                Text(
+                    "Выбор основан на признаках в URL и HTML, а не на проверенном разрешении. " +
+                        "Для спорных файлов можно изменить галочки вручную.",
+                    style=MaterialTheme.typography.bodySmall
+                )
+            }
             visibleItems.forEach { item -> Row {
                 Checkbox(item.url in selected, onCheckedChange={v -> selected=if(v) selected+item.url else selected-item.url}, enabled=!working)
-                Column { Text(item.name); Text(item.source, style=MaterialTheme.typography.bodySmall) }
+                Column {
+                    Text(item.name)
+                    Text(item.source, style=MaterialTheme.typography.bodySmall)
+                    Text(QualitySelector.hint(item), style=MaterialTheme.typography.bodySmall)
+                }
             }}
             Row { FilterChip(target=="Mail WebDAV", onClick={target="Mail WebDAV"}, label={Text("Mail WebDAV")})
                 Spacer(Modifier.width(8.dp))
@@ -437,7 +456,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.12 • Ручная SHA-256 сверка готовых галерей через Android, без изменения файлов.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.13 • Умный предварительный выбор вариантов по исходным ссылкам и HTML srcset.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }

@@ -90,10 +90,24 @@ object Services {
                 urls.putIfAbsent(parsed.toString(), Media(parsed.toString(), Paths.clean(parsed.pathSegments.last()), kind(parsed.encodedPath), source))
             }
             doc.select("a[href]").forEach { add(it.absUrl("href"), "Ссылка") }
-            doc.select("img[src],img[data-src],img[data-original]").forEach {
-                add(it.absUrl("data-original"), "Изображение (качество не подтверждено)")
+            doc.select("img[src],img[data-src],img[data-original],img[data-full],img[srcset],img[data-srcset],source[srcset]").forEach {
+                add(it.absUrl("data-original"), "HTML data-original (качество не подтверждено)")
+                add(it.absUrl("data-full"), "HTML data-full (качество не подтверждено)")
                 add(it.absUrl("data-src"), "Изображение (качество не подтверждено)")
                 add(it.absUrl("src"), "Изображение (качество не подтверждено)")
+                for (attribute in listOf("srcset", "data-srcset")) {
+                    val value = it.attr(attribute)
+                    for (part in value.split(',')) {
+                        val candidate = part.trim().split(Regex("\\s+"))
+                        if (candidate.isEmpty()) continue
+                        val absolute = it.baseUri().toHttpUrlOrNull()
+                            ?.resolve(candidate.first())?.toString().orEmpty()
+                        val width = candidate.drop(1).firstOrNull { descriptor ->
+                            Regex("\\d{3,4}w").matches(descriptor)
+                        }.orEmpty()
+                        add(absolute, "srcset $width (размер из HTML, не проверен)")
+                    }
+                }
             }
             doc.select("video[src],source[src]").forEach { add(it.absUrl("src"), "Видео") }
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.ifBlank { doc.title() } ?: doc.title()
