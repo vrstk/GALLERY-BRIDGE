@@ -37,6 +37,7 @@ class TransferService : Service() {
         private const val FINISHED_ID = 4102
         private const val ACTION_START = "com.gallerybridge.transfer.START"
         private const val ACTION_CANCEL = "com.gallerybridge.transfer.CANCEL"
+        private const val ACTION_RESUME = "com.gallerybridge.transfer.RESUME"
         private const val EXTRA_FILES = "files"
         private const val EXTRA_MODEL = "model"
         private const val EXTRA_TITLE = "title"
@@ -52,6 +53,7 @@ class TransferService : Service() {
         const val KEY_STATUS = "status"
         const val KEY_DETAILS = "details"
         const val KEY_REVISION = "revision"
+        private var currentSession = 0L
 
         fun begin(
             context: Context,
@@ -81,6 +83,17 @@ class TransferService : Service() {
                 .putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_ROOT, root)
                 .putExtra(EXTRA_TOKEN, token)
+            // Store an explicit queue before starting any network operation.
+            QueueStore.save(context, QueueStore.newSnapshot(model, title, date, target, root, files))
+            context.startForegroundService(intent)
+        }
+
+        fun resume(context: Context, email: String, password: String, token: String?) {
+            val queue = QueueStore.load(context) ?: error("Сохранённая очередь не найдена")
+            require(queue.remaining > 0) { "Очередь уже завершена" }
+            val intent = Intent(context, TransferService::class.java).setAction(ACTION_RESUME)
+                .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password)
+                .putExtra(EXTRA_TOKEN, token)
             context.startForegroundService(intent)
         }
 
@@ -92,6 +105,7 @@ class TransferService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
     private var cancelRequested = false
+    private var session = 0L
     private val notificationManager by lazy {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
@@ -109,65 +123,79 @@ class TransferService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
+            // Invalidate old callbacks *before* cancelling blocking network I/O.
             cancelRequested = true
+            session++
+            currentSession = session
             job?.cancel()
-            save(false, "Загрузка остановлена пользователем", "")
+            Services.cancelActiveTransfers()
+            job = null
+            save(false, "Загрузка остановлена пользователем", "Остаток очереди сохранён. Запуск только вручную.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
         if (job?.isActive == true) return START_NOT_STICKY
+        if (intent?.action != ACTION_START && intent?.action != ACTION_RESUME) return START_NOT_STICKY
+        val queue = QueueStore.load(this) ?: return START_NOT_STICKY
+        if (queue.remaining == 0) {
+            save(false, "Очередь уже завершена", "")
+            return START_NOT_STICKY
+        }
 
         // Must promote immediately after startForegroundService(), before any I/O.
         showForeground("Начинаем передачу", 0, 0)
         cancelRequested = false
+        session++
+        val mySession = session
+        currentSession = mySession
         save(true, "Подготовка к фоновой передаче", "")
 
         job = scope.launch {
             try {
                 val src = intent ?: error("Не указано задание")
-                val data = JSONArray(src.getStringExtra(EXTRA_FILES) ?: "[]")
-                val files = buildList {
-                    for (i in 0 until data.length()) {
-                        val item = data.getJSONObject(i)
-                        add(Media(item.getString("url"), item.getString("name"),
-                            Kind.valueOf(item.getString("kind")), item.optString("source")))
-                    }
-                }
-                require(files.isNotEmpty()) { "Нет выбранных файлов" }
+                val files = queue.entries.filter {
+                    it.state != "DONE" && it.state != "SKIPPED"
+                }.map { it.media }
                 val result = Services.transfer(
-                    applicationContext, files,
-                    src.getStringExtra(EXTRA_MODEL).orEmpty(),
-                    src.getStringExtra(EXTRA_TITLE).orEmpty(),
-                    src.getStringExtra(EXTRA_DATE).orEmpty(),
-                    src.getStringExtra(EXTRA_TARGET).orEmpty(),
-                    src.getStringExtra(EXTRA_EMAIL).orEmpty(),
-                    src.getStringExtra(EXTRA_PASSWORD).orEmpty(),
-                    src.getStringExtra(EXTRA_ROOT).orEmpty(),
-                    src.getStringExtra(EXTRA_TOKEN)
-                ) { message ->
-                    save(true, message, "")
-                    val match = Regex("^(\\d+)/(\\d+)").find(message)
-                    val done = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    val total = match?.groupValues?.get(2)?.toIntOrNull() ?: 0
-                    showProgress(done, total)
-                }
+                    applicationContext, files, queue.model, queue.title, queue.date,
+                    queue.target, src.getStringExtra(EXTRA_EMAIL).orEmpty(),
+                    src.getStringExtra(EXTRA_PASSWORD).orEmpty(), queue.root,
+                    src.getStringExtra(EXTRA_TOKEN),
+                    progress = { message ->
+                        if (mySession != session || cancelRequested) return@transfer
+                        save(true, message, "")
+                        val match = Regex("^(\\d+)/(\\d+)").find(message)
+                        val done = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        val total = match?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                        showProgress(done, total)
+                    },
+                    onItemResult = { item, state ->
+                        if (mySession == session && !cancelRequested) {
+                            QueueStore.checkpoint(applicationContext, queue.id, item.url, state)
+                        }
+                    }
+                )
+                if (mySession != session || cancelRequested) return@launch
                 val summary = result.substringBefore('\n')
                 val details = result.substringAfter('\n', "")
-                save(false, summary, details)
-                notificationManager.notify(FINISHED_ID, buildNotification(
+                if (mySession == session && !cancelRequested) save(false, summary, details)
+                if (mySession == session && !cancelRequested) notificationManager.notify(FINISHED_ID, buildNotification(
                     "Передача завершена", summary, false, 0, 0
                 ))
             } catch (e: CancellationException) {
-                if (!cancelRequested) save(false, "Передача прервана системой", "Открой приложение и повтори загрузку недостающих файлов.")
+                if (!cancelRequested && mySession == session) save(false, "Передача прервана системой", "Очередь сохранена — продолжи вручную.")
             } catch (e: Exception) {
+                if (mySession != session || cancelRequested) return@launch
                 save(false, "Ошибка фоновой передачи", e.message ?: e.javaClass.simpleName)
                 notificationManager.notify(FINISHED_ID, buildNotification(
                     "Ошибка передачи", "Открой GALLERY BRIDGE для отчёта", false, 0, 0
                 ))
             } finally {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf(startId)
+                if (mySession == session) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf(startId)
+                }
             }
         }
         // Do not persist credentials in START_REDELIVER_INTENT on process restart.
@@ -235,14 +263,18 @@ class TransferService : Service() {
 
     override fun onTimeout(startId: Int, fgsType: Int) {
         cancelRequested = true
+        session++
         job?.cancel()
+        Services.cancelActiveTransfers()
         save(false, "Лимит фоновой передачи Android исчерпан", "Повтори оставшиеся файлы после возвращения в приложение.")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf(startId)
     }
 
     override fun onDestroy() {
+        session++
         job?.cancel()
+        Services.cancelActiveTransfers()
         scope.cancel()
         super.onDestroy()
     }
