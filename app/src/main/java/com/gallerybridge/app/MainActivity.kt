@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
+import com.gallerybridge.app.network.IntegrityAudit
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
@@ -64,6 +65,9 @@ class MainActivity : ComponentActivity() {
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
     private var screen by mutableIntStateOf(0)
     private var queueFilter by mutableStateOf("ALL")
+    private var auditing by mutableStateOf(false)
+    private var auditProgress by mutableStateOf("")
+    private var auditReport by mutableStateOf("")
 
     private val treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -194,6 +198,33 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             status = "Возобновление: ${e.message}"
         } finally { working = false }
+    }
+
+    private fun auditQueue() {
+        val queue = QueueStore.load(this) ?: run {
+            auditReport = "Очередь не найдена"; return
+        }
+        if (auditing || transferRunning || queue.remaining != 0) return
+        auditing = true
+        auditReport = ""
+        auditProgress = "Запуск проверки..."
+        scope.launch {
+            try {
+                val result = IntegrityAudit.check(this@MainActivity, queue) { i, n, name ->
+                    withContext(Dispatchers.Main) {
+                        auditProgress = "Проверка $i из $n: $name"
+                    }
+                }
+                auditReport = result.summary()
+            } catch (e: CancellationException) {
+                auditReport = "Проверка прервана."
+            } catch (e: Exception) {
+                auditReport = "Проверка не выполнена: ${e.message}"
+            } finally {
+                auditing = false
+                auditProgress = ""
+            }
+        }
     }
 
     private fun resumeUpload() {
@@ -406,7 +437,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.11 • Проверка существующих файлов до скачивания, защита от дубликатов и общий прогресс очереди.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.12 • Ручная SHA-256 сверка готовых галерей через Android, без изменения файлов.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -455,6 +486,20 @@ class MainActivity : ComponentActivity() {
             Button(onClick=::resumeUpload, modifier=Modifier.fillMaxWidth()) { Text("Продолжить оставшиеся ${queue.remaining} файлов") }
         } else {
             Text("Очередь завершена. Можно добавить следующую галерею.")
+            if (queue.target == "Папка Android") {
+                OutlinedButton(
+                    onClick=::auditQueue,
+                    enabled=!auditing,
+                    modifier=Modifier.fillMaxWidth()
+                ) { Text(if (auditing) "Проверка выполняется..." else "Проверить SHA-256 и размеры") }
+                Text(
+                    "Ручная проверка скачивает исходные файлы снова и читает сохранённые через Google Drive. " +
+                    "Она расходует трафик; файлы не изменяет. До 32 МиБ на файл.",
+                    style=MaterialTheme.typography.bodySmall
+                )
+                if (auditProgress.isNotBlank()) Text(auditProgress, style=MaterialTheme.typography.bodySmall)
+                if (auditReport.isNotBlank()) Text(auditReport, style=MaterialTheme.typography.bodySmall)
+            }
         }
         Text(status, style=MaterialTheme.typography.bodySmall)
         HorizontalDivider()
