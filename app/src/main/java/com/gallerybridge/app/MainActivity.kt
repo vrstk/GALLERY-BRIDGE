@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.transfer.TransferService
+import com.gallerybridge.app.transfer.QueueStore
 import com.google.android.gms.auth.api.identity.*
 import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.*
@@ -47,16 +48,19 @@ class MainActivity : ComponentActivity() {
     private var showReportDetails by mutableStateOf(false)
     private var transferRunning by mutableStateOf(false)
     private var notificationToken: String? = null
+    private var resumeRequest = false
+    private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Notification permission is optional for running a dataSync foreground service.
-        beginServiceTransfer(notificationToken)
+        if (resumeRequest) beginResumeTransfer(notificationToken) else beginServiceTransfer(notificationToken)
+        resumeRequest = false
         notificationToken = null
     }
 
     private val auth = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         try { val token = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(r.data).accessToken
-            if (token.isNullOrEmpty()) { working = false; status = "Google: нет токена" } else upload(token)
+            if (token.isNullOrEmpty()) { working = false; status = "Google: нет токена" } else if (resumeRequest) { resumeRequest = false; uploadResume(token) } else upload(token)
         } catch (e: Exception) { working = false; status = e.message ?: "Ошибка Google OAuth" }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,6 +71,7 @@ class MainActivity : ComponentActivity() {
         driveId = p.getString("driveId", driveId) ?: driveId
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
+        savedQueue = QueueStore.load(this)
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
         url = intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
@@ -108,6 +113,7 @@ class MainActivity : ComponentActivity() {
                 this, chosen, model, title, date, target, email, password,
                 if (target == "Google Drive") driveId else mailRoot, token
             )
+            savedQueue = QueueStore.load(this)
             transferRunning = true
             status = "Фоновая передача запущена. Можно переключаться на другие приложения."
         } catch (e: Exception) {
@@ -116,6 +122,42 @@ class MainActivity : ComponentActivity() {
             working = false
         }
     }
+    private fun beginResumeTransfer(token: String?) {
+        try {
+            val queue = QueueStore.load(this) ?: error("Очередь не найдена")
+            if (queue.target == "Mail WebDAV" && (email.isBlank() || password.isBlank())) {
+                error("Укажи почту и пароль приложения Mail для возобновления")
+            }
+            TransferService.resume(this, email, password, token)
+            savedQueue = QueueStore.load(this)
+            transferRunning = true
+            status = "Продолжаем сохранённую очередь"
+        } catch (e: Exception) {
+            status = "Возобновление: ${e.message}"
+        } finally { working = false }
+    }
+
+    private fun resumeUpload() {
+        val queue = QueueStore.load(this) ?: run { status = "Нет сохранённой очереди"; return }
+        if (transferRunning || working || queue.remaining == 0) return
+        if (queue.target == "Mail WebDAV") {
+            uploadResume(null)
+        } else {
+            resumeRequest = true
+            beginGoogleAuthorization()
+        }
+    }
+
+    private fun uploadResume(token: String?) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            resumeRequest = true
+            notificationToken = token
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else beginResumeTransfer(token)
+    }
+
     private fun beginUpload() {
         if (transferRunning) { status = "Загрузка уже выполняется в фоне"; return }
         if (selected.isEmpty()) { status = "Нет выбранных файлов"; return }
@@ -124,6 +166,10 @@ class MainActivity : ComponentActivity() {
             if (email.isBlank() || password.isBlank()) { status = "Укажите почту и пароль приложения Mail"; return }
             upload(null); return
         }
+        beginGoogleAuthorization()
+    }
+
+    private fun beginGoogleAuthorization() {
         working = true; status = "Запрос доступа Google Drive..."
         Identity.getAuthorizationClient(this).authorize(
             AuthorizationRequest.builder().setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive"))).build()
@@ -134,7 +180,7 @@ class MainActivity : ComponentActivity() {
                 else { working = false; status = "Google OAuth недоступен" }
             } else {
                 val t = a.accessToken
-                if (t == null) { working = false; status = "Google: нет токена" } else upload(t)
+                if (t == null) { working = false; status = "Google: нет токена" } else if (resumeRequest) { resumeRequest = false; uploadResume(t) } else upload(t)
             }
         }.addOnFailureListener {
             working = false
@@ -155,6 +201,7 @@ class MainActivity : ComponentActivity() {
                     transferRunning = p.getBoolean(TransferService.KEY_RUNNING, false)
                     status = p.getString(TransferService.KEY_STATUS, "").orEmpty()
                     reportDetails = p.getString(TransferService.KEY_DETAILS, "").orEmpty()
+                    savedQueue = QueueStore.load(this@MainActivity)
                 }
                 delay(800)
             }
@@ -180,9 +227,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (working || transferRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+            val queueInfo = savedQueue
+            if (!transferRunning && queueInfo != null && queueInfo.remaining > 0) {
+                Text("Сохранённая очередь: ${queueInfo.completed} завершено, ${queueInfo.remaining} осталось. Модель: ${queueInfo.model}. Облако: ${queueInfo.target}.")
+                Button(onClick=::resumeUpload, enabled=!working, modifier=Modifier.fillMaxWidth()) {
+                    Text("Продолжить сохранённую очередь")
+                }
+                Text("Для продолжения потребуется прежний аккаунт облака; пароль не сохраняется.", style=MaterialTheme.typography.bodySmall)
+            }
             if (transferRunning) {
                 Text("Передача продолжается при сворачивании. Прогресс — в уведомлениях.", style=MaterialTheme.typography.bodySmall)
-                TextButton(onClick={ TransferService.cancel(this@MainActivity) }) { Text("Остановить передачу") }
+                TextButton(onClick={ TransferService.cancel(this@MainActivity); transferRunning = false; status = "Остановка запрошена. Очередь сохранена." }) { Text("Остановить передачу") }
             }
             OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
@@ -220,7 +275,7 @@ class MainActivity : ComponentActivity() {
                 status="Настройки сохранены (пароль не сохраняется)"
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.4 • Передача работает в отдельной службе Android. При принудительной остановке приложения задание может прерваться.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.5 • Очередь сохраняется. Остановка не запускает передачу снова. Продолжение — только вручную.",style=MaterialTheme.typography.bodySmall)
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
