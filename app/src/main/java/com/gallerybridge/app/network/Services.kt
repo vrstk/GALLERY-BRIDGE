@@ -134,16 +134,17 @@ object Services {
 
     suspend fun transfer(context: Context, media: List<Media>, model: String, title: String, date: String, target: String, username: String, password: String, root: String, token: String?, progress: suspend (String) -> Unit): String = withContext(Dispatchers.IO) {
         var ok = 0; var skipped = 0; var failed = 0
+        val failures = mutableListOf<String>()
         for ((index, item) in media.withIndex()) {
             progress("${index+1}/${media.size}: ${item.name}")
             try {
                 val folders = Paths.folders(model, date, title, item.kind)
                 val driveFolder = if (target == "Google Drive") driveFolders(token ?: error("Нет Google OAuth"), root, folders) else ""
-                if (target == "Mail WebDAV") webdavFolders(username, password, listOf(root) + folders)
+                if (target == "Mail WebDAV") webdavFolders(username, password, Paths.splitRoot(root) + folders)
                 val (file, mime) = download(context, item)
                 try {
                     val uploaded = if (target == "Google Drive") driveUpload(token!!, driveFolder, Paths.clean(item.name), file, mime) else {
-                        val components = listOf(root) + folders + Paths.clean(item.name)
+                        val components = Paths.splitRoot(root) + folders + Paths.clean(item.name)
                         val url = components.fold("https://webdav.cloud.mail.ru/".toHttpUrl()) { acc, segment -> acc.newBuilder().addPathSegment(Paths.clean(segment)).build() }
                         val auth = Credentials.basic(username, password)
                         val check = http.newCall(Request.Builder().url(url).header("Authorization", auth).header("Depth", "0").method("PROPFIND", null).build()).execute().use { r ->
@@ -156,8 +157,18 @@ object Services {
                     }
                     if (uploaded) ok++ else skipped++
                 } finally { file.delete() }
-            } catch (_: Exception) { failed++ }
+            } catch (e: Exception) {
+                failed++
+                if (failures.size < 30) failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
+            }
         }
-        "Загружено: $ok; пропущено: $skipped; ошибок: $failed"
+        buildString {
+            append("Загружено: $ok; пропущено: $skipped; ошибок: $failed")
+            if (failures.isNotEmpty()) {
+                append("\\nПричины ошибок (первые ${failures.size}):")
+                failures.forEach { append("\\n• ").append(it) }
+                append("\\nПри повторной попытке уже существующие файлы будут пропущены.")
+            }
+        }
     }
 }

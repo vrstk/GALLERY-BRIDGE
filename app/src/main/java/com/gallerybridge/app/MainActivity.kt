@@ -24,7 +24,7 @@ import kotlinx.coroutines.*
 class MainActivity : ComponentActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var url by mutableStateOf("")
-    private var model by mutableStateOf("Alba")
+    private var model by mutableStateOf("")
     private var title by mutableStateOf("")
     private var date by mutableStateOf("")
     private var email by mutableStateOf("")
@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
     private var reveal by mutableStateOf(false)
+    private var showOtherMedia by mutableStateOf(false)
 
     private val auth = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         try { val token = Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(r.data).accessToken
@@ -47,22 +48,23 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val p = getSharedPreferences("settings", MODE_PRIVATE)
-        model = p.getString("model", "Alba") ?: "Alba"
+        model = p.getString("model", "") ?: ""
         email = p.getString("email", "") ?: ""
         driveId = p.getString("driveId", driveId) ?: driveId
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
         url = intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
-        setContent { MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) { Surface(Modifier.fillMaxSize()) { Ui() } } }
+        setContent { MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) { Surface(Modifier.fillMaxSize().safeDrawingPadding()) { Ui() } } }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
     private fun scan() {
         if (working) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet()
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); showOtherMedia = false
         scope.launch { try {
             val s = Services.scan(url)
-            title = s.title; date = s.date; items = s.media; selected = s.media.map { it.url }.toSet()
-            status = "Найдено ${items.size} ссылок. Качество оригиналов не подтверждено."
+            title = s.title; date = s.date; items = s.media
+            selected = s.media.filter { it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") }.map { it.url }.toSet()
+            status = "Найдено ${items.size} медиа-ссылок. Выбрано ${selected.size} ссылок на файлы; остальные изображения могут быть миниатюрами. Оригинальное качество не подтверждено."
         } catch (e: Exception) { status = "Ошибка поиска: ${e.message}" } finally { working = false } }
     }
     private fun upload(token: String?) {
@@ -74,6 +76,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun beginUpload() {
         if (selected.isEmpty()) { status = "Нет выбранных файлов"; return }
+        if (model.isBlank() || title.isBlank()) { status = "Укажите имя модели и название публикации перед загрузкой"; return }
         if (target == "Mail WebDAV") {
             if (email.isBlank() || password.isBlank()) { status = "Укажите почту и пароль приложения Mail"; return }
             upload(null); return
@@ -90,7 +93,13 @@ class MainActivity : ComponentActivity() {
                 val t = a.accessToken
                 if (t == null) { working = false; status = "Google: нет токена" } else upload(t)
             }
-        }.addOnFailureListener { working = false; status = "Google: ${it.message}" }
+        }.addOnFailureListener {
+            working = false
+            val msg = it.message.orEmpty()
+            status = if (msg.contains("UNREGISTERED_ON_API_CONSOLE", true) || msg.contains("DEVELOPER_ERROR", true))
+                "Google Drive: OAuth-клиент приложения не зарегистрирован. Нужны Google Cloud Drive API, package com.gallerybridge.app и SHA-1 именно установленной APK."
+                else "Ошибка авторизации Google: $msg"
+        }
     }
     @Composable private fun Ui() {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -105,11 +114,19 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
             Text("Найдено: ${items.size}; выбрано: ${selected.size}")
-            if (items.isNotEmpty()) Row {
-                TextButton(onClick={selected=items.map {it.url}.toSet()}) {Text("Выбрать все")}
-                TextButton(onClick={selected=emptySet()}) {Text("Снять выделение")}
+            val visibleItems = items.filter { showOtherMedia || it.source in setOf("Ссылка", "Видео", "Прямой URL", "Прямой файл") }
+            if (items.isNotEmpty()) {
+                Row {
+                    TextButton(onClick={selected=visibleItems.map { it.url }.toSet()}) { Text("Выбрать видимые") }
+                    TextButton(onClick={selected=emptySet()}) { Text("Снять выделение") }
+                }
+                if (visibleItems.size < items.size || showOtherMedia) {
+                    TextButton(onClick={showOtherMedia=!showOtherMedia}) {
+                        Text(if (showOtherMedia) "Скрыть миниатюры и прочие" else "Показать остальные ${items.size-visibleItems.size} ссылок")
+                    }
+                }
             }
-            items.forEach { item -> Row {
+            visibleItems.forEach { item -> Row {
                 Checkbox(item.url in selected, onCheckedChange={v -> selected=if(v) selected+item.url else selected-item.url}, enabled=!working)
                 Column { Text(item.name); Text(item.source, style=MaterialTheme.typography.bodySmall) }
             }}
@@ -119,7 +136,7 @@ class MainActivity : ComponentActivity() {
             if (target=="Mail WebDAV") {
                 OutlinedTextField(email,{email=it}, label={Text("Почта Mail")},modifier=Modifier.fillMaxWidth())
                 OutlinedTextField(password,{password=it},label={Text("Пароль внешнего приложения")},modifier=Modifier.fillMaxWidth(),visualTransformation=if(reveal) VisualTransformation.None else PasswordVisualTransformation(),trailingIcon={TextButton(onClick={reveal=!reveal}){Text(if(reveal)"Скрыть" else "Показать")}})
-                OutlinedTextField(mailRoot,{mailRoot=it},label={Text("Корневая папка Mail")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(mailRoot,{mailRoot=it},label={Text("Путь в Облаке Mail")},modifier=Modifier.fillMaxWidth(),supportingText={ Text("Папки разделяются /, например Images/xxx/") })
             } else {
                 OutlinedTextField(driveId,{driveId=it},label={Text("ID папки Google Drive")},modifier=Modifier.fillMaxWidth())
                 Text("Для Google OAuth необходимы Google Cloud Drive API, Android package name и SHA-1 подписи APK.", style=MaterialTheme.typography.bodySmall)
@@ -129,7 +146,7 @@ class MainActivity : ComponentActivity() {
                 status="Настройки сохранены (пароль не сохраняется)"
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.1 • Только прямые HTTPS-медиа и статический HTML; защита сайтов не обходится.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.2 • Только прямые HTTPS-медиа и статический HTML. Для Google Drive нужен зарегистрированный OAuth-клиент.",style=MaterialTheme.typography.bodySmall)
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
