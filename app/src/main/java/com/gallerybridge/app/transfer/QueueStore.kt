@@ -21,6 +21,7 @@ object QueueStore {
         val date: String,
         val target: String,
         val root: String,
+        val account: String,
         val entries: List<Entry>
     ) {
         val remaining: Int get() = entries.count { it.state != "DONE" && it.state != "SKIPPED" }
@@ -45,7 +46,7 @@ object QueueStore {
             }
             Snapshot(data.getLong("id"), data.getString("model"), data.getString("title"),
                 data.optString("date"), data.getString("target"),
-                data.getString("root"), entries)
+                data.getString("root"), data.optString("account", ""), entries)
         } catch (_: Exception) { null }
     }
 
@@ -57,6 +58,7 @@ object QueueStore {
             .put("date", snapshot.date)
             .put("target", snapshot.target)
             .put("root", snapshot.root)
+            .put("account", snapshot.account)
         val entries = JSONArray()
         for (entry in snapshot.entries) {
             entries.put(JSONObject()
@@ -79,7 +81,7 @@ object QueueStore {
 
     fun newSnapshot(
         model: String, title: String, date: String, target: String,
-        root: String, files: List<Media>
+        root: String, account: String, files: List<Media>
     ): Snapshot = Snapshot(System.currentTimeMillis(), model, title, date, target,
-        root, files.map { Entry(it, "PENDING") })
+        root, account, files.map { Entry(it, "PENDING") })
 }

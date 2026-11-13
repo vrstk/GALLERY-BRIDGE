@@ -22,6 +22,8 @@ import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
+import com.gallerybridge.app.security.SecureMailCredentials
+import androidx.compose.ui.Alignment
 import com.google.android.gms.auth.api.identity.*
 import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.*
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
     private var reveal by mutableStateOf(false)
+    private var rememberMailPassword by mutableStateOf(false)
     private var showOtherMedia by mutableStateOf(false)
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
@@ -68,6 +71,10 @@ class MainActivity : ComponentActivity() {
         val p = getSharedPreferences("settings", MODE_PRIVATE)
         model = p.getString("model", "") ?: ""
         email = p.getString("email", "") ?: ""
+        SecureMailCredentials.load(this, email)?.let {
+            password = it
+            rememberMailPassword = true
+        }
         driveId = p.getString("driveId", driveId) ?: driveId
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
@@ -108,6 +115,9 @@ class MainActivity : ComponentActivity() {
 
     private fun beginServiceTransfer(token: String?) {
         try {
+            if (target == "Mail WebDAV" && rememberMailPassword && password.isNotBlank()) {
+                SecureMailCredentials.save(this, email, password)
+            }
             val chosen = items.filter { it.url in selected }
             TransferService.begin(
                 this, chosen, model, title, date, target, email, password,
@@ -125,8 +135,14 @@ class MainActivity : ComponentActivity() {
     private fun beginResumeTransfer(token: String?) {
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
-            if (queue.target == "Mail WebDAV" && (email.isBlank() || password.isBlank())) {
-                error("Укажи почту и пароль приложения Mail для возобновления")
+            if (queue.target == "Mail WebDAV") {
+                if (email.isBlank() || password.isBlank()) {
+                    error("Укажи почту и пароль приложения Mail для возобновления")
+                }
+                if (queue.account.isNotBlank() && queue.account != email.trim()) {
+                    error("Сохранённая очередь принадлежит другому аккаунту Mail: ${queue.account}")
+                }
+                if (rememberMailPassword) SecureMailCredentials.save(this, email, password)
             }
             TransferService.resume(this, email, password, token)
             savedQueue = QueueStore.load(this)
@@ -230,6 +246,17 @@ class MainActivity : ComponentActivity() {
             val queueInfo = savedQueue
             if (!transferRunning && queueInfo != null && queueInfo.remaining > 0) {
                 Text("Сохранённая очередь: ${queueInfo.completed} завершено, ${queueInfo.remaining} осталось. Модель: ${queueInfo.model}. Облако: ${queueInfo.target}.")
+                if (queueInfo.target == "Mail WebDAV") {
+                    if (queueInfo.account.isNotBlank()) {
+                        Text("Аккаунт очереди: ${queueInfo.account}", style=MaterialTheme.typography.bodySmall)
+                    }
+                    if (password.isBlank()) {
+                        OutlinedTextField(password, { password = it },
+                            label={ Text("Пароль Mail для продолжения") },
+                            visualTransformation = if (reveal) VisualTransformation.None else PasswordVisualTransformation(),
+                            modifier=Modifier.fillMaxWidth())
+                    }
+                }
                 Button(onClick=::resumeUpload, enabled=!working, modifier=Modifier.fillMaxWidth()) {
                     Text("Продолжить сохранённую очередь")
                 }
@@ -263,8 +290,28 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.width(8.dp))
                 FilterChip(target=="Google Drive", onClick={target="Google Drive"}, label={Text("Google Drive")}) }
             if (target=="Mail WebDAV") {
-                OutlinedTextField(email,{email=it}, label={Text("Почта Mail")},modifier=Modifier.fillMaxWidth())
+                OutlinedTextField(email,{ newEmail ->
+                    if (newEmail != email) {
+                        email = newEmail
+                        val stored = SecureMailCredentials.load(this@MainActivity, newEmail)
+                        if (stored != null) {
+                            password = stored
+                            rememberMailPassword = true
+                        } else if (rememberMailPassword) {
+                            password = ""
+                            rememberMailPassword = false
+                        }
+                    }
+                }, label={Text("Почта Mail")},modifier=Modifier.fillMaxWidth())
                 OutlinedTextField(password,{password=it},label={Text("Пароль внешнего приложения")},modifier=Modifier.fillMaxWidth(),visualTransformation=if(reveal) VisualTransformation.None else PasswordVisualTransformation(),trailingIcon={TextButton(onClick={reveal=!reveal}){Text(if(reveal)"Скрыть" else "Показать")}})
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    Checkbox(checked=rememberMailPassword, onCheckedChange={ checked ->
+                        rememberMailPassword = checked
+                        if (!checked) SecureMailCredentials.clear(this@MainActivity)
+                    })
+                    Text("Запомнить пароль на этом устройстве")
+                }
+                Text("Пароль шифруется Android Keystore и не загружается в GitHub. Чтобы сохранить его, нажми «Сохранить настройки».", style=MaterialTheme.typography.bodySmall)
                 OutlinedTextField(mailRoot,{mailRoot=it},label={Text("Путь в Облаке Mail")},modifier=Modifier.fillMaxWidth(),supportingText={ Text("Папки разделяются /, например Images/xxx/") })
             } else {
                 OutlinedTextField(driveId,{driveId=it},label={Text("ID папки Google Drive")},modifier=Modifier.fillMaxWidth())
@@ -272,10 +319,20 @@ class MainActivity : ComponentActivity() {
             }
             OutlinedButton(onClick={
                 getSharedPreferences("settings", MODE_PRIVATE).edit().putString("model",model).putString("email",email).putString("driveId",driveId).putString("mailRoot",mailRoot).putBoolean("dark",dark).apply()
-                status="Настройки сохранены (пароль не сохраняется)"
+                status = try {
+                    if (rememberMailPassword) {
+                        SecureMailCredentials.save(this@MainActivity, email, password)
+                        "Настройки и зашифрованный пароль Mail сохранены на устройстве"
+                    } else {
+                        SecureMailCredentials.clear(this@MainActivity)
+                        "Настройки сохранены, пароль Mail не сохраняется"
+                    }
+                } catch (e: Exception) {
+                    "Настройки сохранены, но сохранить пароль не удалось: ${e.message}"
+                }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.5 • Очередь сохраняется. Остановка не запускает передачу снова. Продолжение — только вручную.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.6 • Очередь и безопасное хранение пароля Mail по выбору. Повторная загрузка запускается только вручную.",style=MaterialTheme.typography.bodySmall)
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }

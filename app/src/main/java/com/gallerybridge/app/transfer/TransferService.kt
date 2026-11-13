@@ -84,7 +84,7 @@ class TransferService : Service() {
                 .putExtra(EXTRA_ROOT, root)
                 .putExtra(EXTRA_TOKEN, token)
             // Store an explicit queue before starting any network operation.
-            QueueStore.save(context, QueueStore.newSnapshot(model, title, date, target, root, files))
+            QueueStore.save(context, QueueStore.newSnapshot(model, title, date, target, root, if (target == "Mail WebDAV") email.trim() else "", files))
             context.startForegroundService(intent)
         }
 
