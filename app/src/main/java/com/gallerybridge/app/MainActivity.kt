@@ -133,6 +133,7 @@ class MainActivity : ComponentActivity() {
             )
             savedQueue = QueueStore.load(this)
             transferRunning = true
+            screen = 1
             status = "Фоновая передача запущена. Можно переключаться на другие приложения."
         } catch (e: Exception) {
             status = "Не удалось запустить фоновую передачу: ${e.message}"
@@ -155,6 +156,7 @@ class MainActivity : ComponentActivity() {
             TransferService.resume(this, email, password, token)
             savedQueue = QueueStore.load(this)
             transferRunning = true
+            screen = 1
             status = "Продолжаем сохранённую очередь"
         } catch (e: Exception) {
             status = "Возобновление: ${e.message}"
@@ -215,6 +217,10 @@ class MainActivity : ComponentActivity() {
         }
     }
     @Composable private fun Ui() {
+        val pageScroll = rememberScrollState()
+        LaunchedEffect(screen) {
+            pageScroll.scrollTo(0)
+        }
         LaunchedEffect(Unit) {
             var lastRevision = -1L
             while (isActive) {
@@ -231,7 +237,7 @@ class MainActivity : ComponentActivity() {
                 delay(800)
             }
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.fillMaxSize().verticalScroll(pageScroll).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row { Text("GALLERY BRIDGE", style=MaterialTheme.typography.headlineSmall, modifier=Modifier.weight(1f))
                 TextButton(onClick={dark=!dark}) { Text(if (dark) "Светлая" else "Тёмная") } }
             HorizontalDivider()
@@ -261,7 +267,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            if (working || transferRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+            if (working && !transferRunning) LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
             val queueInfo = savedQueue
             if (!transferRunning && queueInfo != null && queueInfo.remaining > 0) {
                 Text("Сохранённая очередь: ${queueInfo.completed} завершено, ${queueInfo.remaining} осталось. Модель: ${queueInfo.model}. Облако: ${queueInfo.target}.")
@@ -279,10 +285,15 @@ class MainActivity : ComponentActivity() {
                 Button(onClick=::resumeUpload, enabled=!working, modifier=Modifier.fillMaxWidth()) {
                     Text("Продолжить сохранённую очередь")
                 }
-                Text("Для продолжения потребуется прежний аккаунт облака; пароль не сохраняется.", style=MaterialTheme.typography.bodySmall)
+                Text(
+                    if (queueInfo.target == "Mail WebDAV" && rememberMailPassword && password.isNotBlank())
+                        "Пароль Mail сохранён в зашифрованном виде на этом устройстве."
+                    else "Для продолжения может потребоваться повторная авторизация в облаке.",
+                    style=MaterialTheme.typography.bodySmall
+                )
             }
             if (transferRunning) {
-                Text("Передача продолжается при сворачивании. Прогресс — в уведомлениях.", style=MaterialTheme.typography.bodySmall)
+                Text("Передача работает в фоне. Подробный прогресс — на вкладке «Очередь» и в уведомлениях.", style=MaterialTheme.typography.bodySmall)
                 TextButton(onClick={ TransferService.cancel(this@MainActivity); transferRunning = false; status = "Остановка запрошена. Очередь сохранена." }) { Text("Остановить передачу") }
             }
             OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
@@ -351,7 +362,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.7 • История и состояние очереди по файлам. Уже сохранённая незавершённая очередь не заменяется другой.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.8 • Понятный общий прогресс по всей галерее и удобная очередь. Одно активное задание.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -367,12 +378,15 @@ class MainActivity : ComponentActivity() {
         val failed = queue.entries.count { it.state == "FAILED" }
         val pending = queue.entries.count { it.state == "PENDING" }
         Text(queue.model, style=MaterialTheme.typography.titleLarge)
-        Text(queue.title)
+        Text(queue.title, maxLines=3, style=MaterialTheme.typography.bodyMedium)
         Text("Облако: ${queue.target} · Файлов: ${queue.entries.size}", style=MaterialTheme.typography.bodySmall)
+        val inCloud = done + skipped
+        val percent = if (queue.entries.isEmpty()) 0 else (inCloud * 100 / queue.entries.size)
+        Text("В облаке: $inCloud из ${queue.entries.size} ($percent%)", style=MaterialTheme.typography.titleMedium)
         if (queue.entries.isNotEmpty()) {
-            LinearProgressIndicator(progress={ (done + skipped).toFloat() / queue.entries.size.toFloat() }, modifier=Modifier.fillMaxWidth())
+            LinearProgressIndicator(progress={ inCloud.toFloat() / queue.entries.size.toFloat() }, modifier=Modifier.fillMaxWidth())
         }
-        Text("Загружено: $done · Уже было: $skipped · Ошибок: $failed · Ожидают: $pending")
+        Text("Новых: $done · Уже были: $skipped · Ошибок: $failed · Осталось: ${queue.remaining}")
         if (transferRunning) {
             Text("Передача выполняется в фоне")
             TextButton(onClick={ TransferService.cancel(this@MainActivity); transferRunning=false; status="Остановка запрошена" }) { Text("Остановить передачу") }
@@ -437,9 +451,10 @@ class MainActivity : ComponentActivity() {
             Surface(shape=MaterialTheme.shapes.medium, tonalElevation=1.dp) {
                 Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement=Arrangement.spacedBy(4.dp)) {
                     Text(record.model, style=MaterialTheme.typography.titleMedium)
-                    Text(record.title, style=MaterialTheme.typography.bodyMedium)
+                    Text(record.title, maxLines=2, style=MaterialTheme.typography.bodyMedium)
                     Text("${record.target} · ${record.outcome}", style=MaterialTheme.typography.bodySmall)
-                    Text("Загружено ${record.uploaded} · Было ${record.skipped} · Ошибок ${record.failed} · Осталось ${record.remaining}", style=MaterialTheme.typography.bodySmall)
+                    Text("В облаке ${record.uploaded + record.skipped}/${record.total} · Новых ${record.uploaded} · Уже было ${record.skipped}", style=MaterialTheme.typography.bodySmall)
+                    Text("Ошибок ${record.failed} · Осталось ${record.remaining}", style=MaterialTheme.typography.bodySmall)
                     Text(SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(record.updatedAt)), style=MaterialTheme.typography.bodySmall)
                 }
             }
