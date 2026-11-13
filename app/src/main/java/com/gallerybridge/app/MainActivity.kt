@@ -22,8 +22,12 @@ import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
+import com.gallerybridge.app.transfer.HistoryStore
 import com.gallerybridge.app.security.SecureMailCredentials
 import androidx.compose.ui.Alignment
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.google.android.gms.auth.api.identity.*
 import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.*
@@ -53,6 +57,9 @@ class MainActivity : ComponentActivity() {
     private var notificationToken: String? = null
     private var resumeRequest = false
     private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
+    private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
+    private var screen by mutableIntStateOf(0)
+    private var queueFilter by mutableStateOf("ALL")
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Notification permission is optional for running a dataSync foreground service.
@@ -79,6 +86,7 @@ class MainActivity : ComponentActivity() {
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", false)
         savedQueue = QueueStore.load(this)
+        history = HistoryStore.load(this)
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
         url = intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
@@ -218,6 +226,7 @@ class MainActivity : ComponentActivity() {
                     status = p.getString(TransferService.KEY_STATUS, "").orEmpty()
                     reportDetails = p.getString(TransferService.KEY_DETAILS, "").orEmpty()
                     savedQueue = QueueStore.load(this@MainActivity)
+                    history = HistoryStore.load(this@MainActivity)
                 }
                 delay(800)
             }
@@ -226,6 +235,16 @@ class MainActivity : ComponentActivity() {
             Row { Text("GALLERY BRIDGE", style=MaterialTheme.typography.headlineSmall, modifier=Modifier.weight(1f))
                 TextButton(onClick={dark=!dark}) { Text(if (dark) "Светлая" else "Тёмная") } }
             HorizontalDivider()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected=screen == 0, onClick={ screen=0 }, label={Text("Загрузка")})
+                FilterChip(selected=screen == 1, onClick={ screen=1 }, label={Text("Очередь")})
+                FilterChip(selected=screen == 2, onClick={ screen=2; history = HistoryStore.load(this@MainActivity) }, label={Text("История")})
+            }
+            if (screen == 1) {
+                QueuePage()
+            } else if (screen == 2) {
+                HistoryPage()
+            } else {
             OutlinedTextField(url, {url=it}, label={Text("HTTPS-ссылка")}, modifier=Modifier.fillMaxWidth())
             Button(onClick=::scan, enabled=!working && !transferRunning && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
             Text(status)
@@ -332,7 +351,98 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.6 • Очередь и безопасное хранение пароля Mail по выбору. Повторная загрузка запускается только вручную.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.7 • История и состояние очереди по файлам. Уже сохранённая незавершённая очередь не заменяется другой.",style=MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+
+    @Composable private fun QueuePage() {
+        val queue = savedQueue
+        if (queue == null) {
+            Text("Пока нет сохранённых заданий. Вставь ссылку на вкладке «Загрузка».")
+            return
+        }
+        val done = queue.entries.count { it.state == "DONE" }
+        val skipped = queue.entries.count { it.state == "SKIPPED" }
+        val failed = queue.entries.count { it.state == "FAILED" }
+        val pending = queue.entries.count { it.state == "PENDING" }
+        Text(queue.model, style=MaterialTheme.typography.titleLarge)
+        Text(queue.title)
+        Text("Облако: ${queue.target} · Файлов: ${queue.entries.size}", style=MaterialTheme.typography.bodySmall)
+        if (queue.entries.isNotEmpty()) {
+            LinearProgressIndicator(progress={ (done + skipped).toFloat() / queue.entries.size.toFloat() }, modifier=Modifier.fillMaxWidth())
+        }
+        Text("Загружено: $done · Уже было: $skipped · Ошибок: $failed · Ожидают: $pending")
+        if (transferRunning) {
+            Text("Передача выполняется в фоне")
+            TextButton(onClick={ TransferService.cancel(this@MainActivity); transferRunning=false; status="Остановка запрошена" }) { Text("Остановить передачу") }
+        } else if (queue.remaining > 0) {
+            if (queue.target == "Mail WebDAV") {
+                OutlinedTextField(email, {email=it}, label={Text("Аккаунт Mail для продолжения")}, modifier=Modifier.fillMaxWidth())
+                if (password.isBlank()) {
+                    OutlinedTextField(password, {password=it}, label={Text("Пароль приложения Mail")}, visualTransformation=PasswordVisualTransformation(), modifier=Modifier.fillMaxWidth())
+                }
+            }
+            Button(onClick=::resumeUpload, modifier=Modifier.fillMaxWidth()) { Text("Продолжить оставшиеся ${queue.remaining} файлов") }
+        } else {
+            Text("Очередь завершена. Можно добавить следующую галерею.")
+        }
+        Text(status, style=MaterialTheme.typography.bodySmall)
+        HorizontalDivider()
+        Row(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected=queueFilter=="ALL", onClick={queueFilter="ALL"}, label={Text("Все")})
+            FilterChip(selected=queueFilter=="PENDING", onClick={queueFilter="PENDING"}, label={Text("Осталось")})
+            FilterChip(selected=queueFilter=="DONE", onClick={queueFilter="DONE"}, label={Text("Готово")})
+            FilterChip(selected=queueFilter=="FAILED", onClick={queueFilter="FAILED"}, label={Text("Ошибки")})
+        }
+        val filtered = queue.entries.filter {
+            when(queueFilter) {
+                "PENDING" -> it.state == "PENDING" || it.state == "FAILED"
+                "DONE" -> it.state == "DONE" || it.state == "SKIPPED"
+                "FAILED" -> it.state == "FAILED"
+                else -> true
+            }
+        }
+        if (filtered.isEmpty()) Text("В этой категории файлов нет.")
+        filtered.take(80).forEach { item ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(when(item.state) {
+                    "DONE" -> "✓"
+                    "SKIPPED" -> "↷"
+                    "FAILED" -> "!"
+                    else -> "·"
+                })
+                Column(Modifier.weight(1f)) {
+                    Text(item.media.name, style=MaterialTheme.typography.bodyMedium)
+                    Text(when(item.state) {
+                        "DONE" -> "Загружен"
+                        "SKIPPED" -> "Уже был в облаке"
+                        "FAILED" -> "Ошибка, можно повторить"
+                        else -> "Ожидает"
+                    }, style=MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        if (filtered.size > 80) Text("Показаны первые 80 из ${filtered.size} файлов.")
+    }
+
+    @Composable private fun HistoryPage() {
+        if (history.isEmpty()) {
+            Text("История пока пуста. Она появится после завершения или остановки передачи.")
+            return
+        }
+        Text("Последние задания", style=MaterialTheme.typography.titleLarge)
+        Text("Локальный журнал без паролей и токенов.", style=MaterialTheme.typography.bodySmall)
+        history.forEach { record ->
+            Surface(shape=MaterialTheme.shapes.medium, tonalElevation=1.dp) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text(record.model, style=MaterialTheme.typography.titleMedium)
+                    Text(record.title, style=MaterialTheme.typography.bodyMedium)
+                    Text("${record.target} · ${record.outcome}", style=MaterialTheme.typography.bodySmall)
+                    Text("Загружено ${record.uploaded} · Было ${record.skipped} · Ошибок ${record.failed} · Осталось ${record.remaining}", style=MaterialTheme.typography.bodySmall)
+                    Text(SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(record.updatedAt)), style=MaterialTheme.typography.bodySmall)
+                }
+            }
         }
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }

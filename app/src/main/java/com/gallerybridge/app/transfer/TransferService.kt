@@ -83,8 +83,17 @@ class TransferService : Service() {
                 .putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_ROOT, root)
                 .putExtra(EXTRA_TOKEN, token)
-            // Store an explicit queue before starting any network operation.
-            QueueStore.save(context, QueueStore.newSnapshot(model, title, date, target, root, if (target == "Mail WebDAV") email.trim() else "", files))
+            // Don't silently overwrite a paused queue with unfinished files.
+            QueueStore.load(context)?.let { previous ->
+                require(previous.remaining == 0) {
+                    "Сначала закончи сохранённую очередь из ${previous.remaining} файлов"
+                }
+                HistoryStore.record(context, previous, "Завершено")
+            }
+            QueueStore.save(context, QueueStore.newSnapshot(
+                model, title, date, target, root,
+                if (target == "Mail WebDAV") email.trim() else "", files
+            ))
             context.startForegroundService(intent)
         }
 
@@ -131,6 +140,7 @@ class TransferService : Service() {
             Services.cancelActiveTransfers()
             job = null
             save(false, "Загрузка остановлена пользователем", "Остаток очереди сохранён. Запуск только вручную.")
+            QueueStore.load(this)?.let { HistoryStore.record(this, it, "Остановлено") }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -173,21 +183,41 @@ class TransferService : Service() {
                     onItemResult = { item, state ->
                         if (mySession == session && !cancelRequested) {
                             QueueStore.checkpoint(applicationContext, queue.id, item.url, state)
+                            QueueStore.load(applicationContext)?.let { updated ->
+                                if (updated.id == queue.id) {
+                                    val successes = updated.entries.count { it.state == "DONE" }
+                                    val skipped = updated.entries.count { it.state == "SKIPPED" }
+                                    val errors = updated.entries.count { it.state == "FAILED" }
+                                    val processed = successes + skipped + errors
+                                    save(true, "Загружено: $successes · Было: $skipped · Ошибок: $errors · Осталось: ${updated.remaining}", "")
+                                    showProgress(processed, updated.entries.size)
+                                }
+                            }
                         }
                     }
                 )
                 if (mySession != session || cancelRequested) return@launch
                 val summary = result.substringBefore('\n')
                 val details = result.substringAfter('\n', "")
-                if (mySession == session && !cancelRequested) save(false, summary, details)
+                if (mySession == session && !cancelRequested) {
+                    save(false, summary, details)
+                    QueueStore.load(applicationContext)?.let { updated ->
+                        HistoryStore.record(applicationContext, updated,
+                            if (updated.remaining == 0) "Завершено" else "Частично")
+                    }
+                }
                 if (mySession == session && !cancelRequested) notificationManager.notify(FINISHED_ID, buildNotification(
                     "Передача завершена", summary, false, 0, 0
                 ))
             } catch (e: CancellationException) {
-                if (!cancelRequested && mySession == session) save(false, "Передача прервана системой", "Очередь сохранена — продолжи вручную.")
+                if (!cancelRequested && mySession == session) {
+                    save(false, "Передача прервана системой", "Очередь сохранена — продолжи вручную.")
+                    QueueStore.load(applicationContext)?.let { HistoryStore.record(applicationContext, it, "Прервано") }
+                }
             } catch (e: Exception) {
                 if (mySession != session || cancelRequested) return@launch
                 save(false, "Ошибка фоновой передачи", e.message ?: e.javaClass.simpleName)
+                QueueStore.load(applicationContext)?.let { HistoryStore.record(applicationContext, it, "Ошибка") }
                 notificationManager.notify(FINISHED_ID, buildNotification(
                     "Ошибка передачи", "Открой GALLERY BRIDGE для отчёта", false, 0, 0
                 ))
@@ -267,6 +297,7 @@ class TransferService : Service() {
         job?.cancel()
         Services.cancelActiveTransfers()
         save(false, "Лимит фоновой передачи Android исчерпан", "Повтори оставшиеся файлы после возвращения в приложение.")
+        QueueStore.load(this)?.let { HistoryStore.record(this, it, "Прервано системой") }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf(startId)
     }
