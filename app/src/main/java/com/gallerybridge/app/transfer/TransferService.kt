@@ -176,9 +176,10 @@ class TransferService : Service() {
                         if (mySession != session || cancelRequested) return@transfer
                         save(true, message, "")
                         val match = Regex("^(\\d+)/(\\d+)").find(message)
-                        val done = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                        val total = match?.groupValues?.get(2)?.toIntOrNull() ?: 0
-                        showProgress(done, total)
+                        val withinRun = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        // Keep notifications relative to the original queue, not the resumed subset.
+                        val overall = (queue.completed + withinRun).coerceAtMost(queue.entries.size)
+                        showProgress(overall, queue.entries.size)
                     },
                     onItemResult = { item, state ->
                         if (mySession == session && !cancelRequested) {
@@ -189,7 +190,8 @@ class TransferService : Service() {
                                     val skipped = updated.entries.count { it.state == "SKIPPED" }
                                     val errors = updated.entries.count { it.state == "FAILED" }
                                     val processed = successes + skipped + errors
-                                    save(true, "Загружено: $successes · Было: $skipped · Ошибок: $errors · Осталось: ${updated.remaining}", "")
+                                    val verb = if (queue.target == "Папка Android") "Передано провайдеру" else "Загружено"
+                                    save(true, "$verb: $successes · Было: $skipped · Ошибок: $errors · Осталось: ${updated.remaining}", "")
                                     showProgress(processed, updated.entries.size)
                                 }
                             }

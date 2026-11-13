@@ -406,7 +406,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.10 • Защита от повторного создания папок при возобновлении. Синхронизация облака проверяется отдельно.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.11 • Проверка существующих файлов до скачивания, защита от дубликатов и общий прогресс очереди.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }

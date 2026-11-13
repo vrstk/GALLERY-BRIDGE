@@ -19,7 +19,7 @@ object SafDestination {
     private const val PENDING = "#CREATING"
     private const val DIRECTORY = DocumentsContract.Document.MIME_TYPE_DIR
 
-    private data class Child(val id: String, val name: String, val mime: String)
+    private data class Child(val id: String, val name: String, val mime: String, val size: Long?)
     private fun store(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     private fun cacheKey(root: String, names: List<String>): String {
@@ -32,17 +32,23 @@ object SafDestination {
     private fun documentUri(tree: Uri, id: String): Uri =
         DocumentsContract.buildDocumentUriUsingTree(tree, id)
 
+    private fun readSize(c: android.database.Cursor): Long? {
+        val column = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+        return if (column >= 0 && !c.isNull(column)) c.getLong(column) else null
+    }
+
     private fun metadata(ctx: Context, tree: Uri, id: String): Child? {
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE
         )
         val cursor = ctx.contentResolver.query(documentUri(tree, id), projection, null, null, null)
             ?: error("Провайдер Android не отвечает. Новые папки не создавались.")
         return cursor.use { c ->
             if (!c.moveToFirst()) null
-            else Child(c.getString(0), c.getString(1), c.getString(2))
+            else Child(c.getString(0), c.getString(1), c.getString(2), readSize(c))
         }
     }
 
@@ -50,7 +56,8 @@ object SafDestination {
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_SIZE
         )
         val uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
         val cursor = ctx.contentResolver.query(uri, projection, null, null, null)
@@ -58,7 +65,7 @@ object SafDestination {
         return cursor.use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    add(Child(c.getString(0), c.getString(1), c.getString(2)))
+                    add(Child(c.getString(0), c.getString(1), c.getString(2), readSize(c)))
                 }
             }
         }
@@ -122,15 +129,27 @@ object SafDestination {
         return documentUri(tree, parentId)
     }
 
+    /**
+     * Check destination before downloading from the source. A visible zero-byte
+     * cloud file must be investigated, not silently skipped as complete.
+     * Unknown size (null) is explicitly not a content-integrity guarantee.
+     */
+    fun fileExists(ctx: Context, folder: Uri, filename: String): Boolean {
+        val name = Paths.clean(filename)
+        val parentId = DocumentsContract.getDocumentId(folder)
+        val found = children(ctx, folder, parentId).filter { it.name == name }
+        require(found.size <= 1) { "Найдены дубликаты файла " + name + ". Новая копия не создаётся." }
+        if (found.isEmpty()) return false
+        require(found.single().mime != DIRECTORY) { "Вместо файла " + name + " находится папка" }
+        require(found.single().size != 0L) {
+            "Обнаружен пустой файл " + name + " (0 байт). Проверь его в облаке."
+        }
+        return true
+    }
+
     fun uploadFile(ctx: Context, folder: Uri, filename: String, local: File, mime: String): Boolean {
         val name = Paths.clean(filename)
-        val folderId = DocumentsContract.getDocumentId(folder)
-        val matches = children(ctx, folder, folderId).filter { it.name == name }
-        require(matches.size <= 1) { "В папке уже есть дубли файла " + name }
-        if (matches.size == 1) {
-            require(matches.single().mime != DIRECTORY) { name + " — это папка, а не файл" }
-            return false
-        }
+        if (fileExists(ctx, folder, name)) return false
         val created = DocumentsContract.createDocument(
             ctx.contentResolver, folder, mime, name
         ) ?: error("Не удалось создать " + name)

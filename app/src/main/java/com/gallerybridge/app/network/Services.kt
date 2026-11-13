@@ -252,19 +252,26 @@ object Services {
                     val destFolder = documentFoldersByKind.getOrPut(item.kind) {
                         SafDestination.resolveFolder(context, root, folders)
                     }
-                    val (local, mime) = download(context, item)
-                    try {
-                        coroutineContext.ensureActive()
-                        if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {
+                    // Check before source download; previously every resume fetched
+                    // already existing files again, wasting time and traffic.
+                    if (SafDestination.fileExists(context, destFolder, item.name)) {
+                        skipped++
+                        onItemResult(item, "SKIPPED")
+                    } else {
+                        val (local, mime) = download(context, item)
+                        try {
                             coroutineContext.ensureActive()
-                            uploaded++
-                            onItemResult(item, "DONE")
-                        } else {
-                            skipped++
-                            onItemResult(item, "SKIPPED")
+                            if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {
+                                coroutineContext.ensureActive()
+                                uploaded++
+                                onItemResult(item, "DONE")
+                            } else {
+                                skipped++
+                                onItemResult(item, "SKIPPED")
+                            }
+                        } finally {
+                            local.delete()
                         }
-                    } finally {
-                        local.delete()
                     }
                 } else {
                     val folderId = driveFoldersByKind.getOrPut(item.kind) {
@@ -291,6 +298,17 @@ object Services {
                 coroutineContext.ensureActive()
                 failed++
                 onItemResult(item, "FAILED")
+                if (target == "Папка Android" && (
+                    e.message.orEmpty().contains("дубликат", ignoreCase = true) ||
+                    e.message.orEmpty().contains("одноимённые", ignoreCase = true) ||
+                    e.message.orEmpty().contains("Создание заблокировано", ignoreCase = true) ||
+                    e.message.orEmpty().contains("Новые папки не создавались", ignoreCase = true)
+                )) {
+                    stoppedReason = "Обнаружена ошибка структуры папок или провайдера. " +
+                        "Передача остановлена, чтобы не создавать новые дубли."
+                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
                 if (failures.size < 20) {
                     failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
                 }
