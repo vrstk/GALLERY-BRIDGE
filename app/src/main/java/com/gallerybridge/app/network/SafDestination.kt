@@ -130,6 +130,39 @@ object SafDestination {
     }
 
     /**
+     * Read-only lookup for integrity verification, using the same stable IDs
+     * saved during transfer. Never create folders during verification.
+     */
+    fun existingFileForAudit(ctx: Context, rootUri: String, folders: List<String>, filename: String): Uri {
+        val tree = Uri.parse(rootUri)
+        require(tree.scheme == "content") { "Папка Android недоступна" }
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        var parentId = rootId
+        val parts = mutableListOf<String>()
+        for (part in folders) {
+            val name = Paths.clean(part)
+            parts += name
+            val cached = store(ctx).getString(cacheKey(rootUri, parts), null)
+            if (cached != null && cached != PENDING) {
+                val resolved = metadata(ctx, tree, cached)
+                if (resolved?.name == name && resolved.mime == DIRECTORY) {
+                    parentId = cached
+                    continue
+                }
+            }
+            val found = children(ctx, tree, parentId).filter { it.name == name && it.mime == DIRECTORY }
+            require(found.size == 1) { "Нет однозначной папки: $name (${found.size} совпадений)" }
+            parentId = found.single().id
+        }
+        val files = children(ctx, tree, parentId)
+            .filter { it.name == Paths.clean(filename) && it.mime != DIRECTORY }
+        require(files.size == 1) {
+            "Нет однозначного файла: ${Paths.clean(filename)} (${files.size} совпадений)"
+        }
+        return documentUri(tree, files.single().id)
+    }
+
+    /**
      * Check destination before downloading from the source. A visible zero-byte
      * cloud file must be investigated, not silently skipped as complete.
      * Unknown size (null) is explicitly not a content-integrity guarantee.
