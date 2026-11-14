@@ -62,7 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' emulator 'system-images;android-35;default;x86_64'
+          "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-35;default;x86_64'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           sudo chown "$(id -u):$(id -g)" /dev/kvm
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
             --name gallery-ui --package 'system-images;android-35;default;x86_64' --device pixel_4
@@ -85,7 +86,9 @@ jobs:
         if: always()
         with:
           name: android-ui-results
-          path: app/build/outputs/androidTest-results/connected/
+          path: |
+            app/build/outputs/androidTest-results/connected/
+            ${{ runner.temp }}/gallery-emulator.log
 
   publish:
     if: github.ref == 'refs/heads/main'
