@@ -70,7 +70,7 @@ internal fun GalleryBrowser(
                         const values = [];
                         document.querySelectorAll('video,source,a[href],img[src]').forEach(el => {
                             const u = el.currentSrc || el.src || el.href || '';
-                            if (/^https:\\/\\//i.test(u) && /\\.(mp4|m4v|mov|webm|jpe?g|png|webp|avif|gif)(?:[?#]|$)/i.test(u)) {
+                            if (u.startsWith('https://') && ['.mp4','.m4v','.mov','.webm','.jpg','.jpeg','.png','.webp','.avif','.gif'].some(x => new URL(u).pathname.toLowerCase().endsWith(x))) {
                                 values.push(u);
                             }
                         });
@@ -121,7 +121,7 @@ internal fun GalleryBrowser(
                     setDownloadListener(DownloadListener { downloadUrl, userAgent, disposition, mime, _ ->
                         if (downloadUrl.startsWith("https://")) {
                             val fileName = android.webkit.URLUtil.guessFileName(downloadUrl, disposition, mime)
-                            onDownloadLink(downloadUrl, fileName, url.ifBlank { currentPage })
+                            onDownloadLink(downloadUrl, fileName, currentPage)
                         } else {
                             message = "Браузер получил ссылку, которую нельзя безопасно передать."
                         }
