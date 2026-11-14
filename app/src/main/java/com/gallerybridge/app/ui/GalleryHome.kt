@@ -41,7 +41,6 @@ internal fun GalleryHome(
     hasResults: Boolean,
     onSearch: () -> Unit,
     onResults: () -> Unit,
-    onBrowser: () -> Unit,
     mailConfigured: Boolean,
     driveConfigured: Boolean,
     onMailSettings: () -> Unit,
@@ -55,8 +54,6 @@ internal fun GalleryHome(
             Text("Новая загрузка", style = MaterialTheme.typography.titleLarge)
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
             FindMediaButton(searchAllowed && url.isNotBlank(), onSearch)
-            OutlinedButton(onClick = onBrowser, enabled = searchAllowed,
-                modifier = Modifier.fillMaxWidth()) { Text("Открыть во встроенном браузере") }
             if (hasResults) {
                 TextButton(onClick = onResults, modifier = Modifier.align(Alignment.End)) {
                     Text("Открыть результаты")
@@ -115,7 +112,7 @@ internal fun GalleryLinkField(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("Ссылка на галерею или видео", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label = { Text("Ссылка на фотогалерею", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         placeholder = { Text("https://") },
         leadingIcon = { Icon(painterResource(R.drawable.ic_link), null) },
         trailingIcon = if (enabled && url.isNotEmpty()) {
@@ -143,7 +140,7 @@ internal fun FindMediaButton(enabled: Boolean, onClick: () -> Unit) {
     ) {
         Icon(Icons.Outlined.Search, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Найти медиафайлы")
+        Text("Найти фотографии")
     }
 }
 
