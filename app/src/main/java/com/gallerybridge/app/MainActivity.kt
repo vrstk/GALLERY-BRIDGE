@@ -588,7 +588,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun beginUpload() {
-        if (working || transferRunning || videoProbeRunning || imageProbeRunning || selected.isEmpty()) return
+        if (working || transferRunning || imageProbeRunning || selected.isEmpty()) return
         if (!GalleryKeys.validDate(date.trim())) {
             uploadStatus = "Укажите реальную дату в формате ГГГГ-ММ-ДД или оставьте поле пустым."
             return
@@ -608,52 +608,7 @@ class MainActivity : ComponentActivity() {
         }
         uploadStatus = ""
         working = true
-        val chosenVideos = items.filter {
-            it.kind == Kind.VIDEO && it.url in selected && it.url.startsWith("https://")
-        }
-        if (chosenVideos.isEmpty()) {
-            if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
-            return
-        }
-        // A manual availability check is optional. Before creating a real transfer
-        // queue, verify the selected video URLs again: a prior result may be stale.
-        scope.launch {
-            try {
-                val checked = mutableListOf<VideoAvailabilityProbe.Result>()
-                for ((index, video) in chosenVideos.withIndex()) {
-                    ensureActive()
-                    uploadStatus = "Проверяем источник видео ${index + 1} из ${chosenVideos.size}..."
-                    val result = VideoAvailabilityProbe.inspect(this@MainActivity, video)
-                    ensureActive()
-                    checked.add(result)
-                    videoProbeResults = videoProbeResults + (result.url to result)
-                }
-                val blockedUrls = checked.filter { it.blocked }.map { it.url }.toSet()
-                if (blockedUrls.isNotEmpty()) {
-                    // Do not create a failed queue for files already rejected by
-                    // their source. Keep any other choices for a later attempt.
-                    selected = selected - blockedUrls
-                    uploadStatus = "Источник отказал в скачивании ${blockedUrls.size} видео (например, HTTP 403). " +
-                        "Они сняты с выделения. Очередь не создана. Проверьте другую разрешённую ссылку."
-                    working = false
-                    return@launch
-                }
-                if (checked.any { it.verdict == VideoAvailabilityProbe.Verdict.UNCERTAIN }) {
-                    uploadStatus = "Доступ к части видео не подтверждён; при передаче возможна ошибка."
-                } else {
-                    uploadStatus = ""
-                }
-                // Headers are only an early check. The transfer still validates
-                // actual bytes and HTTP status, without bypassing site restrictions.
-                if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
-            } catch (_: CancellationException) {
-                uploadStatus = "Проверка источника видео остановлена."
-                working = false
-            } catch (e: Exception) {
-                uploadStatus = "Ошибка проверки видео: ${e.message ?: "нет ответа"}"
-                working = false
-            }
-        }
+        if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
     }
 
     private fun beginGoogleAuthorization() {
@@ -704,7 +659,7 @@ class MainActivity : ComponentActivity() {
             focus.clearFocus()
             scan()
         }
-        val searchAllowed = !working && !transferRunning && !imageProbeRunning && !videoProbeRunning
+        val searchAllowed = !working && !transferRunning && !imageProbeRunning
         BackHandler(enabled = screen != GalleryPage.HOME, onBack = ::backFromPage)
         LaunchedEffect(Unit) {
             var lastRevision = -1L
@@ -749,7 +704,6 @@ class MainActivity : ComponentActivity() {
                     hasResults = items.isNotEmpty(),
                     onSearch = startSearch,
                     onResults = { screen = GalleryPage.DOWNLOADS },
-                    onBrowser = { screen = GalleryPage.BROWSER },
                     mailConfigured = email.isNotBlank() && password.isNotBlank(),
                     driveConfigured = driveId.isNotBlank(),
                     onMailSettings = { openSettings("Mail WebDAV") },
@@ -760,13 +714,6 @@ class MainActivity : ComponentActivity() {
                     }
                 ) }
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
-                GalleryPage.BROWSER -> GalleryBrowser(
-                    initialUrl = url,
-                    onMediaFound = ::acceptBrowserMedia,
-                    onDownloadLink = { link, name, page ->
-                        acceptBrowserMedia(listOf(link), page, name)
-                    }
-                )
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }
                 GalleryPage.SETTINGS -> GalleryPageColumn { SettingsPage() }
@@ -799,13 +746,9 @@ class MainActivity : ComponentActivity() {
             GalleryPageColumn {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
                 FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
-                OutlinedButton(onClick = { screen = GalleryPage.BROWSER },
-                    enabled = searchAllowed, modifier = Modifier.fillMaxWidth()) {
-                    Text("Открыть сайт во встроенном браузере")
-                }
                 OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
                     modifier = Modifier.fillMaxWidth()) {
-                    Text("Добавить видео или фото с устройства")
+                    Text("Добавить фотографии с устройства")
                 }
                 Text(status, style = MaterialTheme.typography.bodyMedium)
                 if (scanning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -879,7 +822,7 @@ class MainActivity : ComponentActivity() {
                         onClick = ::pickLocalMedia,
                         enabled = searchAllowed,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Добавить видео или фото с устройства") }
+                    ) { Text("Добавить фотографии с устройства") }
                     val totalVideoOptions = items.count {
                         it.kind == Kind.VIDEO && it.url.startsWith("https://")
                     }
