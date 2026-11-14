@@ -42,6 +42,7 @@ import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.IntegrityAudit
 import com.gallerybridge.app.network.ImageQualityProbe
+import com.gallerybridge.app.network.VideoAvailabilityProbe
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
@@ -82,6 +83,11 @@ class MainActivity : ComponentActivity() {
     private var uploadStatus by mutableStateOf("")
     private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
     private var imageProbeRunning by mutableStateOf(false)
+    private var videoProbeRunning by mutableStateOf(false)
+    private var videoProbeReport by mutableStateOf("")
+    private var videoProbeProgress by mutableStateOf("")
+    private var videoProbeResults by mutableStateOf<Map<String, VideoAvailabilityProbe.Result>>(emptyMap())
+    private var videoProbeJob: Job? = null
     private var imageProbeProgress by mutableStateOf("")
     private var imageProbeStatus by mutableStateOf("")
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
@@ -307,6 +313,47 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun checkSelectedVideos() {
+        if (videoProbeRunning || imageProbeRunning || working || transferRunning) return
+        val candidates = VideoAvailabilityProbe.candidates(items, selected)
+        if (candidates.isEmpty()) { videoProbeReport = "Выберите видео для проверки."; return }
+        videoProbeJob = scope.launch {
+            videoProbeRunning = true
+            videoProbeReport = ""
+            try {
+                var blocked = 0
+                var uncertain = 0
+                candidates.forEachIndexed { index, media ->
+                    ensureActive()
+                    videoProbeProgress = "Видео ${index + 1} из ${candidates.size}: ${media.name}"
+                    val result = VideoAvailabilityProbe.inspect(media)
+                    ensureActive()
+                    videoProbeResults = videoProbeResults + (media.url to result)
+                    if (result.blocked) {
+                        selected = selected - media.url
+                        blocked++
+                    } else if (result.verdict == VideoAvailabilityProbe.Verdict.UNCERTAIN) {
+                        uncertain++
+                    }
+                }
+                videoProbeReport = "Проверено: ${candidates.size}; недоступно: $blocked; " +
+                    "не подтверждено: $uncertain. Недоступные видео сняты с выделения. " +
+                    "Успешный ответ не гарантирует полную загрузку."
+            } catch (_: CancellationException) {
+                videoProbeReport = "Проверка видео остановлена."
+            } finally {
+                videoProbeRunning = false
+                videoProbeProgress = ""
+                videoProbeJob = null
+            }
+        }
+    }
+
+    private fun cancelVideoCheck() {
+        videoProbeJob?.cancel()
+        VideoAvailabilityProbe.cancel()
+    }
+
     private fun cancelImageSizes() {
         imageProbeJob?.cancel()
         ImageQualityProbe.cancel()
@@ -318,6 +365,9 @@ class MainActivity : ComponentActivity() {
         url = newUrl
         if (!changed) return
         cancelImageSizes()
+        cancelVideoCheck()
+        videoProbeResults = emptyMap()
+        videoProbeReport = ""
         items = emptyList()
         selected = emptySet()
         recommendedUrls = emptySet()
@@ -618,7 +668,7 @@ class MainActivity : ComponentActivity() {
             focus.clearFocus()
             scan()
         }
-        val searchAllowed = !working && !transferRunning && !imageProbeRunning
+        val searchAllowed = !working && !transferRunning && !imageProbeRunning && !videoProbeRunning
         BackHandler(enabled = screen != GalleryPage.HOME, onBack = ::backFromPage)
         LaunchedEffect(Unit) {
             var lastRevision = -1L
@@ -763,6 +813,20 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     QueueShortcut()
+                    val chosenVideos = items.count { it.kind == Kind.VIDEO && it.url in selected }
+                    if (chosenVideos > 0 || videoProbeReport.isNotBlank() || videoProbeRunning) {
+                        OutlinedButton(
+                            onClick = ::checkSelectedVideos,
+                            enabled = searchAllowed && chosenVideos > 0,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Проверить доступность выбранных видео ($chosenVideos)") }
+                        if (videoProbeRunning) {
+                            Text(videoProbeProgress, style = MaterialTheme.typography.bodySmall)
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            TextButton(onClick = ::cancelVideoCheck) { Text("Остановить проверку") }
+                        }
+                        if (videoProbeReport.isNotBlank()) Text(videoProbeReport, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -774,7 +838,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
             items(visibleItems, key = { "media:${it.url}" }) { media ->
-                MediaTile(media, media.url in selected, searchAllowed, imageProbeResults[media.url]?.display()) { checked ->
+                val availability = videoProbeResults[media.url]
+                val detail = if (media.kind == Kind.VIDEO) availability?.message ?: QualitySelector.hint(media)
+                    else imageProbeResults[media.url]?.display()
+                MediaTile(media, media.url in selected, searchAllowed && availability?.blocked != true, detail) { checked ->
                     selected = if (checked) selected + media.url else selected - media.url
                 }
             }
