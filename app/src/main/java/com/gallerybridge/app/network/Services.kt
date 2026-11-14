@@ -138,7 +138,10 @@ object Services {
                 require(file.length() > 0L) { "Локальный файл пустой" }
                 return file to mime
             }
-            http.newCall(request(media.url)).execute().use { r ->
+            val sourceRequest = BrowserSessionHeaders.withContext(
+                request(media.url).newBuilder(), media, context
+            ).build()
+            http.newCall(sourceRequest).execute().use { r ->
                 if (!r.isSuccessful) error(SourceDownloadFailure.describe(r.code))
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
                 if (mime.startsWith("text/") || mime.contains("html")) error("Вместо файла получен текст")
