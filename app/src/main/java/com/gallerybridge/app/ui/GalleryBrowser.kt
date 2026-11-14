@@ -137,7 +137,6 @@ internal fun GalleryBrowser(
             enabled = currentPage.startsWith("https://") && directVideo.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("Добавить только эту ссылку") }
-        }
         if (message.isNotBlank()) {
             Text(message, style = MaterialTheme.typography.bodySmall)
         }
