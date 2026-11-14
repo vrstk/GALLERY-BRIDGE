@@ -143,8 +143,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="preview-browser"
-          FILE="GalleryBridge-preview-browser.apk"
+          TAG="preview-photos"
+          FILE="GalleryBridge-preview-photos.apk"
           test -s app-debug.apk
           mv app-debug.apk "$FILE"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -152,6 +152,6 @@ jobs:
           else
             gh release create "$TAG" "$FILE" --prerelease \
               --target "$GITHUB_SHA" \
-              --title "Gallery Bridge Browser Preview" \
-              --notes "Experimental browser-based download build. Not yet verified with every source site. Do not remove an installed stable version."
+              --title "Gallery Bridge Photos Preview" \
+              --notes "Photo-first preview: image galleries, quality comparison, Google Drive, Mail WebDAV and Android folder transfers. Video workflows are deferred. Do not remove an installed stable version."
           fi
