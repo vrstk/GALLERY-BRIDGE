@@ -52,7 +52,7 @@ object HistoryStore {
         }
     }
 
-    @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String) {
+    @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String): Boolean {
         val now = System.currentTimeMillis()
         val list = listOf(
             Record(
@@ -79,7 +79,7 @@ object HistoryStore {
                 .put("skipped", it.skipped).put("failed", it.failed)
                 .put("outcome", it.outcome))
         }
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+        return context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString(KEY, arr.toString()).commit()
     }
 }

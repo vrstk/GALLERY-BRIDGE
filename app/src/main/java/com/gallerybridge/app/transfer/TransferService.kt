@@ -70,7 +70,8 @@ class TransferService : Service() {
             val array = JSONArray()
             for (file in files) {
                 array.put(JSONObject().put("url", file.url).put("name", file.name)
-                    .put("kind", file.kind.name).put("source", file.source))
+                    .put("kind", file.kind.name).put("source", file.source)
+                    .put("referrer", file.referrer))
             }
             val intent = Intent(context, TransferService::class.java)
                 .setAction(ACTION_START)
@@ -164,9 +165,10 @@ class TransferService : Service() {
         job = scope.launch {
             try {
                 val src = intent ?: error("Не указано задание")
-                val files = queue.entries.filter {
-                    it.state != "DONE" && it.state != "SKIPPED"
-                }.map { it.media }
+                val pending = queue.entries.withIndex().filter {
+                    it.value.state != "DONE" && it.value.state != "SKIPPED"
+                }
+                val files = pending.map { it.value.media }
                 val result = Services.transfer(
                     applicationContext, files, queue.model, queue.title, queue.date,
                     queue.target, src.getStringExtra(EXTRA_EMAIL).orEmpty(),
@@ -181,9 +183,9 @@ class TransferService : Service() {
                         val overall = (queue.completed + withinRun).coerceAtMost(queue.entries.size)
                         showProgress(overall, queue.entries.size)
                     },
-                    onItemResult = { item, state ->
+                    onItemResult = { index, item, state ->
                         if (mySession == session && !cancelRequested) {
-                            QueueStore.checkpoint(applicationContext, queue.id, item.url, state)
+                            QueueStore.checkpoint(applicationContext, queue.id, pending[index].index, item, state)
                             QueueStore.load(applicationContext)?.let { updated ->
                                 if (updated.id == queue.id) {
                                     val successes = updated.entries.count { it.state == "DONE" }

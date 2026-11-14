@@ -2,10 +2,12 @@ name: Build Android APK
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -27,14 +29,83 @@ jobs:
           gradle-version: '8.13'
       - name: Build and test
         run: gradle --no-daemon testDebugUnitTest assembleDebug
+      - name: Build standalone preview APK
+        if: github.ref != 'refs/heads/main'
+        run: gradle --no-daemon -PgalleryBridgePreview=true assembleDebug
       - uses: actions/upload-artifact@v4
+        if: github.ref != 'refs/heads/main'
+        with:
+          name: GalleryBridge-preview-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
         with:
           name: GalleryBridge-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # Public repo: publish an APK download that works without an Actions artifact login.
-      # Github Actions artifact links are not consistently downloadable on mobile.
+  android-ui:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Install Android SDK and prepare the emulator
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-35;default;x86_64'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/gallery-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name gallery-ui --package 'system-images;android-35;default;x86_64' --device pixel_4 \
+            --path "$ANDROID_AVD_HOME/gallery-ui.avd"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx gallery-ui
+      - name: Test Home, search, navigation and theme on Android
+        run: |
+          set -euo pipefail
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd gallery-ui -no-window -no-audio -no-snapshot \
+            -gpu swiftshader_indirect -no-metrics -no-boot-anim > "$RUNNER_TEMP/gallery-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
+            tail -n 60 "$RUNNER_TEMP/gallery-emulator.log"
+            exit 1
+          fi
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          gradle --no-daemon -PgalleryBridgePreview=true connectedDebugAndroidTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-ui-results
+          path: |
+            app/build/outputs/androidTest-results/connected/
+            ${{ runner.temp }}/gallery-emulator.log
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-debug-apk
       - name: Publish public APK in GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,7 +116,7 @@ jobs:
           test -n "$VERSION"
           TAG="v$VERSION"
           FILE="GalleryBridge-v$VERSION.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$FILE"
+          mv app-debug.apk "$FILE"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$FILE" --clobber
           else

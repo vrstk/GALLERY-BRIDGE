@@ -105,9 +105,12 @@ object IntegrityAudit {
         return md.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
-    private suspend fun sourceHash(media: Media): String {
+    private suspend fun sourceHash(context: Context, media: Media): String {
         require(Uri.parse(media.url).scheme == "https") { "Источник должен быть HTTPS" }
-        val req = Request.Builder().url(media.url).header("User-Agent", "GalleryBridge/0.1").build()
+        val req = BrowserSessionHeaders.withContext(
+            Request.Builder().url(media.url).header("User-Agent", "GalleryBridge/0.1"),
+            media, context
+        ).build()
         return http.newCall(req).execute().use { response ->
             require(response.isSuccessful) { "Источник HTTP " + response.code }
             require(response.request.url.scheme == "https") { "Источник перенаправил на HTTP" }
@@ -154,8 +157,8 @@ object IntegrityAudit {
             progress(i + 1, media.size, item.name)
             try {
                 val path = Paths.folders(queue.model, queue.date, queue.title, item.kind)
-                val uri = existingFile(context, tree, path, item.name)
-                val src = sourceHash(item)
+                val uri = SafDestination.existingFileForAudit(context, queue.root, path, item.name)
+                val src = sourceHash(context, item)
                 val dest = context.contentResolver.openInputStream(uri)?.let { hash(it) }
                     ?: error("Невозможно прочитать сохранённый файл")
                 if (src == dest) {

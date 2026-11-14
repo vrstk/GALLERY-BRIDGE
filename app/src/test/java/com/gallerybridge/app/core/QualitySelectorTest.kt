@@ -50,6 +50,22 @@ class QualitySelectorTest {
         assertEquals(setOf(previews[1].url), QualitySelector.recommended(previews))
     }
 
+    @Test fun videoVariantsAreGroupedAndPreferNamed720p() {
+        val low = Media("https://cdn.example.org/v/clip_180.mp4", "clip_180.mp4", Kind.VIDEO, "Видео")
+        val high = low.copy(url = "https://cdn.example.org/v/clip_720.mp4", name = "clip_720.mp4")
+        val plain = low.copy(url = "https://cdn.example.org/v/clip.mp4", name = "clip.mp4")
+        assertEquals(QualitySelector.groupKey(low), QualitySelector.groupKey(high))
+        assertEquals(QualitySelector.groupKey(high), QualitySelector.groupKey(plain))
+        assertEquals(setOf(high.url), QualitySelector.recommended(listOf(low, plain, high)))
+        assertTrue(QualitySelector.hint(high).contains("720p"))
+    }
+
+    @Test fun videoVariantsInDifferentFoldersRemainSeparate() {
+        val high = Media("https://cdn.example.org/a/clip_720.mp4", "clip_720.mp4", Kind.VIDEO, "Видео")
+        val low = high.copy(url = "https://cdn.example.org/b/clip_180.mp4", name = "clip_180.mp4")
+        assertEquals(2, QualitySelector.recommended(listOf(high, low)).size)
+    }
+
     @Test fun neverInventsUrls() {
         val input = listOf(photo("0002-01_1200.jpg"))
         assertTrue(QualitySelector.recommended(input).all { target -> input.any { it.url == target } })

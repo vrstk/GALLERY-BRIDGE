@@ -40,7 +40,7 @@ object QueueStore {
                 for (i in 0 until list.length()) {
                     val x = list.getJSONObject(i)
                     add(Entry(Media(x.getString("url"), x.getString("name"),
-                        Kind.valueOf(x.getString("kind")), x.optString("source")),
+                        Kind.valueOf(x.getString("kind")), x.optString("source"), x.optString("referrer")),
                         x.optString("state", "PENDING")))
                 }
             }
@@ -64,19 +64,40 @@ object QueueStore {
             entries.put(JSONObject()
                 .put("url", entry.media.url).put("name", entry.media.name)
                 .put("kind", entry.media.kind.name)
-                .put("source", entry.media.source).put("state", entry.state))
+                .put("source", entry.media.source).put("referrer", entry.media.referrer)
+                .put("state", entry.state))
         }
         json.put("entries", entries)
         // Synchronous commit for durable checkpoints.
         storage(context).edit().putString(KEY, json.toString()).commit()
     }
 
-    @Synchronized fun checkpoint(context: Context, id: Long, url: String, state: String) {
+    /**
+     * Only the exact queue entry that was processed may change.
+     * URLs can repeat across entries with different names, and even identical
+     * media can appear more than once in an imported queue.
+     */
+    fun applyItemResult(snapshot: Snapshot, entryIndex: Int, media: Media, state: String): Snapshot {
+        require(state in setOf("DONE", "SKIPPED", "FAILED")) { "Invalid queue state: $state" }
+        val old = snapshot.entries.getOrNull(entryIndex) ?: return snapshot
+        if (old.media != media || old.state == "DONE" || old.state == "SKIPPED") return snapshot
+        val entries = snapshot.entries.toMutableList()
+        entries[entryIndex] = old.copy(state = state)
+        return snapshot.copy(entries = entries)
+    }
+
+    @Synchronized fun checkpoint(context: Context, id: Long, entryIndex: Int, media: Media, state: String) {
         val before = load(context) ?: return
         if (before.id != id) return
-        save(context, before.copy(entries = before.entries.map {
-            if (it.media.url == url) it.copy(state = state) else it
-        }))
+        val after = applyItemResult(before, entryIndex, media, state)
+        if (after != before) save(context, after)
+    }
+
+    /** Clear only the queue explicitly confirmed by the user; never clear a newer one. */
+    @Synchronized fun clearIfId(context: Context, id: Long): Boolean {
+        val current = load(context) ?: return false
+        if (current.id != id) return false
+        return storage(context).edit().remove(KEY).commit()
     }
 
     fun newSnapshot(
