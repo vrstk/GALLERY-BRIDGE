@@ -24,7 +24,7 @@ object PageMetadata {
     private val modelLead = Regex(
         """^([\p{Lu}][\p{L}.'-]+(?:\s+[\p{Lu}][\p{L}.'-]+){0,3}?)\s+(?:Nude|Naked|Topless|in)\b"""
     )
-    private val isoDate = Regex("""\b(?:19|20)\d{2}-\d{2}-\d{2}\b""")
+    private val isoDate = Regex("""(?:19|20)\d{2}-\d{2}-\d{2}""")
     private val monthFormats = listOf(
         "MMMM d, uuuu", "MMM d, uuuu", "d MMMM uuuu", "d MMM uuuu"
     ).map {
@@ -37,7 +37,13 @@ object PageMetadata {
         if (value.isBlank()) return null
         val match = isoDate.find(value)?.value
         if (match != null) {
-            val parsed = runCatching { LocalDate.parse(match) }.getOrNull()
+            val parsed = runCatching {
+                LocalDate.of(
+                    match.substring(0, 4).toInt(),
+                    match.substring(5, 7).toInt(),
+                    match.substring(8, 10).toInt()
+                )
+            }.getOrNull()
             if (parsed != null) return parsed.toString()
         }
         for (format in monthFormats) {
