@@ -84,6 +84,16 @@ class GalleryHomeTest {
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
     }
 
+    @Test
+    fun switchingMailAccountClearsUnsavedPassword() {
+        compose.onNodeWithText("Mail WebDAV", substring = true).performClick()
+        compose.onNodeWithText("Почта Mail").performTextInput("first@example.com")
+        compose.onNodeWithText("Пароль внешнего приложения").performTextInput("secret-for-first")
+        compose.onNodeWithText("Почта Mail").performTextReplacement("second@example.com")
+        compose.onNodeWithText("Показать").performClick()
+        compose.onNodeWithText("secret-for-first").assertDoesNotExist()
+    }
+
     private fun awaitSearchResult() {
         compose.waitUntil(timeoutMillis = 8_000) {
             compose.onNodeWithText("Найдено файлов: 1").isDisplayed()
