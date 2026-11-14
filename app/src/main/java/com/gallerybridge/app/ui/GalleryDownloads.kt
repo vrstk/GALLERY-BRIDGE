@@ -73,7 +73,12 @@ internal fun MediaTile(
                     val request = remember(context, media.url) {
                         ImageRequest.Builder(context)
                             .data(media.url)
-                            .httpHeaders(NetworkHeaders.Builder().set("User-Agent", "GalleryBridge/0.1").build())
+                            .apply {
+                                if (media.url.startsWith("https://")) {
+                                    httpHeaders(NetworkHeaders.Builder()
+                                        .set("User-Agent", "GalleryBridge/0.1").build())
+                                }
+                            }
                             .diskCachePolicy(CachePolicy.DISABLED)
                             .build()
                     }
