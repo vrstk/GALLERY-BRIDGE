@@ -44,7 +44,7 @@ object VideoAvailabilityProbe {
     }
 
     fun candidates(items: List<Media>, selection: Set<String>): List<Media> =
-        items.asSequence().filter { it.kind == Kind.VIDEO && it.url in selection }
+        items.asSequence().filter { it.kind == Kind.VIDEO && it.url.startsWith("https://") && it.url in selection }
             .distinctBy { it.url }.take(MAX_SELECTED).toList()
 
     /** Count each discovered video URL exactly once, regardless of the selected quality. */
@@ -60,7 +60,7 @@ object VideoAvailabilityProbe {
     }
 
     fun summary(items: List<Media>, results: Map<String, Result>): Summary {
-        val urls = items.asSequence().filter { it.kind == Kind.VIDEO }
+        val urls = items.asSequence().filter { it.kind == Kind.VIDEO && it.url.startsWith("https://") }
             .map { it.url }.distinct().toList()
         val observed = urls.mapNotNull { results[it] }
         return Summary(
@@ -73,7 +73,7 @@ object VideoAvailabilityProbe {
     }
 
     fun allCandidates(items: List<Media>): List<Media> =
-        items.asSequence().filter { it.kind == Kind.VIDEO }
+        items.asSequence().filter { it.kind == Kind.VIDEO && it.url.startsWith("https://") }
             .distinctBy { it.url }.take(MAX_SELECTED).toList()
 
     suspend fun inspect(media: Media): Result = withContext(Dispatchers.IO) {
