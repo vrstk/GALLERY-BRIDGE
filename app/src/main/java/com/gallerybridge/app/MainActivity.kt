@@ -113,6 +113,45 @@ class MainActivity : ComponentActivity() {
     private var auditProgress by mutableStateOf("")
     private var auditReport by mutableStateOf("")
 
+    private val mediaPicker = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        if (working || transferRunning || videoProbeRunning || imageProbeRunning) {
+            status = "Дождитесь завершения текущей операции."
+            return@registerForActivityResult
+        }
+        val imported = mutableListOf<Media>()
+        var unsupported = 0
+        for (uri in uris.take(LocalMediaImport.MAX_FILES)) {
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                val media = LocalMediaImport.fromDocument(this, uri)
+                if (media != null) imported.add(media) else unsupported++
+            } catch (_: Exception) { unsupported++ }
+        }
+        if (imported.isNotEmpty()) {
+            val existing = items.map { it.url }.toSet()
+            val additions = imported.distinctBy { it.url }.filter { it.url !in existing }
+            items = items + additions
+            selected = selected + additions.map { it.url }
+            recommendedUrls = recommendedUrls + additions.map { it.url }
+            mediaFilter = null
+            showOtherMedia = false
+            screen = GalleryPage.DOWNLOADS
+            if (title.isBlank()) title = "Импортированные файлы"
+            if (model.isBlank()) model = "Без имени"
+            status = "Добавлено локальных файлов: ${additions.size}."
+        } else status = "Новых поддерживаемых файлов не выбрано."
+        if (unsupported > 0) status += " Пропущено: $unsupported."
+    }
+
+    private fun pickLocalMedia() {
+        if (!working && !transferRunning && !videoProbeRunning && !imageProbeRunning) {
+            mediaPicker.launch(arrayOf("video/*", "image/*"))
+        }
+    }
+
     private val treePicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             try {
@@ -631,7 +670,9 @@ class MainActivity : ComponentActivity() {
         }
         uploadStatus = ""
         working = true
-        val chosenVideos = items.filter { it.kind == Kind.VIDEO && it.url in selected }
+        val chosenVideos = items.filter {
+            it.kind == Kind.VIDEO && it.url in selected && it.url.startsWith("https://")
+        }
         if (chosenVideos.isEmpty()) {
             if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
             return
@@ -812,6 +853,10 @@ class MainActivity : ComponentActivity() {
             GalleryPageColumn {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
                 FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
+                OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
+                    modifier = Modifier.fillMaxWidth()) {
+                    Text("Добавить видео или фото с устройства")
+                }
                 Text(status, style = MaterialTheme.typography.bodyMedium)
                 if (scanning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 QueueShortcut()
@@ -876,7 +921,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     QueueShortcut()
-                    val totalVideoOptions = items.count { it.kind == Kind.VIDEO }
+                    OutlinedButton(
+                        onClick = ::pickLocalMedia,
+                        enabled = searchAllowed,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Добавить видео или фото с устройства") }
+                    val totalVideoOptions = items.count {
+                        it.kind == Kind.VIDEO && it.url.startsWith("https://")
+                    }
                     val remainingUnchecked = VideoAvailabilityProbe.allCandidates(items)
                         .count { videoProbeResults[it.url]?.blocked != true }
                     if (totalVideoOptions > 0 || videoProbeReport.isNotBlank() || videoProbeRunning) {
