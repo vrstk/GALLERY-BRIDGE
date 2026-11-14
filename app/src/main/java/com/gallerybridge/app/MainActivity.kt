@@ -373,7 +373,7 @@ class MainActivity : ComponentActivity() {
                 selected = recommended
                 items = scan.media
                 status = if (items.isEmpty()) "Медиафайлы по этой ссылке не найдены."
-                    else "Найдено ${items.size} медиассылок."
+                    else "Найдено файлов: ${items.size}"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
