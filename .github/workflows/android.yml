@@ -1,7 +1,7 @@
 name: Build Android APK
 on:
   push:
-    branches: [main]
+    branches: [main, codex/gallery-bridge-home]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -124,4 +124,34 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "Gallery Bridge $TAG" \
               --notes "Тестовая Android APK GALLERY BRIDGE $TAG. Скачайте APK в разделе Assets. Сборка с отладочной подписью; для постоянных обновлений нужна стабильная подпись."
+          fi
+
+  publish-preview:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-preview-apk
+      - name: Publish directly downloadable preview APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="preview-browser"
+          FILE="GalleryBridge-preview-browser.apk"
+          test -s app-debug.apk
+          mv app-debug.apk "$FILE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --clobber
+          else
+            gh release create "$TAG" "$FILE" --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Gallery Bridge Browser Preview" \
+              --notes "Experimental browser-based download build. Not yet verified with every source site. Do not remove an installed stable version."
           fi
