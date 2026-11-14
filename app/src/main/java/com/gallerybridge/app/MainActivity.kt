@@ -807,7 +807,7 @@ class MainActivity : ComponentActivity() {
                                 selected = selected + visibleItems.map(Media::url)
                             },
                             enabled = searchAllowed && visibleItems.any { it.url !in selected }
-                        ) { Text("Выбрать все в фильтре") }
+                        ) { Text("Выбрать все фото") }
                         TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
                             Text("Снять выделение")
                         }
