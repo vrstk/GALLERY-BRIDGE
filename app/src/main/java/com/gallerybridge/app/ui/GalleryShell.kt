@@ -25,7 +25,6 @@ import com.gallerybridge.app.R
 internal enum class GalleryPage(val label: String, val title: String = label) {
     HOME("Главная", "GALLERY BRIDGE"),
     DOWNLOADS("Загрузки"),
-    BROWSER("Браузер", "Браузер медиа"),
     QUEUE("Очередь", "Очередь загрузок"),
     HISTORY("История", "История загрузок"),
     SETTINGS("Настройки")
@@ -104,7 +103,6 @@ internal fun GalleryShell(
                                         when (destination) {
                                             GalleryPage.HOME -> Icon(Icons.Outlined.Home, null)
                                             GalleryPage.DOWNLOADS -> NavigationIcon(R.drawable.ic_download)
-                                            GalleryPage.BROWSER -> Unit
                                             GalleryPage.QUEUE -> Icon(Icons.AutoMirrored.Outlined.List, null)
                                             GalleryPage.HISTORY -> NavigationIcon(R.drawable.ic_history)
                                             GalleryPage.SETTINGS -> Unit
