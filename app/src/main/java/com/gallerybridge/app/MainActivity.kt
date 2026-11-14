@@ -134,10 +134,16 @@ class MainActivity : ComponentActivity() {
         history = HistoryStore.load(this)
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
-        url = intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty().takeIf { it.startsWith("https://") }.orEmpty()
+        intent?.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
+            .takeIf { it.startsWith("https://") }?.let { setGalleryUrl(it) }
         setContent { MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) { Surface(Modifier.fillMaxSize().safeDrawingPadding()) { Ui() } } }
     }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(Intent.EXTRA_TEXT)?.let {
+            if (it.startsWith("https://")) setGalleryUrl(it)
+        }
+    }
     private fun verifyImageSizes() {
         if (imageProbeRunning || working || transferRunning) return
         val candidates = ImageProbePlan.candidates(items, selected)
@@ -226,6 +232,42 @@ class MainActivity : ComponentActivity() {
         ImageQualityProbe.cancel()
     }
 
+    private fun setGalleryUrl(newUrl: String) {
+        val changed = GalleryKeys.canonical(url) != GalleryKeys.canonical(newUrl) ||
+            (newUrl.isBlank() && url.isNotBlank())
+        url = newUrl
+        if (!changed) return
+        items = emptyList()
+        selected = emptySet()
+        recommendedUrls = emptySet()
+        imageProbeResults = emptyMap()
+        comparisonPairs = emptyList()
+        comparisonReport = ""
+        mediaPageLimit = MediaResults.PAGE_SIZE
+        showOtherMedia = false
+        model = ""
+        title = ""
+        date = ""
+        metadataReport = ""
+        val cached = GalleryMetadataStore.load(this, newUrl)
+        if (cached != null) {
+            model = cached.model
+            title = cached.title
+            date = cached.date
+            metadataReport = "Восстановлены сохранённые данные для этой галереи."
+        }
+        status = "Найди фото и видео по этой ссылке."
+    }
+
+    private fun saveGalleryMetadata() {
+        status = try {
+            GalleryMetadataStore.save(this, url, GalleryFields(model, title, date))
+            "Данные этой галереи сохранены на устройстве. Они будут восстановлены по той же ссылке."
+        } catch (e: Exception) {
+            "Не удалось сохранить данные галереи: ${e.message}"
+        }
+    }
+
     private fun scan() {
         if (working || transferRunning || imageProbeRunning) return
         working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); comparisonPairs = emptyList(); comparisonReport = ""; metadataReport = ""; mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
@@ -234,10 +276,16 @@ class MainActivity : ComponentActivity() {
             val recommended = withContext(Dispatchers.Default) {
                 QualitySelector.recommended(s.media)
             }
-            title = s.title
-            if (date.isBlank()) date = s.date
-            if (model.isBlank() && s.suggestedModel.isNotBlank()) model = s.suggestedModel
+            val saved = GalleryMetadataStore.load(this@MainActivity, url)
+            if (title.isBlank()) title = saved?.title?.takeIf { it.isNotBlank() } ?: s.title
+            if (date.isBlank()) date = saved?.date ?: s.date
+            if (model.isBlank()) {
+                model = saved?.model?.takeIf { it.isNotBlank() } ?: s.suggestedModel
+            }
             metadataReport = buildString {
+                if (saved != null) {
+                    append("Для этой ссылки есть сохранённые данные.")
+                }
                 if (s.suggestedModel.isNotBlank()) {
                     append("Имя модели предложено по заголовку страницы; проверь его перед загрузкой.")
                 }
@@ -437,7 +485,9 @@ class MainActivity : ComponentActivity() {
             } else if (screen == 2) {
                 HistoryPage()
             } else {
-            OutlinedTextField(url, {url=it}, label={Text("HTTPS-ссылка")}, modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(url, { setGalleryUrl(it) }, label={Text("HTTPS-ссылка")},
+                enabled=!working && !transferRunning && !imageProbeRunning,
+                modifier=Modifier.fillMaxWidth())
             Button(onClick=::scan, enabled=!working && !transferRunning && !imageProbeRunning && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
             Text(status)
             if (reportDetails.isNotBlank()) {
@@ -486,6 +536,18 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
             if (metadataReport.isNotBlank()) Text(metadataReport, style=MaterialTheme.typography.bodySmall)
+            OutlinedButton(
+                onClick=::saveGalleryMetadata,
+                enabled=!working && !transferRunning && !imageProbeRunning &&
+                    GalleryKeys.canonical(url) != null &&
+                    model.isNotBlank() && title.isNotBlank(),
+                modifier=Modifier.fillMaxWidth()
+            ) { Text("Сохранить данные этой галереи") }
+            Text(
+                "Данные привязываются к HTTPS-ссылке и хранятся только на этом устройстве. " +
+                    "Дата должна соответствовать YYYY-MM-DD или оставаться пустой.",
+                style=MaterialTheme.typography.bodySmall
+            )
             Text("Найдено: ${items.size}; выбрано: ${selected.size}")
             val visibleItems = remember(items, showOtherMedia, recommendedUrls) {
                 MediaResults.visible(items, showOtherMedia, recommendedUrls)
@@ -621,7 +683,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&!imageProbeRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.17 • Предложения имени модели и проверенной даты публикации из HTML.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.18 • Локальное сохранение данных каждой галереи по её ссылке.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
