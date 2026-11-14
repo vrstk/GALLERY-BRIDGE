@@ -15,6 +15,7 @@ import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
@@ -90,7 +91,7 @@ class GalleryHomeTest {
 
     @Test
     fun switchingMailAccountClearsUnsavedPassword() {
-        compose.onNodeWithText("Mail WebDAV", substring = true).performClick()
+        compose.onNodeWithTag("storage-mail-webdav").performClick()
         compose.onNodeWithText("Почта Mail").performTextInput("first@example.com")
         compose.onNodeWithText("Пароль внешнего приложения").performTextInput("secret-for-first")
         compose.onNodeWithText("Почта Mail").performTextReplacement("second@example.com")
