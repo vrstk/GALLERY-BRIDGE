@@ -39,11 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
-import com.gallerybridge.app.network.BrowserSessionHeaders
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.IntegrityAudit
 import com.gallerybridge.app.network.ImageQualityProbe
-import com.gallerybridge.app.network.VideoAvailabilityProbe
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
@@ -118,7 +116,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isEmpty()) return@registerForActivityResult
-        if (working || transferRunning || videoProbeRunning || imageProbeRunning) {
+        if (working || transferRunning || imageProbeRunning) {
             status = "Дождитесь завершения текущей операции."
             return@registerForActivityResult
         }
@@ -128,7 +126,7 @@ class MainActivity : ComponentActivity() {
             try {
                 contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 val media = LocalMediaImport.fromDocument(this, uri)
-                if (media != null) imported.add(media) else unsupported++
+                if (media?.kind == Kind.PHOTO) imported.add(media) else unsupported++
             } catch (_: Exception) { unsupported++ }
         }
         if (imported.isNotEmpty()) {
@@ -148,8 +146,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun pickLocalMedia() {
-        if (!working && !transferRunning && !videoProbeRunning && !imageProbeRunning) {
-            mediaPicker.launch(arrayOf("video/*", "image/*"))
+        if (!working && !transferRunning && !imageProbeRunning) {
+            mediaPicker.launch(arrayOf("image/*"))
         }
     }
 
