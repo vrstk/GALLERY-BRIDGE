@@ -8,7 +8,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -33,16 +32,6 @@ import com.gallerybridge.app.R
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun MediaFilters(selected: Kind?, photos: Int, videos: Int, onSelect: (Kind?) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected == null, { onSelect(null) }, { Text("Все (${photos + videos})") })
-        FilterChip(selected == Kind.PHOTO, { onSelect(Kind.PHOTO) }, { Text("Фото ($photos)") }, enabled = photos > 0)
-        FilterChip(selected == Kind.VIDEO, { onSelect(Kind.VIDEO) }, { Text("Видео ($videos)") }, enabled = videos > 0)
-    }
-}
-
 @Composable
 internal fun MediaTile(
     media: Media,
@@ -66,32 +55,28 @@ internal fun MediaTile(
                 Modifier.fillMaxWidth().aspectRatio(1f).background(colors.surfaceContainerHigh),
                 contentAlignment = Alignment.Center
             ) {
-                if (media.kind == Kind.VIDEO) {
-                    Icon(Icons.Outlined.PlayArrow, "Видео", Modifier.size(36.dp), tint = colors.primary)
-                } else {
-                    val context = LocalContext.current
-                    val request = remember(context, media.url) {
-                        ImageRequest.Builder(context)
-                            .data(media.url)
-                            .apply {
-                                if (media.url.startsWith("https://")) {
-                                    httpHeaders(NetworkHeaders.Builder()
-                                        .set("User-Agent", "GalleryBridge/0.1").build())
-                                }
+                val context = LocalContext.current
+                val request = remember(context, media.url) {
+                    ImageRequest.Builder(context)
+                        .data(media.url)
+                        .apply {
+                            if (media.url.startsWith("https://")) {
+                                httpHeaders(NetworkHeaders.Builder()
+                                    .set("User-Agent", "GalleryBridge/0.1").build())
                             }
-                            .diskCachePolicy(CachePolicy.DISABLED)
-                            .build()
-                    }
-                    val placeholder = painterResource(R.drawable.ic_gallery_bridge)
-                    AsyncImage(
-                        model = request,
-                        contentDescription = null,
-                        modifier = Modifier.matchParentSize(),
-                        contentScale = ContentScale.Crop,
-                        placeholder = placeholder,
-                        error = placeholder
-                    )
+                        }
+                        .diskCachePolicy(CachePolicy.DISABLED)
+                        .build()
                 }
+                val placeholder = painterResource(R.drawable.ic_gallery_bridge)
+                AsyncImage(
+                    model = request,
+                    contentDescription = null,
+                    modifier = Modifier.matchParentSize(),
+                    contentScale = ContentScale.Crop,
+                    placeholder = placeholder,
+                    error = placeholder
+                )
                 Surface(
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                     shape = MaterialTheme.shapes.small,
