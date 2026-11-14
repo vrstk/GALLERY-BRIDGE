@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
+import com.gallerybridge.app.network.BrowserSessionHeaders
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.IntegrityAudit
 import com.gallerybridge.app.network.ImageQualityProbe
@@ -371,7 +372,7 @@ class MainActivity : ComponentActivity() {
                 candidates.forEachIndexed { index, media ->
                     ensureActive()
                     videoProbeProgress = "Видео ${index + 1} из ${candidates.size}: ${media.name}"
-                    val result = VideoAvailabilityProbe.inspect(media)
+                    val result = VideoAvailabilityProbe.inspect(this@MainActivity, media)
                     ensureActive()
                     videoProbeResults = videoProbeResults + (media.url to result)
                     if (result.blocked) {
@@ -450,6 +451,35 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             "Не удалось сохранить данные галереи: ${e.message}"
         }
+    }
+
+    private fun acceptBrowserMedia(found: List<String>, page: String, pageTitle: String) {
+        val extensions = setOf("mp4", "m4v", "mov", "webm", "jpg", "jpeg", "png", "webp", "avif", "gif")
+        val incoming = found.take(120).mapNotNull { candidate ->
+            val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: return@mapNotNull null
+            if (parsed.scheme != "https" || parsed.host.isNullOrBlank()) return@mapNotNull null
+            val filename = parsed.lastPathSegment.orEmpty()
+            val extension = filename.substringAfterLast('.', "").lowercase()
+            if (extension !in extensions) return@mapNotNull null
+            val kind = if (extension in setOf("mp4", "m4v", "mov", "webm")) Kind.VIDEO else Kind.PHOTO
+            Media(candidate, Paths.clean(filename), kind, BrowserSessionHeaders.SOURCE, page)
+        }.distinctBy { it.url }
+        val seen = items.map { it.url }.toSet()
+        val additional = incoming.filter { it.url !in seen }
+        if (additional.isEmpty()) {
+            status = "В браузере не найдено новых прямых медиафайлов."
+            screen = GalleryPage.DOWNLOADS
+            return
+        }
+        items = items + additional
+        selected = selected + additional.map { it.url }
+        recommendedUrls = recommendedUrls + additional.map { it.url }
+        if (title.isBlank()) title = pageTitle.take(180).ifBlank { "Медиа из браузера" }
+        if (model.isBlank()) model = "Без имени"
+        showOtherMedia = false
+        mediaFilter = null
+        status = "Добавлено из браузера: ${additional.size}. Доступность при скачивании не гарантируется."
+        screen = GalleryPage.DOWNLOADS
     }
 
     private fun scan() {
@@ -685,7 +715,7 @@ class MainActivity : ComponentActivity() {
                 for ((index, video) in chosenVideos.withIndex()) {
                     ensureActive()
                     uploadStatus = "Проверяем источник видео ${index + 1} из ${chosenVideos.size}..."
-                    val result = VideoAvailabilityProbe.inspect(video)
+                    val result = VideoAvailabilityProbe.inspect(this@MainActivity, video)
                     ensureActive()
                     checked.add(result)
                     videoProbeResults = videoProbeResults + (result.url to result)
@@ -811,6 +841,7 @@ class MainActivity : ComponentActivity() {
                     hasResults = items.isNotEmpty(),
                     onSearch = startSearch,
                     onResults = { screen = GalleryPage.DOWNLOADS },
+                    onBrowser = { screen = GalleryPage.BROWSER },
                     mailConfigured = email.isNotBlank() && password.isNotBlank(),
                     driveConfigured = driveId.isNotBlank(),
                     onMailSettings = { openSettings("Mail WebDAV") },
@@ -821,6 +852,13 @@ class MainActivity : ComponentActivity() {
                     }
                 ) }
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
+                GalleryPage.BROWSER -> GalleryBrowser(
+                    initialUrl = url,
+                    onMediaFound = ::acceptBrowserMedia,
+                    onDownloadLink = { link, name, page ->
+                        acceptBrowserMedia(listOf(link), page, name)
+                    }
+                )
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }
                 GalleryPage.SETTINGS -> GalleryPageColumn { SettingsPage() }
@@ -853,6 +891,10 @@ class MainActivity : ComponentActivity() {
             GalleryPageColumn {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
                 FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
+                OutlinedButton(onClick = { screen = GalleryPage.BROWSER },
+                    enabled = searchAllowed, modifier = Modifier.fillMaxWidth()) {
+                    Text("Открыть сайт во встроенном браузере")
+                }
                 OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
                     modifier = Modifier.fillMaxWidth()) {
                     Text("Добавить видео или фото с устройства")
@@ -921,6 +963,10 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     QueueShortcut()
+                    OutlinedButton(onClick = { screen = GalleryPage.BROWSER },
+                        enabled = searchAllowed, modifier = Modifier.fillMaxWidth()) {
+                        Text("Открыть сайт во встроенном браузере")
+                    }
                     OutlinedButton(
                         onClick = ::pickLocalMedia,
                         enabled = searchAllowed,
