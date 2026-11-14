@@ -1,7 +1,7 @@
 package com.gallerybridge.app.core
 
 enum class Kind { PHOTO, VIDEO }
-data class Media(val url: String, val name: String, val kind: Kind, val source: String)
+data class Media(val url: String, val name: String, val kind: Kind, val source: String, val referrer: String = "")
 data class Scan(val title: String, val date: String, val media: List<Media>, val suggestedModel: String = "", val modelSource: String = "", val dateSource: String = "")
 
 object Paths {
