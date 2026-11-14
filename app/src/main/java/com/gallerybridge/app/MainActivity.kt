@@ -315,8 +315,14 @@ class MainActivity : ComponentActivity() {
 
     private fun checkSelectedVideos() {
         if (videoProbeRunning || imageProbeRunning || working || transferRunning) return
-        val candidates = VideoAvailabilityProbe.candidates(items, selected)
-        if (candidates.isEmpty()) { videoProbeReport = "Выберите видео для проверки."; return }
+        val candidates = VideoAvailabilityProbe.allCandidates(items)
+            .filter { videoProbeResults[it.url]?.blocked != true }
+        if (candidates.isEmpty()) {
+            videoProbeReport = if (VideoAvailabilityProbe.summary(items, videoProbeResults).allBlocked)
+                "Все найденные варианты видео отклонены сервером источника."
+                else "Новых вариантов для проверки нет."
+            return
+        }
         videoProbeJob = scope.launch {
             videoProbeRunning = true
             videoProbeReport = ""
@@ -336,9 +342,15 @@ class MainActivity : ComponentActivity() {
                         uncertain++
                     }
                 }
-                videoProbeReport = "Проверено: ${candidates.size}; недоступно: $blocked; " +
-                    "не подтверждено: $uncertain. Недоступные видео сняты с выделения. " +
-                    "Успешный ответ не гарантирует полную загрузку."
+                val summary = VideoAvailabilityProbe.summary(items, videoProbeResults)
+                videoProbeReport = buildString {
+                    append("Всего вариантов: ${summary.total}; проверено: ${summary.checked}; ")
+                    append("недоступно: ${summary.blocked}; ответ положительный: ${summary.accepted}; ")
+                    append("не определено: ${summary.uncertain}.")
+                    if (summary.notChecked > 0) append(" Ещё не проверено: ${summary.notChecked}.")
+                    if (summary.allBlocked) append(" Ни один найденный вариант не разрешён сервером.")
+                    append(" Недоступные варианты сняты с выделения. Положительный ответ не гарантирует скачивание.")
+                }
             } catch (_: CancellationException) {
                 videoProbeReport = "Проверка видео остановлена."
             } finally {
@@ -864,13 +876,15 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     QueueShortcut()
-                    val chosenVideos = items.count { it.kind == Kind.VIDEO && it.url in selected }
-                    if (chosenVideos > 0 || videoProbeReport.isNotBlank() || videoProbeRunning) {
+                    val totalVideoOptions = items.count { it.kind == Kind.VIDEO }
+                    val remainingUnchecked = VideoAvailabilityProbe.allCandidates(items)
+                        .count { videoProbeResults[it.url]?.blocked != true }
+                    if (totalVideoOptions > 0 || videoProbeReport.isNotBlank() || videoProbeRunning) {
                         OutlinedButton(
                             onClick = ::checkSelectedVideos,
-                            enabled = searchAllowed && chosenVideos > 0,
+                            enabled = searchAllowed && remainingUnchecked > 0,
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Проверить доступность выбранных видео ($chosenVideos)") }
+                        ) { Text("Проверить варианты видео ($totalVideoOptions)") }
                         if (videoProbeRunning) {
                             Text(videoProbeProgress, style = MaterialTheme.typography.bodySmall)
                             LinearProgressIndicator(Modifier.fillMaxWidth())
