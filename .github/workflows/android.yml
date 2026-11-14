@@ -65,8 +65,13 @@ jobs:
           "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-35;default;x86_64'
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           sudo chown "$(id -u):$(id -g)" /dev/kvm
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/gallery-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
-            --name gallery-ui --package 'system-images;android-35;default;x86_64' --device pixel_4
+            --name gallery-ui --package 'system-images;android-35;default;x86_64' --device pixel_4 \
+            --path "$ANDROID_AVD_HOME/gallery-ui.avd"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx gallery-ui
       - name: Test Home, search, navigation and theme on Android
         run: |
           set -euo pipefail
@@ -75,7 +80,7 @@ jobs:
             -gpu swiftshader_indirect -no-metrics -no-boot-anim > "$RUNNER_TEMP/gallery-emulator.log" 2>&1 &
           emulator_pid=$!
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
-          if ! timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'; then
+          if ! timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
             tail -n 60 "$RUNNER_TEMP/gallery-emulator.log"
             exit 1
           fi
