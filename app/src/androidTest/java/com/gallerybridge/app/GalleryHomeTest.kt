@@ -1,6 +1,10 @@
 package com.gallerybridge.app
 
 import android.content.Context
+import com.gallerybridge.app.core.Kind
+import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.transfer.HistoryStore
+import com.gallerybridge.app.transfer.QueueStore
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -92,6 +96,26 @@ class GalleryHomeTest {
         compose.onNodeWithText("Почта Mail").performTextReplacement("second@example.com")
         compose.onNodeWithText("Показать").performClick()
         compose.onNodeWithText("secret-for-first").assertDoesNotExist()
+    }
+
+    @Test
+    fun closeFailedQueueKeepsHistoryAndReturnsToNewUpload() {
+        compose.runOnIdle {
+            val media = Media("https://example.com/video.mp4", "video.mp4", Kind.VIDEO, "test")
+            val queue = QueueStore.newSnapshot("Example", "Blocked video", "", "Mail WebDAV",
+                "Models", "", listOf(media))
+            QueueStore.save(compose.activity, queue.copy(entries = listOf(QueueStore.Entry(media, "FAILED"))))
+        }
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("Очередь").performClick()
+        compose.onNodeWithText("Закрыть очередь и начать новую").performScrollTo().performClick()
+        compose.onNodeWithText("Закрыть незавершённую очередь?").assertIsDisplayed()
+        compose.onNodeWithText("Закрыть очередь").performClick()
+        compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
+        compose.runOnIdle {
+            assertTrue(QueueStore.load(compose.activity) == null)
+            assertTrue(HistoryStore.load(compose.activity).any { it.outcome == "Закрыта вручную" })
+        }
     }
 
     private fun awaitSearchResult() {

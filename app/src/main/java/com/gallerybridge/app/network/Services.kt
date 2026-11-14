@@ -127,7 +127,7 @@ object Services {
         val file = File(context.cacheDir, "gb_${UUID.randomUUID()}.part")
         try {
             http.newCall(request(media.url)).execute().use { r ->
-                if (!r.isSuccessful) error("HTTP ${r.code}")
+                if (!r.isSuccessful) error(SourceDownloadFailure.describe(r.code))
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
                 if (mime.startsWith("text/") || mime.contains("html")) error("Вместо файла получен текст")
                 val body = r.body ?: error("Пустой файл")

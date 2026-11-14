@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
     private var settingsStatus by mutableStateOf("")
     private var transferStatus by mutableStateOf("")
     private var queueFilter by mutableStateOf("ALL")
+    private var showCloseQueueConfirmation by mutableStateOf(false)
     private var auditing by mutableStateOf(false)
     private var auditProgress by mutableStateOf("")
     private var auditReport by mutableStateOf("")
@@ -462,6 +463,39 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             transferStatus = "Не удалось возобновить загрузку. ${e.message}"
         } finally { working = false }
+    }
+
+    /** Close an unfinished queue only after an explicit confirmation. */
+    private fun closeQueue() {
+        val queue = QueueStore.load(this) ?: run {
+            showCloseQueueConfirmation = false
+            savedQueue = null
+            return
+        }
+        val active = transferRunning || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+            .getBoolean(TransferService.KEY_RUNNING, false)
+        if (active) {
+            showCloseQueueConfirmation = false
+            transferStatus = "Сначала остановите выполняющуюся передачу."
+            return
+        }
+        try {
+            check(HistoryStore.record(this, queue, "Закрыта вручную")) {
+                "Не удалось сохранить очередь в историю"
+            }
+            check(QueueStore.clearIfId(this, queue.id)) {
+                "Очередь изменилась или не удалось её закрыть"
+            }
+            savedQueue = QueueStore.load(this)
+            history = HistoryStore.load(this)
+            showCloseQueueConfirmation = false
+            reportDetails = ""
+            transferStatus = ""
+            screen = if (items.isEmpty()) GalleryPage.HOME else GalleryPage.DOWNLOADS
+        } catch (e: Exception) {
+            showCloseQueueConfirmation = false
+            transferStatus = "Не удалось закрыть очередь: ${e.message}"
+        }
     }
 
     private fun auditQueue() {
@@ -988,6 +1022,23 @@ class MainActivity : ComponentActivity() {
             Text("Пока нет сохранённых заданий. Начните загрузку на главном экране.")
             return
         }
+        if (showCloseQueueConfirmation) {
+            AlertDialog(
+                onDismissRequest = { showCloseQueueConfirmation = false },
+                title = { Text("Закрыть незавершённую очередь?") },
+                text = {
+                    Text("Оставшиеся ${queue.remaining} файлов не будут загружены из этой очереди. " +
+                        "Уже загруженные файлы останутся в хранилище. " +
+                        "Итог задания сохранится в истории, после чего можно начать новую загрузку.")
+                },
+                confirmButton = {
+                    TextButton(onClick = ::closeQueue) { Text("Закрыть очередь") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCloseQueueConfirmation = false }) { Text("Отмена") }
+                }
+            )
+        }
         val done = queue.entries.count { it.state == "DONE" }
         val skipped = queue.entries.count { it.state == "SKIPPED" }
         val failed = queue.entries.count { it.state == "FAILED" }
@@ -1023,6 +1074,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Button(onClick=::resumeUpload, enabled = !working, modifier=Modifier.fillMaxWidth()) { Text("Продолжить оставшиеся ${queue.remaining} файлов") }
+            OutlinedButton(
+                onClick = { showCloseQueueConfirmation = true },
+                enabled = !working && !auditing,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Закрыть очередь и начать новую") }
+            Text(
+                "Если источник запрещает скачивание (HTTP 403), проверьте разрешённый способ получения файла. " +
+                    "Повтор без изменения доступа может снова завершиться ошибкой.",
+                style = MaterialTheme.typography.bodySmall
+            )
         } else {
             if (queue.target == "Папка Android") {
                 OutlinedButton(

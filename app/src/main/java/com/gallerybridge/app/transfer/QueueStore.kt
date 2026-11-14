@@ -92,6 +92,13 @@ object QueueStore {
         if (after != before) save(context, after)
     }
 
+    /** Clear only the queue explicitly confirmed by the user; never clear a newer one. */
+    @Synchronized fun clearIfId(context: Context, id: Long): Boolean {
+        val current = load(context) ?: return false
+        if (current.id != id) return false
+        return storage(context).edit().remove(KEY).commit()
+    }
+
     fun newSnapshot(
         model: String, title: String, date: String, target: String,
         root: String, account: String, files: List<Media>
