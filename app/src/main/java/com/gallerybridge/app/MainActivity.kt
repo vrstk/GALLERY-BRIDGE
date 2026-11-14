@@ -402,7 +402,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scan() {
-        if (working || transferRunning || imageProbeRunning || url.isBlank()) return
+        if (working || transferRunning || imageProbeRunning || videoProbeRunning || url.isBlank()) return
         val requestedUrl = url
         screen = GalleryPage.DOWNLOADS
         working = true
@@ -413,6 +413,8 @@ class MainActivity : ComponentActivity() {
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
+        videoProbeResults = emptyMap()
+        videoProbeReport = ""
         comparisonReport = ""
         metadataReport = ""
         showOtherMedia = false
@@ -597,7 +599,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun beginUpload() {
-        if (working || transferRunning || selected.isEmpty()) return
+        if (working || transferRunning || videoProbeRunning || imageProbeRunning || selected.isEmpty()) return
         if (!GalleryKeys.validDate(date.trim())) {
             uploadStatus = "Укажите реальную дату в формате ГГГГ-ММ-ДД или оставьте поле пустым."
             return
@@ -617,7 +619,50 @@ class MainActivity : ComponentActivity() {
         }
         uploadStatus = ""
         working = true
-        if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
+        val chosenVideos = items.filter { it.kind == Kind.VIDEO && it.url in selected }
+        if (chosenVideos.isEmpty()) {
+            if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
+            return
+        }
+        // A manual availability check is optional. Before creating a real transfer
+        // queue, verify the selected video URLs again: a prior result may be stale.
+        scope.launch {
+            try {
+                val checked = mutableListOf<VideoAvailabilityProbe.Result>()
+                for ((index, video) in chosenVideos.withIndex()) {
+                    ensureActive()
+                    uploadStatus = "Проверяем источник видео ${index + 1} из ${chosenVideos.size}..."
+                    val result = VideoAvailabilityProbe.inspect(video)
+                    ensureActive()
+                    checked.add(result)
+                    videoProbeResults = videoProbeResults + (result.url to result)
+                }
+                val blockedUrls = checked.filter { it.blocked }.map { it.url }.toSet()
+                if (blockedUrls.isNotEmpty()) {
+                    // Do not create a failed queue for files already rejected by
+                    // their source. Keep any other choices for a later attempt.
+                    selected = selected - blockedUrls
+                    uploadStatus = "Источник отказал в скачивании ${blockedUrls.size} видео (например, HTTP 403). " +
+                        "Они сняты с выделения. Очередь не создана. Проверьте другую разрешённую ссылку."
+                    working = false
+                    return@launch
+                }
+                if (checked.any { it.verdict == VideoAvailabilityProbe.Verdict.UNCERTAIN }) {
+                    uploadStatus = "Доступ к части видео не подтверждён; при передаче возможна ошибка."
+                } else {
+                    uploadStatus = ""
+                }
+                // Headers are only an early check. The transfer still validates
+                // actual bytes and HTTP status, without bypassing site restrictions.
+                if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
+            } catch (_: CancellationException) {
+                uploadStatus = "Проверка источника видео остановлена."
+                working = false
+            } catch (e: Exception) {
+                uploadStatus = "Ошибка проверки видео: ${e.message ?: "нет ответа"}"
+                working = false
+            }
+        }
     }
 
     private fun beginGoogleAuthorization() {
@@ -805,8 +850,14 @@ class MainActivity : ComponentActivity() {
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
-                            onClick = { selected = selected + visibleItems.map(Media::url) },
-                            enabled = searchAllowed && visibleItems.any { it.url !in selected }
+                            onClick = {
+                                selected = selected + visibleItems
+                                    .filter { videoProbeResults[it.url]?.blocked != true }
+                                    .map(Media::url)
+                            },
+                            enabled = searchAllowed && visibleItems.any {
+                                it.url !in selected && videoProbeResults[it.url]?.blocked != true
+                            }
                         ) { Text("Выбрать все в фильтре") }
                         TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
                             Text("Снять выделение")
@@ -895,7 +946,11 @@ class MainActivity : ComponentActivity() {
             ) { Text(if (showOtherMedia) "Скрыть дополнительные варианты" else "Показать ещё $others ссылок") }
         }
         OutlinedButton(
-            onClick = { selected = recommendedUrls }, enabled = searchAllowed && recommendedUrls.isNotEmpty(),
+            onClick = { selected = recommendedUrls.filter {
+                videoProbeResults[it]?.blocked != true
+            }.toSet() }, enabled = searchAllowed && recommendedUrls.any {
+                videoProbeResults[it]?.blocked != true
+            },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Выбрать рекомендуемые варианты") }
         OutlinedButton(
