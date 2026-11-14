@@ -71,12 +71,25 @@ object QueueStore {
         storage(context).edit().putString(KEY, json.toString()).commit()
     }
 
-    @Synchronized fun checkpoint(context: Context, id: Long, url: String, state: String) {
+    /**
+     * Only the exact queue entry that was processed may change.
+     * URLs can repeat across entries with different names, and even identical
+     * media can appear more than once in an imported queue.
+     */
+    fun applyItemResult(snapshot: Snapshot, entryIndex: Int, media: Media, state: String): Snapshot {
+        require(state in setOf("DONE", "SKIPPED", "FAILED")) { "Invalid queue state: $state" }
+        val old = snapshot.entries.getOrNull(entryIndex) ?: return snapshot
+        if (old.media != media || old.state == "DONE" || old.state == "SKIPPED") return snapshot
+        val entries = snapshot.entries.toMutableList()
+        entries[entryIndex] = old.copy(state = state)
+        return snapshot.copy(entries = entries)
+    }
+
+    @Synchronized fun checkpoint(context: Context, id: Long, entryIndex: Int, media: Media, state: String) {
         val before = load(context) ?: return
         if (before.id != id) return
-        save(context, before.copy(entries = before.entries.map {
-            if (it.media.url == url) it.copy(state = state) else it
-        }))
+        val after = applyItemResult(before, entryIndex, media, state)
+        if (after != before) save(context, after)
     }
 
     fun newSnapshot(

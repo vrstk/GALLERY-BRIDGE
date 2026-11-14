@@ -179,14 +179,18 @@ object Services {
         return parent
     }
 
-    private fun driveUpload(token: String, folder: String, name: String, file: File, mime: String): Boolean {
+    private fun driveFileExists(token: String, folder: String, name: String): Boolean {
         val q = "'${folder.replace("'", "\\'")}' in parents and name = '${name.replace("'", "\\'")}' and trashed = false"
         val findUrl = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder().addQueryParameter("q", q).addQueryParameter("fields", "files(id)").build()
         val exists = http.newCall(Request.Builder().url(findUrl).header("Authorization", "Bearer $token").build()).execute().use { r ->
             if (!r.isSuccessful) error("Drive список HTTP ${r.code}")
             (JSONObject(r.body?.string().orEmpty()).optJSONArray("files")?.length() ?: 0) > 0
         }
-        if (exists) return false
+        return exists
+    }
+
+    private fun driveUpload(token: String, folder: String, name: String, file: File, mime: String): Boolean {
+        if (driveFileExists(token, folder, name)) return false
         val metadata = JSONObject().put("name", name).put("parents", JSONArray().put(folder))
         val session = http.newCall(Request.Builder().url("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable")
             .header("Authorization", "Bearer $token").header("X-Upload-Content-Type", mime)
@@ -213,7 +217,7 @@ object Services {
         root: String,
         token: String?,
         progress: suspend (String) -> Unit,
-        onItemResult: suspend (Media, String) -> Unit = { _, _ -> }
+        onItemResult: suspend (Int, Media, String) -> Unit = { _, _, _ -> }
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -246,7 +250,7 @@ object Services {
                     if (mailExists(destination, mailAuth)) {
                         coroutineContext.ensureActive()
                         skipped++
-                        onItemResult(item, "SKIPPED")
+                        onItemResult(index, item, "SKIPPED")
                         consecutiveNetworkFailures = 0
                         continue
                     }
@@ -262,7 +266,7 @@ object Services {
                         }
                         coroutineContext.ensureActive()
                         uploaded++
-                        onItemResult(item, "DONE")
+                        onItemResult(index, item, "DONE")
                         consecutiveNetworkFailures = 0
                     } finally {
                         local.delete()
@@ -275,7 +279,7 @@ object Services {
                     // already existing files again, wasting time and traffic.
                     if (SafDestination.fileExists(context, destFolder, item.name)) {
                         skipped++
-                        onItemResult(item, "SKIPPED")
+                        onItemResult(index, item, "SKIPPED")
                     } else {
                         val (local, mime) = download(context, item)
                         try {
@@ -283,30 +287,40 @@ object Services {
                             if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {
                                 coroutineContext.ensureActive()
                                 uploaded++
-                                onItemResult(item, "DONE")
+                                onItemResult(index, item, "DONE")
                             } else {
                                 skipped++
-                                onItemResult(item, "SKIPPED")
+                                onItemResult(index, item, "SKIPPED")
                             }
                         } finally {
                             local.delete()
                         }
                     }
                 } else {
+                    val driveToken = token ?: error("Нет Google OAuth")
                     val folderId = driveFoldersByKind.getOrPut(item.kind) {
-                        driveFolders(token ?: error("Нет Google OAuth"), root, folders)
+                        driveFolders(driveToken, root, folders)
+                    }
+                    val fileName = Paths.clean(item.name)
+                    // Avoid fetching source bytes when Google Drive already has this name.
+                    if (driveFileExists(driveToken, folderId, fileName)) {
+                        coroutineContext.ensureActive()
+                        skipped++
+                        onItemResult(index, item, "SKIPPED")
+                        continue
                     }
                     val (local, mime) = download(context, item)
                     try {
                         coroutineContext.ensureActive()
-                        if (driveUpload(token ?: error("Нет Google OAuth"), folderId, Paths.clean(item.name), local, mime)) {
+                        // Re-check after downloading in case another client created the file.
+                        if (driveUpload(driveToken, folderId, fileName, local, mime)) {
                             coroutineContext.ensureActive()
                             uploaded++
-                            onItemResult(item, "DONE")
+                            onItemResult(index, item, "DONE")
                         } else {
                             coroutineContext.ensureActive()
                             skipped++
-                            onItemResult(item, "SKIPPED")
+                            onItemResult(index, item, "SKIPPED")
                         }
                     } finally {
                         local.delete()
@@ -316,7 +330,7 @@ object Services {
                 if (e is CancellationException) throw e
                 coroutineContext.ensureActive()
                 failed++
-                onItemResult(item, "FAILED")
+                onItemResult(index, item, "FAILED")
                 if (target == "Папка Android" && (
                     e.message.orEmpty().contains("дубликат", ignoreCase = true) ||
                     e.message.orEmpty().contains("одноимённые", ignoreCase = true) ||
