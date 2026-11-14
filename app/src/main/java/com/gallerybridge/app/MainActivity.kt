@@ -455,6 +455,11 @@ class MainActivity : ComponentActivity() {
 
     private fun acceptBrowserMedia(found: List<String>, page: String, pageTitle: String) {
         val extensions = setOf("mp4", "m4v", "mov", "webm", "jpg", "jpeg", "png", "webp", "avif", "gif")
+        // Keep page path as Referer but never persist page query tokens or fragments.
+        val safePage = runCatching {
+            Uri.parse(page).takeIf { it.scheme == "https" && !it.host.isNullOrBlank() }
+                ?.buildUpon()?.clearQuery()?.fragment(null)?.build()?.toString().orEmpty()
+        }.getOrDefault("")
         val incoming = found.take(120).mapNotNull { candidate ->
             val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: return@mapNotNull null
             if (parsed.scheme != "https" || parsed.host.isNullOrBlank()) return@mapNotNull null
@@ -462,7 +467,7 @@ class MainActivity : ComponentActivity() {
             val extension = filename.substringAfterLast('.', "").lowercase()
             if (extension !in extensions) return@mapNotNull null
             val kind = if (extension in setOf("mp4", "m4v", "mov", "webm")) Kind.VIDEO else Kind.PHOTO
-            Media(candidate, Paths.clean(filename), kind, BrowserSessionHeaders.SOURCE, page)
+            Media(candidate, Paths.clean(filename), kind, BrowserSessionHeaders.SOURCE, safePage)
         }.distinctBy { it.url }
         val seen = items.map { it.url }.toSet()
         val additional = incoming.filter { it.url !in seen }
