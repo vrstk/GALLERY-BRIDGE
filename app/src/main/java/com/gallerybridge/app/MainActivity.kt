@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
     private var dark by mutableStateOf(true)
     private var working by mutableStateOf(false)
     private var scanning by mutableStateOf(false)
-    private var status by mutableStateOf("Вставьте HTTPS-ссылку на галерею или файл.")
+    private var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
     private var reveal by mutableStateOf(false)
@@ -82,11 +82,6 @@ class MainActivity : ComponentActivity() {
     private var uploadStatus by mutableStateOf("")
     private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
     private var imageProbeRunning by mutableStateOf(false)
-    private var videoProbeRunning by mutableStateOf(false)
-    private var videoProbeReport by mutableStateOf("")
-    private var videoProbeProgress by mutableStateOf("")
-    private var videoProbeResults by mutableStateOf<Map<String, VideoAvailabilityProbe.Result>>(emptyMap())
-    private var videoProbeJob: Job? = null
     private var imageProbeProgress by mutableStateOf("")
     private var imageProbeStatus by mutableStateOf("")
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
@@ -351,59 +346,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkSelectedVideos() {
-        if (videoProbeRunning || imageProbeRunning || working || transferRunning) return
-        val candidates = VideoAvailabilityProbe.allCandidates(items)
-            .filter { videoProbeResults[it.url]?.blocked != true }
-        if (candidates.isEmpty()) {
-            videoProbeReport = if (VideoAvailabilityProbe.summary(items, videoProbeResults).allBlocked)
-                "Все найденные варианты видео отклонены сервером источника."
-                else "Новых вариантов для проверки нет."
-            return
-        }
-        videoProbeJob = scope.launch {
-            videoProbeRunning = true
-            videoProbeReport = ""
-            try {
-                var blocked = 0
-                var uncertain = 0
-                candidates.forEachIndexed { index, media ->
-                    ensureActive()
-                    videoProbeProgress = "Видео ${index + 1} из ${candidates.size}: ${media.name}"
-                    val result = VideoAvailabilityProbe.inspect(this@MainActivity, media)
-                    ensureActive()
-                    videoProbeResults = videoProbeResults + (media.url to result)
-                    if (result.blocked) {
-                        selected = selected - media.url
-                        blocked++
-                    } else if (result.verdict == VideoAvailabilityProbe.Verdict.UNCERTAIN) {
-                        uncertain++
-                    }
-                }
-                val summary = VideoAvailabilityProbe.summary(items, videoProbeResults)
-                videoProbeReport = buildString {
-                    append("Всего вариантов: ${summary.total}; проверено: ${summary.checked}; ")
-                    append("недоступно: ${summary.blocked}; ответ положительный: ${summary.accepted}; ")
-                    append("не определено: ${summary.uncertain}.")
-                    if (summary.notChecked > 0) append(" Ещё не проверено: ${summary.notChecked}.")
-                    if (summary.allBlocked) append(" Ни один найденный вариант не разрешён сервером.")
-                    append(" Недоступные варианты сняты с выделения. Положительный ответ не гарантирует скачивание.")
-                }
-            } catch (_: CancellationException) {
-                videoProbeReport = "Проверка видео остановлена."
-            } finally {
-                videoProbeRunning = false
-                videoProbeProgress = ""
-                videoProbeJob = null
-            }
-        }
-    }
-
-    private fun cancelVideoCheck() {
-        videoProbeJob?.cancel()
-        VideoAvailabilityProbe.cancel()
-    }
-
     private fun cancelImageSizes() {
         imageProbeJob?.cancel()
         ImageQualityProbe.cancel()
@@ -415,9 +357,6 @@ class MainActivity : ComponentActivity() {
         url = newUrl
         if (!changed) return
         cancelImageSizes()
-        cancelVideoCheck()
-        videoProbeResults = emptyMap()
-        videoProbeReport = ""
         items = emptyList()
         selected = emptySet()
         recommendedUrls = emptySet()
@@ -439,7 +378,7 @@ class MainActivity : ComponentActivity() {
             date = cached.date
             metadataReport = "Восстановлены сохранённые данные для этой галереи."
         }
-        status = if (newUrl.isBlank()) "Вставьте HTTPS-ссылку на галерею или файл." else "Запустите поиск по ссылке."
+        status = if (newUrl.isBlank()) "Вставьте HTTPS-ссылку на фотогалерею." else "Запустите поиск по ссылке."
     }
 
     private fun saveGalleryMetadata() {
@@ -451,43 +390,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun acceptBrowserMedia(found: List<String>, page: String, pageTitle: String) {
-        val extensions = setOf("mp4", "m4v", "mov", "webm", "jpg", "jpeg", "png", "webp", "avif", "gif")
-        // Keep page path as Referer but never persist page query tokens or fragments.
-        val safePage = runCatching {
-            Uri.parse(page).takeIf { it.scheme == "https" && !it.host.isNullOrBlank() }
-                ?.buildUpon()?.clearQuery()?.fragment(null)?.build()?.toString().orEmpty()
-        }.getOrDefault("")
-        val incoming = found.take(120).mapNotNull { candidate ->
-            val parsed = runCatching { Uri.parse(candidate) }.getOrNull() ?: return@mapNotNull null
-            if (parsed.scheme != "https" || parsed.host.isNullOrBlank()) return@mapNotNull null
-            val filename = parsed.lastPathSegment.orEmpty()
-            val extension = filename.substringAfterLast('.', "").lowercase()
-            if (extension !in extensions) return@mapNotNull null
-            val kind = if (extension in setOf("mp4", "m4v", "mov", "webm")) Kind.VIDEO else Kind.PHOTO
-            Media(candidate, Paths.clean(filename), kind, BrowserSessionHeaders.SOURCE, safePage)
-        }.distinctBy { it.url }
-        if (incoming.isEmpty()) {
-            status = "В основном плеере не найдено подтверждённых прямых ссылок на видео."
-            screen = GalleryPage.DOWNLOADS
-            return
-        }
-        // Never combine these explicitly discovered player URLs with the
-        // old generic scan's unrelated links, ads or recommendations.
-        items = incoming
-        selected = emptySet()
-        recommendedUrls = incoming.map { it.url }.toSet()
-        videoProbeResults = emptyMap()
-        videoProbeReport = ""
-        if (pageTitle.isNotBlank()) title = pageTitle.take(180)
-        showOtherMedia = false
-        mediaFilter = null
-        status = "Видео плеера: ${incoming.size}. Проверьте файл и выберите его вручную."
-        screen = GalleryPage.DOWNLOADS
-    }
-
     private fun scan() {
-        if (working || transferRunning || imageProbeRunning || videoProbeRunning || url.isBlank()) return
+        if (working || transferRunning || imageProbeRunning || url.isBlank()) return
         val requestedUrl = url
         screen = GalleryPage.DOWNLOADS
         working = true
@@ -498,8 +402,6 @@ class MainActivity : ComponentActivity() {
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
-        videoProbeResults = emptyMap()
-        videoProbeReport = ""
         comparisonReport = ""
         metadataReport = ""
         showOtherMedia = false
@@ -509,8 +411,9 @@ class MainActivity : ComponentActivity() {
         scope.launch {
             try {
                 val scan = Services.scan(requestedUrl)
+                val photos = scan.media.filter { it.kind == Kind.PHOTO }
                 val recommended = withContext(Dispatchers.Default) {
-                    QualitySelector.recommended(scan.media)
+                    QualitySelector.recommended(photos)
                 }
                 if (requestedUrl != url) return@launch
                 val saved = GalleryMetadataStore.load(this@MainActivity, requestedUrl)
@@ -524,9 +427,9 @@ class MainActivity : ComponentActivity() {
                 ).joinToString(" ")
                 recommendedUrls = recommended
                 selected = recommended
-                items = scan.media
-                status = if (items.isEmpty()) "Медиафайлы по этой ссылке не найдены."
-                    else "Найдено файлов: ${items.size}"
+                items = photos
+                status = if (items.isEmpty()) "Фотографии по этой ссылке не найдены."
+                    else "Найдено фотографий: ${items.size}"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -560,7 +463,8 @@ class MainActivity : ComponentActivity() {
             if (target == "Mail WebDAV" && rememberMailPassword && password.isNotBlank()) {
                 SecureMailCredentials.save(this, email, password)
             }
-            val chosen = items.filter { it.url in selected }
+            val chosen = items.filter { it.kind == Kind.PHOTO && it.url in selected }
+            require(chosen.isNotEmpty()) { "Выберите фотографии для передачи" }
             TransferService.begin(
                 this, chosen, model, title, date.trim(), target, email, password,
                 if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token
