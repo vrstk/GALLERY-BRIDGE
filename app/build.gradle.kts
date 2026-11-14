@@ -33,4 +33,5 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.google.android.gms:play-services-auth:21.6.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

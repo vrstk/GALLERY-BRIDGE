@@ -22,7 +22,7 @@ object PageMetadata {
     )
 
     private val modelLead = Regex(
-        """^([\p{Lu}][\p{L}.'-]+(?:\s+[\p{Lu}][\p{L}.'-]+){0,3})\s+(?:Nude|Naked|Topless|in)\b"""
+        """^([\p{Lu}][\p{L}.'-]+(?:\s+[\p{Lu}][\p{L}.'-]+){0,3}?)\s+(?:Nude|Naked|Topless|in)\b"""
     )
     private val isoDate = Regex("""\b(?:19|20)\d{2}-\d{2}-\d{2}\b""")
     private val monthFormats = listOf(
@@ -81,19 +81,15 @@ object PageMetadata {
     }
 
     private fun published(doc: Document): Pair<String, String> {
-        val explicitMeta = listOf(
-            "meta[property=article:published_time]",
-            "meta[property=og:published_time]",
-            "meta[name=pubdate]",
-            "meta[name=publish_date]",
-            "meta[name=datePublished]",
-            "meta[itemprop=datePublished]"
-        )
-        for (selector in explicitMeta) {
-            for (tag in doc.select(selector)) {
-                val date = dateFrom(tag.attr("content"))
-                if (date != null) return date to "Метаданные даты публикации"
-            }
+        val allowedProperties = setOf("article:published_time", "og:published_time")
+        val allowedNames = setOf("pubdate", "publish_date", "datepublished")
+        for (tag in doc.select("meta")) {
+            val property = tag.attr("property").lowercase(Locale.ROOT)
+            val name = tag.attr("name").lowercase(Locale.ROOT)
+            val itemprop = tag.attr("itemprop").lowercase(Locale.ROOT)
+            if (property !in allowedProperties && name !in allowedNames && itemprop != "datepublished") continue
+            val date = dateFrom(tag.attr("content"))
+            if (date != null) return date to "Метаданные даты публикации"
         }
         for (tag in doc.select("script[type=application/ld+json]")) {
             val script = tag.data().ifBlank { tag.html() }.take(150_000)
