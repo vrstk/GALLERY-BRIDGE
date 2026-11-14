@@ -62,6 +62,9 @@ class MainActivity : ComponentActivity() {
     private var imageProbeRunning by mutableStateOf(false)
     private var imageProbeProgress by mutableStateOf("")
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
+    private var comparisonPairs by mutableStateOf<List<VariantComparison.Pairing>>(emptyList())
+    private var comparisonReport by mutableStateOf("")
+
     private var imageProbeJob: Job? = null
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
@@ -165,6 +168,58 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun compareImageVariants() {
+        if (imageProbeRunning || working || transferRunning) return
+        val pairs = VariantComparison.pairs(items, selected)
+        if (pairs.isEmpty()) {
+            comparisonPairs = emptyList()
+            comparisonReport = "Для выбранных файлов не найдены другие варианты с тем же именем основы и в той же папке CDN."
+            return
+        }
+        comparisonPairs = pairs
+        comparisonReport = ""
+        val candidates = VariantComparison.candidates(pairs)
+        imageProbeJob = scope.launch {
+            imageProbeRunning = true
+            try {
+                val measurements = imageProbeResults.toMutableMap()
+                candidates.forEachIndexed { index, item ->
+                    ensureActive()
+                    imageProbeProgress = "Сравнение ${index + 1} из ${candidates.size}: ${item.name}"
+                    val existing = measurements[item.url]
+                    if (existing?.verified != true) {
+                        val result = ImageQualityProbe.inspect(item)
+                        ensureActive()
+                        measurements[item.url] = result
+                        imageProbeResults = measurements.toMap()
+                    }
+                }
+                val actual = measurements.values.filter { it.verified }
+                    .associate { it.url to VariantComparison.Dimensions(it.width!!, it.height!!) }
+                val improvements = VariantComparison.improvements(pairs, actual)
+                val comparable = VariantComparison.comparableCount(pairs, actual)
+                comparisonReport = buildString {
+                    append("Сопоставлено по реальным размерам $comparable из ${pairs.size} пар. ")
+                    append("Более крупные альтернативы: ${improvements.size}.")
+                    if (improvements.isNotEmpty()) {
+                        append("\n")
+                        improvements.take(12).forEach { found ->
+                            append("\n• ${found.chosen.name} (${found.old.width}×${found.old.height}) → ")
+                            append("${found.alternative.name} (${found.newer.width}×${found.newer.height})")
+                        }
+                    }
+                    append("\nФайлы не заменены. Результат не доказывает максимальное качество на всём сайте.")
+                }
+            } catch (_: CancellationException) {
+                comparisonReport = "Сравнение прервано. Выбранные фотографии не изменены."
+            } finally {
+                imageProbeRunning = false
+                imageProbeProgress = ""
+                imageProbeJob = null
+            }
+        }
+    }
+
     private fun cancelImageSizes() {
         imageProbeJob?.cancel()
         ImageQualityProbe.cancel()
@@ -172,7 +227,7 @@ class MainActivity : ComponentActivity() {
 
     private fun scan() {
         if (working || transferRunning || imageProbeRunning) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); comparisonPairs = emptyList(); comparisonReport = ""; mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
             val recommended = withContext(Dispatchers.Default) {
@@ -471,8 +526,22 @@ class MainActivity : ComponentActivity() {
                     LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
                     TextButton(onClick=::cancelImageSizes) { Text("Остановить проверку") }
                 }
+                OutlinedButton(
+                    onClick=::compareImageVariants,
+                    enabled=!imageProbeRunning && !working && !transferRunning &&
+                        selected.isNotEmpty(),
+                    modifier=Modifier.fillMaxWidth()
+                ) { Text("Сравнить с другими вариантами") }
+                Text(
+                    "Сопоставляет до 20 пар по URL из этой страницы. Проверка не добавляет новые адреса " +
+                        "и не меняет выбранные фотографии.",
+                    style=MaterialTheme.typography.bodySmall
+                )
                 if (imageProbeResults.isNotEmpty()) {
                     Text("Размеры получены для ${imageProbeResults.values.count { it.verified }} из ${imageProbeResults.size} проверенных файлов.")
+                }
+                if (comparisonReport.isNotBlank()) {
+                    Text(comparisonReport, style=MaterialTheme.typography.bodySmall)
                 }
             }
             displayedItems.forEach { item -> Row {
@@ -537,7 +606,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&!imageProbeRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.15 • Ручная проверка фактических размеров выбранных фотографий без загрузки.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.16 • Проверка альтернативных размеров по фактическим изображениям.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
