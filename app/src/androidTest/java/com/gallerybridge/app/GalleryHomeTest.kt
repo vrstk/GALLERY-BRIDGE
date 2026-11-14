@@ -75,7 +75,7 @@ class GalleryHomeTest {
         compose.onNodeWithText("Снять выделение").performClick()
         compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
         compose.onNodeWithText("Загрузить").assertIsNotEnabled()
-        compose.onNodeWithText("Выбрать все в фильтре").performClick()
+        compose.onNodeWithText("Выбрать все фото").performClick()
         compose.onNodeWithText("Загрузить").performClick()
 
         compose.onNodeWithText("Куда загрузить").assertIsDisplayed()
