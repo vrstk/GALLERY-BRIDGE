@@ -10,8 +10,17 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.18.0"
+        versionCode = 19
+        versionName = "0.19.0"
+        manifestPlaceholders["appLabel"] = "Gallery Bridge"
+    }
+    buildTypes {
+        debug {
+            if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
+                applicationIdSuffix = ".preview"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview"
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -23,6 +32,7 @@ android {
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.09.00"))
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.activity:activity-compose:1.10.1")
