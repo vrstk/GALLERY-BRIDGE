@@ -83,6 +83,17 @@ object Services {
             require(type.contains("html") || type.isBlank()) { "Не HTML-страница" }
             val html = response.body?.string().orEmpty().take(3_000_000)
             val doc = Jsoup.parse(html, response.request.url.toString())
+            // Single-video pages must use only the main player's sources.
+            // Do not attach sidebar recommendations, ad clips or unrelated MP4s.
+            val primary = PrimaryVideoSources.extract(doc, response.request.url.toString())
+            if (PrimaryVideoSources.isVideoPage(doc, response.request.url.toString())) {
+                val videoTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
+                    ?.ifBlank { doc.title() } ?: doc.title()
+                val videoMetadata = PageMetadata.extract(doc, response.request.url.toString(), videoTitle)
+                return@use Scan(videoTitle.ifBlank { "Без названия" },
+                    videoMetadata.publishedDate, primary,
+                    videoMetadata.model, videoMetadata.modelSource, videoMetadata.dateSource)
+            }
             val urls = linkedMapOf<String, Media>()
             fun add(rawUrl: String, source: String) {
                 val parsed = rawUrl.toHttpUrlOrNull() ?: return
