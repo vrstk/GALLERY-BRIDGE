@@ -772,7 +772,6 @@ class MainActivity : ComponentActivity() {
         val otherLinks = items.size - remember(items, recommendedUrls) {
             MediaResults.visible(items, false, recommendedUrls).size
         }
-        val videos = candidates.size - photos
         val visibleItems = remember(candidates, mediaFilter) {
             mediaFilter?.let { kind -> candidates.filter { it.kind == kind } } ?: candidates
         }
@@ -790,57 +789,30 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Найдено файлов: ${candidates.size}", style = MaterialTheme.typography.titleLarge)
+                    Text("Найдено фотографий: ${candidates.size}", style = MaterialTheme.typography.titleLarge)
                     if (candidates.size != items.size) {
                         Text("Всего проанализировано ссылок: ${items.size}", style = MaterialTheme.typography.bodySmall)
                     }
-                    MediaFilters(mediaFilter, photos, videos) { kind ->
-                        mediaFilter = kind
-                        gridScope.launch { gridState.scrollToItem(0) }
-                    }
+                    Text("Фотографии · $photos", style = MaterialTheme.typography.titleMedium)
+                    Text("Выберите снимки для сохранения. В разделе качества можно проверить разрешение.",
+                        style = MaterialTheme.typography.bodySmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = {
-                                selected = selected + visibleItems
-                                    .filter { videoProbeResults[it.url]?.blocked != true }
-                                    .map(Media::url)
+                                selected = selected + visibleItems.map(Media::url)
                             },
-                            enabled = searchAllowed && visibleItems.any {
-                                it.url !in selected && videoProbeResults[it.url]?.blocked != true
-                            }
+                            enabled = searchAllowed && visibleItems.any { it.url !in selected }
                         ) { Text("Выбрать все в фильтре") }
                         TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
                             Text("Снять выделение")
                         }
                     }
                     QueueShortcut()
-                    OutlinedButton(onClick = { screen = GalleryPage.BROWSER },
-                        enabled = searchAllowed, modifier = Modifier.fillMaxWidth()) {
-                        Text("Открыть сайт во встроенном браузере")
-                    }
                     OutlinedButton(
                         onClick = ::pickLocalMedia,
                         enabled = searchAllowed,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Добавить фотографии с устройства") }
-                    val totalVideoOptions = items.count {
-                        it.kind == Kind.VIDEO && it.url.startsWith("https://")
-                    }
-                    val remainingUnchecked = VideoAvailabilityProbe.allCandidates(items)
-                        .count { videoProbeResults[it.url]?.blocked != true }
-                    if (totalVideoOptions > 0 || videoProbeReport.isNotBlank() || videoProbeRunning) {
-                        OutlinedButton(
-                            onClick = ::checkSelectedVideos,
-                            enabled = searchAllowed && remainingUnchecked > 0,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Проверить варианты видео ($totalVideoOptions)") }
-                        if (videoProbeRunning) {
-                            Text(videoProbeProgress, style = MaterialTheme.typography.bodySmall)
-                            LinearProgressIndicator(Modifier.fillMaxWidth())
-                            TextButton(onClick = ::cancelVideoCheck) { Text("Остановить проверку") }
-                        }
-                        if (videoProbeReport.isNotBlank()) Text(videoProbeReport, style = MaterialTheme.typography.bodySmall)
-                    }
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -852,10 +824,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             items(visibleItems, key = { "media:${it.url}" }) { media ->
-                val availability = videoProbeResults[media.url]
-                val detail = if (media.kind == Kind.VIDEO) availability?.message ?: QualitySelector.hint(media)
-                    else imageProbeResults[media.url]?.display()
-                MediaTile(media, media.url in selected, searchAllowed && availability?.blocked != true, detail) { checked ->
+                MediaTile(media, media.url in selected, searchAllowed, imageProbeResults[media.url]?.display()) { checked ->
                     selected = if (checked) selected + media.url else selected - media.url
                 }
             }
@@ -909,11 +878,7 @@ class MainActivity : ComponentActivity() {
             ) { Text(if (showOtherMedia) "Скрыть дополнительные варианты" else "Показать ещё $others ссылок") }
         }
         OutlinedButton(
-            onClick = { selected = recommendedUrls.filter {
-                videoProbeResults[it]?.blocked != true
-            }.toSet() }, enabled = searchAllowed && recommendedUrls.any {
-                videoProbeResults[it]?.blocked != true
-            },
+            onClick = { selected = recommendedUrls }, enabled = searchAllowed && recommendedUrls.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("Выбрать рекомендуемые варианты") }
         OutlinedButton(
