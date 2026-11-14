@@ -32,10 +32,10 @@ class GalleryHomeTest {
     @Test
     fun homeSearchOpensDownloadsAndKeepsResultsWhenChangingTabs() {
         compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
-        compose.onNodeWithText("Ссылка на галерею или видео").performTextInput(
+        compose.onNodeWithText("Ссылка на фотогалерею").performTextInput(
             "https://example.com/fixture.jpg"
         )
-        compose.onNodeWithText("Найти медиафайлы").performClick()
+        compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
         compose.onNodeWithText("Очередь").performClick()
@@ -66,12 +66,11 @@ class GalleryHomeTest {
 
     @Test
     fun resultsKeepSelectionVisibleAndOpenDestinationForm() {
-        compose.onNodeWithText("Ссылка на галерею или видео").performTextInput("https://example.com/fixture.mp4")
-        compose.onNodeWithText("Найти медиафайлы").performClick()
+        compose.onNodeWithText("Ссылка на фотогалерею").performTextInput("https://example.com/fixture.jpg")
+        compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
-        compose.onNodeWithText("Фото (0)").assertIsNotEnabled()
-        compose.onNodeWithText("Видео (1)").performClick()
+        compose.onNodeWithText("Фотографии · 1").assertIsDisplayed()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
         compose.onNodeWithText("Снять выделение").performClick()
         compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
@@ -121,7 +120,7 @@ class GalleryHomeTest {
 
     private fun awaitSearchResult() {
         compose.waitUntil(timeoutMillis = 8_000) {
-            compose.onNodeWithText("Найдено файлов: 1").isDisplayed()
+            compose.onNodeWithText("Найдено фотографий: 1").isDisplayed()
         }
     }
 }
