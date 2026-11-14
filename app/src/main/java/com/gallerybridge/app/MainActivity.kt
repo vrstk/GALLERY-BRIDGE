@@ -23,6 +23,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.IntegrityAudit
+import com.gallerybridge.app.network.ImageQualityProbe
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
@@ -58,6 +59,10 @@ class MainActivity : ComponentActivity() {
     private var showOtherMedia by mutableStateOf(false)
     private var mediaPageLimit by mutableIntStateOf(MediaResults.PAGE_SIZE)
     private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
+    private var imageProbeRunning by mutableStateOf(false)
+    private var imageProbeProgress by mutableStateOf("")
+    private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
+    private var imageProbeJob: Job? = null
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
     private var transferRunning by mutableStateOf(false)
@@ -129,9 +134,45 @@ class MainActivity : ComponentActivity() {
         setContent { MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) { Surface(Modifier.fillMaxSize().safeDrawingPadding()) { Ui() } } }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); intent.getStringExtra(Intent.EXTRA_TEXT)?.let { if (it.startsWith("https://")) url = it } }
+    private fun verifyImageSizes() {
+        if (imageProbeRunning || working || transferRunning) return
+        val candidates = ImageProbePlan.candidates(items, selected)
+        if (candidates.isEmpty()) {
+            status = "Выбери фотографии для проверки разрешения"
+            return
+        }
+        imageProbeJob = scope.launch {
+            imageProbeRunning = true
+            imageProbeResults = emptyMap()
+            try {
+                candidates.forEachIndexed { index, item ->
+                    ensureActive()
+                    imageProbeProgress = "Проверка разрешения ${index + 1} из ${candidates.size}: ${item.name}"
+                    val result = ImageQualityProbe.inspect(item)
+                    ensureActive()
+                    imageProbeResults = imageProbeResults + (item.url to result)
+                }
+                val verified = imageProbeResults.values.count { it.verified }
+                status = "Проверено разрешение $verified из ${candidates.size} изображений. " +
+                    "Неудачные проверки помечены отдельно; остальные файлы не изменены."
+            } catch (_: CancellationException) {
+                status = "Проверка разрешения остановлена. Полученные результаты сохранены."
+            } finally {
+                imageProbeRunning = false
+                imageProbeProgress = ""
+                imageProbeJob = null
+            }
+        }
+    }
+
+    private fun cancelImageSizes() {
+        imageProbeJob?.cancel()
+        ImageQualityProbe.cancel()
+    }
+
     private fun scan() {
-        if (working || transferRunning) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
+        if (working || transferRunning || imageProbeRunning) return
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
             val recommended = withContext(Dispatchers.Default) {
@@ -328,7 +369,7 @@ class MainActivity : ComponentActivity() {
                 HistoryPage()
             } else {
             OutlinedTextField(url, {url=it}, label={Text("HTTPS-ссылка")}, modifier=Modifier.fillMaxWidth())
-            Button(onClick=::scan, enabled=!working && !transferRunning && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
+            Button(onClick=::scan, enabled=!working && !transferRunning && !imageProbeRunning && url.isNotBlank(), modifier=Modifier.fillMaxWidth()) { Text("Найти фото и видео") }
             Text(status)
             if (reportDetails.isNotBlank()) {
                 TextButton(onClick = { showReportDetails = !showReportDetails }) {
@@ -413,12 +454,34 @@ class MainActivity : ComponentActivity() {
                     enabled=!working
                 ) { Text("Показать ещё ${minOf(MediaResults.PAGE_SIZE, visibleItems.size-displayedItems.size)}") }
             }
+            if (items.isNotEmpty()) {
+                OutlinedButton(
+                    onClick=::verifyImageSizes,
+                    enabled=!imageProbeRunning && !working && !transferRunning &&
+                        ImageProbePlan.selectedPhotoCount(items, selected)>0,
+                    modifier=Modifier.fillMaxWidth()
+                ) { Text("Проверить разрешение выбранных фотографий") }
+                Text(
+                    "Проверка читает ограниченную часть каждого исходного изображения (до 4 МиБ). " +
+                        "Максимум 40 фотографий за запуск, без сохранения и загрузки в облако.",
+                    style=MaterialTheme.typography.bodySmall
+                )
+                if (imageProbeRunning) {
+                    Text(imageProbeProgress, style=MaterialTheme.typography.bodySmall)
+                    LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
+                    TextButton(onClick=::cancelImageSizes) { Text("Остановить проверку") }
+                }
+                if (imageProbeResults.isNotEmpty()) {
+                    Text("Размеры получены для ${imageProbeResults.values.count { it.verified }} из ${imageProbeResults.size} проверенных файлов.")
+                }
+            }
             displayedItems.forEach { item -> Row {
                 Checkbox(item.url in selected, onCheckedChange={v -> selected=if(v) selected+item.url else selected-item.url}, enabled=!working)
                 Column {
                     Text(item.name)
                     Text(item.source, style=MaterialTheme.typography.bodySmall)
-                    Text(QualitySelector.hint(item), style=MaterialTheme.typography.bodySmall)
+                    val verified = imageProbeResults[item.url]
+                    Text(verified?.display() ?: QualitySelector.hint(item), style=MaterialTheme.typography.bodySmall)
                 }
             }}
             Row { FilterChip(target=="Mail WebDAV", onClick={target="Mail WebDAV"}, label={Text("Mail WebDAV")})
@@ -473,8 +536,8 @@ class MainActivity : ComponentActivity() {
                     "Настройки сохранены, но сохранить пароль не удалось: ${e.message}"
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
-            Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.14 • Оптимизация списка: рекомендации вычисляются один раз, ссылки отображаются порциями.",style=MaterialTheme.typography.bodySmall)
+            Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&!imageProbeRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
+            Text("MVP v0.15 • Ручная проверка фактических размеров выбранных фотографий без загрузки.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
