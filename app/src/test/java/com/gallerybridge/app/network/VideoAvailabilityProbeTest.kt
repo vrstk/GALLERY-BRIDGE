@@ -31,6 +31,30 @@ class VideoAvailabilityProbeTest {
             VideoAvailabilityProbe.classify(sample.url, 429, null).verdict)
     }
 
+    @Test fun summaryDoesNotCountUnverifiedLinksAsBlocked() {
+        val variants = listOf(sample, sample.copy(url = "https://example.com/clip_720.mp4"))
+        val denied = VideoAvailabilityProbe.classify(sample.url, 403, "text/html")
+        val summary = VideoAvailabilityProbe.summary(variants, mapOf(sample.url to denied))
+        assertEquals(2, summary.total)
+        assertEquals(1, summary.checked)
+        assertEquals(1, summary.notChecked)
+        assertFalse(summary.allBlocked)
+    }
+
+    @Test fun allVariantsBlockedOnlyAfterEachWasChecked() {
+        val variants = listOf(sample, sample.copy(url = "https://example.com/clip_180.mp4"))
+        val results = variants.associate { it.url to VideoAvailabilityProbe.classify(it.url, 403, "text/html") }
+        val summary = VideoAvailabilityProbe.summary(variants, results)
+        assertTrue(summary.allBlocked)
+        assertEquals(2, summary.blocked)
+        assertEquals(0, summary.accepted)
+    }
+
+    @Test fun allCandidateCheckIsNotDependentOnSelectedQuality() {
+        val variants = (1..3).map { sample.copy(url = "https://example.com/clip_${it}00.mp4") }
+        assertEquals(3, VideoAvailabilityProbe.allCandidates(variants).size)
+    }
+
     @Test fun capsSelectedVideosToTwelve() {
         val all = (1..30).map { sample.copy(url = "https://example.com/$it.mp4") }
         assertEquals(12, VideoAvailabilityProbe.candidates(all, all.map { it.url }.toSet()).size)
