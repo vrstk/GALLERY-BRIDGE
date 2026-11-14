@@ -47,6 +47,35 @@ object VideoAvailabilityProbe {
         items.asSequence().filter { it.kind == Kind.VIDEO && it.url in selection }
             .distinctBy { it.url }.take(MAX_SELECTED).toList()
 
+    /** Count each discovered video URL exactly once, regardless of the selected quality. */
+    data class Summary(
+        val total: Int,
+        val checked: Int,
+        val blocked: Int,
+        val accepted: Int,
+        val uncertain: Int
+    ) {
+        val allBlocked: Boolean get() = total > 0 && checked == total && blocked == total
+        val notChecked: Int get() = total - checked
+    }
+
+    fun summary(items: List<Media>, results: Map<String, Result>): Summary {
+        val urls = items.asSequence().filter { it.kind == Kind.VIDEO }
+            .map { it.url }.distinct().toList()
+        val observed = urls.mapNotNull { results[it] }
+        return Summary(
+            total = urls.size,
+            checked = observed.size,
+            blocked = observed.count { it.verdict == Verdict.BLOCKED },
+            accepted = observed.count { it.verdict == Verdict.ACCEPTED },
+            uncertain = observed.count { it.verdict == Verdict.UNCERTAIN }
+        )
+    }
+
+    fun allCandidates(items: List<Media>): List<Media> =
+        items.asSequence().filter { it.kind == Kind.VIDEO }
+            .distinctBy { it.url }.take(MAX_SELECTED).toList()
+
     suspend fun inspect(media: Media): Result = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
         try {
