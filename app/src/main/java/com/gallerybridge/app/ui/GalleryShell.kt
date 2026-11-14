@@ -25,6 +25,7 @@ import com.gallerybridge.app.R
 internal enum class GalleryPage(val label: String, val title: String = label) {
     HOME("Главная", "GALLERY BRIDGE"),
     DOWNLOADS("Загрузки"),
+    BROWSER("Браузер", "Браузер медиа"),
     QUEUE("Очередь", "Очередь загрузок"),
     HISTORY("История", "История загрузок"),
     SETTINGS("Настройки")
