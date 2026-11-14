@@ -941,10 +941,11 @@ class MainActivity : ComponentActivity() {
         if (newEmail == email) return
         email = newEmail
         val stored = SecureMailCredentials.load(this, newEmail)
-        if (stored != null || rememberMailPassword) {
-            password = stored.orEmpty()
-            rememberMailPassword = stored != null
-        }
+        // Never reuse credentials entered for a different account, even when
+        // the previous password was not saved in Android Keystore.
+        password = stored.orEmpty()
+        rememberMailPassword = stored != null
+        reveal = false
     }
 
     private fun saveSettings() {
