@@ -484,6 +484,10 @@ class MainActivity : ComponentActivity() {
     private fun beginResumeTransfer(token: String?) {
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
+            require(queue.entries.filter { it.state != "DONE" && it.state != "SKIPPED" }
+                .all { it.media.kind == Kind.PHOTO }) {
+                "Очередь содержит видео из прежней версии. Закройте её, чтобы начать новую фотозагрузку."
+            }
             if (queue.target == "Папка Android") {
                 require(queue.root.isNotBlank()) { "Выбранная папка Android отсутствует" }
             }
@@ -569,6 +573,10 @@ class MainActivity : ComponentActivity() {
     private fun resumeUpload() {
         val queue = QueueStore.load(this) ?: return
         if (transferRunning || working || queue.remaining == 0) return
+        if (queue.entries.any { it.state != "DONE" && it.state != "SKIPPED" && it.media.kind != Kind.PHOTO }) {
+            transferStatus = "Это сохранённое задание содержит видео из прежней версии. Закройте очередь и начните новую с фотографиями."
+            return
+        }
         if (queue.target != "Google Drive") {
             uploadResume(null)
         } else {
@@ -772,12 +780,9 @@ class MainActivity : ComponentActivity() {
         val otherLinks = items.size - remember(items, recommendedUrls) {
             MediaResults.visible(items, false, recommendedUrls).size
         }
-        val visibleItems = remember(candidates, mediaFilter) {
-            mediaFilter?.let { kind -> candidates.filter { it.kind == kind } } ?: candidates
-        }
+        val visibleItems = candidates
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
-        val gridScope = rememberCoroutineScope()
 
         LazyVerticalGrid(
             columns = GridCells.Adaptive(if (fontScale > 1.3f) 144.dp else 104.dp),
