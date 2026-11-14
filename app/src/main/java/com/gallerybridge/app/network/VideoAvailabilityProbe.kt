@@ -1,5 +1,6 @@
 package com.gallerybridge.app.network
 
+import android.content.Context
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import kotlinx.coroutines.CancellationException
@@ -76,15 +77,17 @@ object VideoAvailabilityProbe {
         items.asSequence().filter { it.kind == Kind.VIDEO && it.url.startsWith("https://") }
             .distinctBy { it.url }.take(MAX_SELECTED).toList()
 
-    suspend fun inspect(media: Media): Result = withContext(Dispatchers.IO) {
+    suspend fun inspect(context: Context, media: Media): Result = withContext(Dispatchers.IO) {
         coroutineContext.ensureActive()
         try {
             val url = media.url.toHttpUrlOrNull()
                 ?: return@withContext Result(media.url, Verdict.BLOCKED, "Неверная ссылка")
             if (url.scheme != "https") return@withContext Result(media.url, Verdict.BLOCKED, "Нужен HTTPS")
             // Do not request a byte range: some CDNs handle Range differently.
-            val request = Request.Builder().url(url)
-                .header("User-Agent", "GalleryBridge/0.1").get().build()
+            val request = BrowserSessionHeaders.withContext(
+                Request.Builder().url(url).header("User-Agent", "GalleryBridge/0.1").get(),
+                media, context
+            ).build()
             client.newCall(request).execute().use { response ->
                 coroutineContext.ensureActive()
                 if (response.request.url.scheme != "https") {
