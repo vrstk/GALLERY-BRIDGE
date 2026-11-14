@@ -7,7 +7,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -64,17 +63,33 @@ internal fun GalleryBrowser(
                 enabled = currentPage.startsWith("https://"),
                 onClick = {
                     val web = browser ?: return@Button
-                    // Only explicit media attributes from the current document.
-                    // Cross-origin frames are intentionally not inspected.
+                    // Only the visible, primary HTML5 player. Never collect all
+                    // <a> tags, suggested clips, advertisements or page thumbnails.
                     val js = """(function() {
-                        const values = [];
-                        document.querySelectorAll('video,source,a[href],img[src]').forEach(el => {
-                            const u = el.currentSrc || el.src || el.href || '';
-                            if (u.startsWith('https://') && ['.mp4','.m4v','.mov','.webm','.jpg','.jpeg','.png','.webp','.avif','.gif'].some(x => new URL(u).pathname.toLowerCase().endsWith(x))) {
-                                values.push(u);
-                            }
-                        });
-                        return JSON.stringify([...new Set(values)].slice(0, 120));
+                        const players = Array.from(document.querySelectorAll('video'))
+                            .map(v => ({video: v, box: v.getBoundingClientRect()}))
+                            .filter(x => x.box.width >= 140 && x.box.height >= 90 &&
+                                x.box.bottom > 0 && x.box.top < window.innerHeight);
+                        players.sort((a, b) =>
+                            (b.box.width * b.box.height) - (a.box.width * a.box.height));
+                        if (players.length === 0) return JSON.stringify([]);
+                        const player = players[0].video;
+                        const sources = [player.currentSrc, player.src,
+                            ...Array.from(player.querySelectorAll('source[src]'))
+                                .map(el => el.src)];
+                        const result = [];
+                        for (const value of sources) {
+                            if (!value) continue;
+                            try {
+                                const url = new URL(value, document.baseURI);
+                                if (url.protocol !== 'https:') continue;
+                                const path = url.pathname.toLowerCase();
+                                if (['.mp4','.m4v','.mov','.webm'].some(ext => path.endsWith(ext))) {
+                                    if (!result.includes(url.href)) result.push(url.href);
+                                }
+                            } catch (e) {}
+                        }
+                        return JSON.stringify(result.slice(0, 8));
                     })()"""
                     web.evaluateJavascript(js) { returned ->
                         try {
@@ -86,14 +101,42 @@ internal fun GalleryBrowser(
                             if (list.isNotEmpty()) {
                                 onMediaFound(list, currentPage, pageTitle)
                             } else {
-                                message = "В HTML этой страницы прямые медиа не обнаружены. Попробуйте открыть видео или воспользоваться ссылкой загрузки."
+                                message = "В видимом видеоплеере прямой MP4 не найден. " +
+                                    "Прокрутите к основному видео и запустите его. " +
+                                    "Рекламные и рекомендованные ролики не добавляются."
                             }
                         } catch (_: Exception) {
-                            message = "Не удалось разобрать ссылки на медиа."
+                            message = "Не удалось прочитать ссылку основного плеера."
                         }
                     }
                 }
-            ) { Text("Найти медиа") }
+            ) { Text("Видео основного плеера") }
+        }
+        var directVideo by remember { mutableStateOf("") }
+        OutlinedTextField(
+            value = directVideo,
+            onValueChange = { directVideo = it },
+            label = { Text("Точная HTTPS-ссылка MP4 (необязательно)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedButton(
+            onClick = {
+                val link = directVideo.trim()
+                val uri = android.net.Uri.parse(link)
+                val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
+                if (uri.scheme == "https" && !uri.host.isNullOrBlank() &&
+                    extension in setOf("mp4", "m4v", "mov", "webm") &&
+                    currentPage.startsWith("https://")
+                ) {
+                    onMediaFound(listOf(link), currentPage, pageTitle)
+                } else {
+                    message = "Откройте страницу публикации и укажите точную HTTPS-ссылку на видео."
+                }
+            },
+            enabled = currentPage.startsWith("https://") && directVideo.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Добавить только эту ссылку") }
         }
         if (message.isNotBlank()) {
             Text(message, style = MaterialTheme.typography.bodySmall)
