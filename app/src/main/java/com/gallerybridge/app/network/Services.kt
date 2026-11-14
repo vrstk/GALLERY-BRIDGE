@@ -111,17 +111,14 @@ object Services {
             }
             doc.select("video[src],source[src]").forEach { add(it.absUrl("src"), "Видео") }
             val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.ifBlank { doc.title() } ?: doc.title()
-            val date = listOf("meta[property=article:published_time]", "time[datetime]").firstNotNullOfOrNull {
-                selector -> doc.selectFirst(selector)?.let { el -> Regex("\\d{4}-\\d{2}-\\d{2}").find(el.attr(if (selector.startsWith("time")) "datetime" else "content"))?.value }
-            }.orEmpty()
             val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
             Scan(
                 title.ifBlank { "Без названия" },
-                metadata.publishedDate.ifBlank { date },
+                metadata.publishedDate,
                 urls.values.take(300),
                 metadata.model,
                 metadata.modelSource,
-                metadata.dateSource.ifBlank { if (date.isNotBlank()) "Метаданные даты публикации" else "" }
+                metadata.dateSource
             )
         }
     }
