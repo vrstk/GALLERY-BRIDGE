@@ -126,6 +126,18 @@ object Services {
     private fun download(context: Context, media: Media): Pair<File, String> {
         val file = File(context.cacheDir, "gb_${UUID.randomUUID()}.part")
         try {
+            if (media.url.startsWith("content://")) {
+                require(media.source == LocalMediaImport.SOURCE) { "Локальный URI не был импортирован" }
+                val uri = Uri.parse(media.url)
+                val mime = context.contentResolver.getType(uri)?.substringBefore(';')
+                    ?.takeIf { it.startsWith("video/") || it.startsWith("image/") }
+                    ?: if (media.kind == Kind.VIDEO) "video/mp4" else "image/jpeg"
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { output -> input.copyTo(output) }
+                } ?: error("Нет доступа к выбранному локальному файлу. Импортируйте его заново.")
+                require(file.length() > 0L) { "Локальный файл пустой" }
+                return file to mime
+            }
             http.newCall(request(media.url)).execute().use { r ->
                 if (!r.isSuccessful) error(SourceDownloadFailure.describe(r.code))
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
