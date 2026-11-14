@@ -40,7 +40,7 @@ object QueueStore {
                 for (i in 0 until list.length()) {
                     val x = list.getJSONObject(i)
                     add(Entry(Media(x.getString("url"), x.getString("name"),
-                        Kind.valueOf(x.getString("kind")), x.optString("source")),
+                        Kind.valueOf(x.getString("kind")), x.optString("source"), x.optString("referrer")),
                         x.optString("state", "PENDING")))
                 }
             }
@@ -64,7 +64,8 @@ object QueueStore {
             entries.put(JSONObject()
                 .put("url", entry.media.url).put("name", entry.media.name)
                 .put("kind", entry.media.kind.name)
-                .put("source", entry.media.source).put("state", entry.state))
+                .put("source", entry.media.source).put("referrer", entry.media.referrer)
+                .put("state", entry.state))
         }
         json.put("entries", entries)
         // Synchronous commit for durable checkpoints.
