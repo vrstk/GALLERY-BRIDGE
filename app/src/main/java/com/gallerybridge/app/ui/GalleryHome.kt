@@ -41,6 +41,7 @@ internal fun GalleryHome(
     hasResults: Boolean,
     onSearch: () -> Unit,
     onResults: () -> Unit,
+    onBrowser: () -> Unit,
     mailConfigured: Boolean,
     driveConfigured: Boolean,
     onMailSettings: () -> Unit,
@@ -54,6 +55,8 @@ internal fun GalleryHome(
             Text("Новая загрузка", style = MaterialTheme.typography.titleLarge)
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
             FindMediaButton(searchAllowed && url.isNotBlank(), onSearch)
+            OutlinedButton(onClick = onBrowser, enabled = searchAllowed,
+                modifier = Modifier.fillMaxWidth()) { Text("Открыть во встроенном браузере") }
             if (hasResults) {
                 TextButton(onClick = onResults, modifier = Modifier.align(Alignment.End)) {
                     Text("Открыть результаты")
