@@ -469,21 +469,22 @@ class MainActivity : ComponentActivity() {
             val kind = if (extension in setOf("mp4", "m4v", "mov", "webm")) Kind.VIDEO else Kind.PHOTO
             Media(candidate, Paths.clean(filename), kind, BrowserSessionHeaders.SOURCE, safePage)
         }.distinctBy { it.url }
-        val seen = items.map { it.url }.toSet()
-        val additional = incoming.filter { it.url !in seen }
-        if (additional.isEmpty()) {
-            status = "В браузере не найдено новых прямых медиафайлов."
+        if (incoming.isEmpty()) {
+            status = "В основном плеере не найдено подтверждённых прямых ссылок на видео."
             screen = GalleryPage.DOWNLOADS
             return
         }
-        items = items + additional
-        selected = selected + additional.map { it.url }
-        recommendedUrls = recommendedUrls + additional.map { it.url }
-        if (title.isBlank()) title = pageTitle.take(180).ifBlank { "Медиа из браузера" }
-        if (model.isBlank()) model = "Без имени"
+        // Never combine these explicitly discovered player URLs with the
+        // old generic scan's unrelated links, ads or recommendations.
+        items = incoming
+        selected = emptySet()
+        recommendedUrls = incoming.map { it.url }.toSet()
+        videoProbeResults = emptyMap()
+        videoProbeReport = ""
+        if (pageTitle.isNotBlank()) title = pageTitle.take(180)
         showOtherMedia = false
         mediaFilter = null
-        status = "Добавлено из браузера: ${additional.size}. Доступность при скачивании не гарантируется."
+        status = "Видео плеера: ${incoming.size}. Проверьте файл и выберите его вручную."
         screen = GalleryPage.DOWNLOADS
     }
 
