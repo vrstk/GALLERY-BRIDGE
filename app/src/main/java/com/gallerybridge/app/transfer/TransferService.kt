@@ -70,7 +70,8 @@ class TransferService : Service() {
             val array = JSONArray()
             for (file in files) {
                 array.put(JSONObject().put("url", file.url).put("name", file.name)
-                    .put("kind", file.kind.name).put("source", file.source))
+                    .put("kind", file.kind.name).put("source", file.source)
+                    .put("referrer", file.referrer))
             }
             val intent = Intent(context, TransferService::class.java)
                 .setAction(ACTION_START)
