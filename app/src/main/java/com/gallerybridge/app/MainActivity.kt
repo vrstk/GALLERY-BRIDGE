@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
     private var comparisonPairs by mutableStateOf<List<VariantComparison.Pairing>>(emptyList())
     private var comparisonReport by mutableStateOf("")
+    private var metadataReport by mutableStateOf("")
 
     private var imageProbeJob: Job? = null
     private var reportDetails by mutableStateOf("")
@@ -227,14 +228,27 @@ class MainActivity : ComponentActivity() {
 
     private fun scan() {
         if (working || transferRunning || imageProbeRunning) return
-        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); comparisonPairs = emptyList(); comparisonReport = ""; mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
+        working = true; status = "Проверка страницы..."; items = emptyList(); selected = emptySet(); recommendedUrls = emptySet(); imageProbeResults = emptyMap(); comparisonPairs = emptyList(); comparisonReport = ""; metadataReport = ""; mediaPageLimit = MediaResults.PAGE_SIZE; showOtherMedia = false; reportDetails = ""; showReportDetails = false
         scope.launch { try {
             val s = Services.scan(url)
             val recommended = withContext(Dispatchers.Default) {
                 QualitySelector.recommended(s.media)
             }
             title = s.title
-            date = s.date
+            if (date.isBlank()) date = s.date
+            if (model.isBlank() && s.suggestedModel.isNotBlank()) model = s.suggestedModel
+            metadataReport = buildString {
+                if (s.suggestedModel.isNotBlank()) {
+                    append("Имя модели предложено по заголовку страницы; проверь его перед загрузкой.")
+                }
+                if (s.date.isNotBlank()) {
+                    if (isNotEmpty()) append(" ")
+                    append("Дата найдена в явных сведениях о публикации.")
+                } else {
+                    if (isNotEmpty()) append(" ")
+                    append("Дата публикации не подтверждена. Заполни вручную, если известна.")
+                }
+            }
             recommendedUrls = recommended
             selected = recommended
             items = s.media
@@ -471,6 +485,7 @@ class MainActivity : ComponentActivity() {
             OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
             OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
+            if (metadataReport.isNotBlank()) Text(metadataReport, style=MaterialTheme.typography.bodySmall)
             Text("Найдено: ${items.size}; выбрано: ${selected.size}")
             val visibleItems = remember(items, showOtherMedia, recommendedUrls) {
                 MediaResults.visible(items, showOtherMedia, recommendedUrls)
@@ -606,7 +621,7 @@ class MainActivity : ComponentActivity() {
                 }
             },modifier=Modifier.fillMaxWidth()){Text("Сохранить настройки")}
             Button(onClick=::beginUpload,enabled=!working&&!transferRunning&&!imageProbeRunning&&selected.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text("Скачать и загрузить")}
-            Text("MVP v0.16 • Проверка альтернативных размеров по фактическим изображениям.",style=MaterialTheme.typography.bodySmall)
+            Text("MVP v0.17 • Предложения имени модели и проверенной даты публикации из HTML.",style=MaterialTheme.typography.bodySmall)
             }
         }
     }
