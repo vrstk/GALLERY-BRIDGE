@@ -154,7 +154,7 @@ object IntegrityAudit {
             progress(i + 1, media.size, item.name)
             try {
                 val path = Paths.folders(queue.model, queue.date, queue.title, item.kind)
-                val uri = existingFile(context, tree, path, item.name)
+                val uri = SafDestination.existingFileForAudit(context, queue.root, path, item.name)
                 val src = sourceHash(item)
                 val dest = context.contentResolver.openInputStream(uri)?.let { hash(it) }
                     ?: error("Невозможно прочитать сохранённый файл")
