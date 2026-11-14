@@ -16,16 +16,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -61,18 +70,21 @@ class MainActivity : ComponentActivity() {
     private var target by mutableStateOf("Mail WebDAV")
     private var dark by mutableStateOf(true)
     private var working by mutableStateOf(false)
+    private var scanning by mutableStateOf(false)
     private var status by mutableStateOf("Вставьте HTTPS-ссылку на галерею или файл.")
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
     private var reveal by mutableStateOf(false)
     private var rememberMailPassword by mutableStateOf(false)
     private var showOtherMedia by mutableStateOf(false)
-    private var mediaPageLimit by mutableIntStateOf(MediaResults.PAGE_SIZE)
+    private var mediaFilter by mutableStateOf<Kind?>(null)
+    private var showDestination by mutableStateOf(false)
+    private var uploadStatus by mutableStateOf("")
     private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
     private var imageProbeRunning by mutableStateOf(false)
     private var imageProbeProgress by mutableStateOf("")
+    private var imageProbeStatus by mutableStateOf("")
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
-    private var comparisonPairs by mutableStateOf<List<VariantComparison.Pairing>>(emptyList())
     private var comparisonReport by mutableStateOf("")
     private var metadataReport by mutableStateOf("")
 
@@ -147,9 +159,10 @@ class MainActivity : ComponentActivity() {
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", true)
         applySystemBars()
+        target = savedInstanceState?.getString("transferTarget")
+            ?: p.getString("transferTarget", target) ?: target
         settingsOrigin = savedInstanceState.galleryPage("settingsOrigin")
         settingsDestination = savedInstanceState?.getString("settingsDestination") ?: target
-        target = savedInstanceState?.getString("transferTarget") ?: target
         screen = savedInstanceState.galleryPage("galleryPage")
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
@@ -218,11 +231,12 @@ class MainActivity : ComponentActivity() {
         if (imageProbeRunning || working || transferRunning) return
         val candidates = ImageProbePlan.candidates(items, selected)
         if (candidates.isEmpty()) {
-            status = "Выбери фотографии для проверки разрешения"
+            imageProbeStatus = "Выберите фотографии для проверки разрешения."
             return
         }
         imageProbeJob = scope.launch {
             imageProbeRunning = true
+            imageProbeStatus = ""
             imageProbeResults = emptyMap()
             try {
                 candidates.forEachIndexed { index, item ->
@@ -232,11 +246,8 @@ class MainActivity : ComponentActivity() {
                     ensureActive()
                     imageProbeResults = imageProbeResults + (item.url to result)
                 }
-                val verified = imageProbeResults.values.count { it.verified }
-                status = "Проверено разрешение $verified из ${candidates.size} изображений. " +
-                    "Неудачные проверки помечены отдельно; остальные файлы не изменены."
             } catch (_: CancellationException) {
-                status = "Проверка разрешения остановлена. Полученные результаты сохранены."
+                imageProbeStatus = "Проверка разрешения остановлена."
             } finally {
                 imageProbeRunning = false
                 imageProbeProgress = ""
@@ -249,11 +260,9 @@ class MainActivity : ComponentActivity() {
         if (imageProbeRunning || working || transferRunning) return
         val pairs = VariantComparison.pairs(items, selected)
         if (pairs.isEmpty()) {
-            comparisonPairs = emptyList()
             comparisonReport = "Для выбранных файлов не найдены другие варианты с тем же именем основы и в той же папке CDN."
             return
         }
-        comparisonPairs = pairs
         comparisonReport = ""
         val candidates = VariantComparison.candidates(pairs)
         imageProbeJob = scope.launch {
@@ -307,14 +316,17 @@ class MainActivity : ComponentActivity() {
             (newUrl.isBlank() && url.isNotBlank())
         url = newUrl
         if (!changed) return
+        cancelImageSizes()
         items = emptyList()
         selected = emptySet()
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
-        comparisonPairs = emptyList()
+        imageProbeStatus = ""
         comparisonReport = ""
-        mediaPageLimit = MediaResults.PAGE_SIZE
         showOtherMedia = false
+        mediaFilter = null
+        showDestination = false
+        uploadStatus = ""
         model = ""
         title = ""
         date = ""
@@ -326,13 +338,13 @@ class MainActivity : ComponentActivity() {
             date = cached.date
             metadataReport = "Восстановлены сохранённые данные для этой галереи."
         }
-        status = "Найди фото и видео по этой ссылке."
+        status = if (newUrl.isBlank()) "Вставьте HTTPS-ссылку на галерею или файл." else "Запустите поиск по ссылке."
     }
 
     private fun saveGalleryMetadata() {
-        status = try {
+        metadataReport = try {
             GalleryMetadataStore.save(this, url, GalleryFields(model, title, date))
-            "Данные этой галереи сохранены на устройстве. Они будут восстановлены по той же ссылке."
+            "Данные сохранены для этой ссылки."
         } catch (e: Exception) {
             "Не удалось сохранить данные галереи: ${e.message}"
         }
@@ -343,16 +355,19 @@ class MainActivity : ComponentActivity() {
         val requestedUrl = url
         screen = GalleryPage.DOWNLOADS
         working = true
+        scanning = true
         status = "Проверяем ссылку…"
         items = emptyList()
         selected = emptySet()
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
-        comparisonPairs = emptyList()
+        imageProbeStatus = ""
         comparisonReport = ""
         metadataReport = ""
-        mediaPageLimit = MediaResults.PAGE_SIZE
         showOtherMedia = false
+        mediaFilter = null
+        showDestination = false
+        uploadStatus = ""
         scope.launch {
             try {
                 val scan = Services.scan(requestedUrl)
@@ -379,14 +394,15 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 if (requestedUrl == url) status = "Ошибка поиска: ${e.message}"
             } finally {
+                scanning = false
                 working = false
-                }
+            }
         }
     }
     private fun upload(token: String?) {
         if (transferRunning) {
             working = false
-            status = "Загрузка уже выполняется в фоне"
+            uploadStatus = "Загрузка уже выполняется в фоне"
             return
         }
         reportDetails = ""
@@ -408,15 +424,17 @@ class MainActivity : ComponentActivity() {
             }
             val chosen = items.filter { it.url in selected }
             TransferService.begin(
-                this, chosen, model, title, date, target, email, password,
+                this, chosen, model, title, date.trim(), target, email, password,
                 if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token
             )
             savedQueue = QueueStore.load(this)
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putString("transferTarget", target).apply()
             transferRunning = true
+            showDestination = false
             screen = GalleryPage.QUEUE
             transferStatus = "Фоновая передача запущена"
         } catch (e: Exception) {
-            status = "Не удалось запустить фоновую передачу: ${e.message}"
+            uploadStatus = "Не удалось запустить фоновую передачу: ${e.message}"
         } finally {
             working = false
         }
@@ -495,24 +513,33 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun beginUpload() {
-        if (transferRunning) { status = "Загрузка уже выполняется в фоне"; return }
-        if (selected.isEmpty()) { status = "Нет выбранных файлов"; return }
-        if (model.isBlank() || title.isBlank()) { status = "Укажите имя модели и название публикации перед загрузкой"; return }
-        if (target == "Mail WebDAV") {
-            if (email.isBlank() || password.isBlank()) { status = "Укажите почту и пароль приложения Mail"; return }
-            upload(null); return
+        if (working || transferRunning || selected.isEmpty()) return
+        if (!GalleryKeys.validDate(date.trim())) {
+            uploadStatus = "Укажите реальную дату в формате ГГГГ-ММ-ДД или оставьте поле пустым."
+            return
         }
-        if (target == "Папка Android") {
-            if (treeUri.isBlank()) { status = "Сначала выбери папку назначения"; return }
-            upload(null); return
+        if (model.isBlank() || title.isBlank()) {
+            uploadStatus = "Заполните имя модели и название публикации."
+            return
         }
-        beginGoogleAuthorization()
+        val setupError = when (target) {
+            "Mail WebDAV" -> "Укажите почту и пароль приложения Mail.".takeIf { email.isBlank() || password.isBlank() }
+            "Google Drive" -> "Укажите ID папки Google Drive.".takeIf { driveId.isBlank() }
+            else -> "Выберите папку назначения.".takeIf { treeUri.isBlank() }
+        }
+        if (setupError != null) {
+            uploadStatus = setupError
+            return
+        }
+        uploadStatus = ""
+        working = true
+        if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
     }
 
     private fun beginGoogleAuthorization() {
         working = true
         if (resumeRequest) transferStatus = "Запрашиваем доступ к Google Drive…"
-        else status = "Запрашиваем доступ к Google Drive…"
+        else uploadStatus = "Запрашиваем доступ к Google Drive…"
         Identity.getAuthorizationClient(this).authorize(
             AuthorizationRequest.builder().setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive"))).build()
         ).addOnSuccessListener { a ->
@@ -526,7 +553,7 @@ class MainActivity : ComponentActivity() {
         }.addOnFailureListener {
             val msg = it.message.orEmpty()
             val message = if (msg.contains("UNREGISTERED_ON_API_CONSOLE", true) || msg.contains("DEVELOPER_ERROR", true))
-                "Google Drive: OAuth-клиент приложения не зарегистрирован. Нужны Google Cloud Drive API, package com.gallerybridge.app и SHA-1 именно установленной APK."
+                "Google Drive: зарегистрируйте OAuth-клиент для пакета $packageName и SHA-1 установленной APK."
                 else "Ошибка авторизации Google: $msg"
             failGoogleAuthorization(message)
         }
@@ -544,7 +571,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun failGoogleAuthorization(message: String) {
-        if (resumeRequest) transferStatus = message else status = message
+        if (resumeRequest) transferStatus = message else uploadStatus = message
         resumeRequest = false
         working = false
     }
@@ -582,10 +609,20 @@ class MainActivity : ComponentActivity() {
                 screen = page
             },
             onSettings = { openSettings() },
-            onBack = ::backFromPage
+            onBack = ::backFromPage,
+            actions = {
+                if (screen == GalleryPage.DOWNLOADS && items.isNotEmpty()) {
+                    DownloadActions(selected.size, searchAllowed && selected.isNotEmpty()) {
+                        keyboard?.hide()
+                        focus.clearFocus()
+                        uploadStatus = ""
+                        showDestination = true
+                    }
+                }
+            }
         ) {
             when (screen) {
-                GalleryPage.HOME -> GalleryHome(
+                GalleryPage.HOME -> GalleryPageColumn { GalleryHome(
                     url = url,
                     onUrlChange = ::setGalleryUrl,
                     searchAllowed = searchAllowed,
@@ -600,11 +637,11 @@ class MainActivity : ComponentActivity() {
                     onLatestTransfer = {
                         screen = if (savedQueue != null) GalleryPage.QUEUE else GalleryPage.HISTORY
                     }
-                )
+                ) }
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
-                GalleryPage.QUEUE -> QueuePage()
-                GalleryPage.HISTORY -> HistoryPage()
-                GalleryPage.SETTINGS -> SettingsPage()
+                GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
+                GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }
+                GalleryPage.SETTINGS -> GalleryPageColumn { SettingsPage() }
             }
         }
     }
@@ -627,139 +664,202 @@ class MainActivity : ComponentActivity() {
         return LatestTransfer(queue.title.ifBlank { queue.model }, queue.target, completed, queue.entries.size, operation)
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun DownloadsPage(searchAllowed: Boolean, startSearch: () -> Unit) {
-        GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
-        FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
-        Text(status, style = MaterialTheme.typography.bodyMedium)
-        if (working && !transferRunning) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (items.isEmpty()) {
+            GalleryPageColumn {
+                GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
+                FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
+                Text(status, style = MaterialTheme.typography.bodyMedium)
+                if (scanning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                QueueShortcut()
+                if (GalleryKeys.canonical(url) != null) {
+                    var metadataExpanded by rememberSaveable(url) { mutableStateOf(false) }
+                    GalleryDisclosure("Данные публикации", metadataExpanded) { metadataExpanded = !metadataExpanded }
+                    if (metadataExpanded) GalleryFieldsForm(searchAllowed)
+                }
+            }
+            return
         }
+
+        var linkExpanded by rememberSaveable(url) { mutableStateOf(false) }
+        var metadataExpanded by rememberSaveable(url) { mutableStateOf(false) }
+        var checksExpanded by rememberSaveable(url) { mutableStateOf(false) }
+        val candidates = remember(items, showOtherMedia, recommendedUrls) {
+            MediaResults.visible(items, showOtherMedia, recommendedUrls)
+        }
+        val photos = remember(candidates) { candidates.count { it.kind == Kind.PHOTO } }
+        val otherLinks = items.size - remember(items, recommendedUrls) {
+            MediaResults.visible(items, false, recommendedUrls).size
+        }
+        val videos = candidates.size - photos
+        val visibleItems = remember(candidates, mediaFilter) {
+            mediaFilter?.let { kind -> candidates.filter { it.kind == kind } } ?: candidates
+        }
+        val gridState = rememberLazyGridState()
+        val fontScale = LocalDensity.current.fontScale
+        val gridScope = rememberCoroutineScope()
+
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(if (fontScale > 1.3f) 144.dp else 104.dp),
+            state = gridState,
+            modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Найдено файлов: ${candidates.size}", style = MaterialTheme.typography.titleLarge)
+                    if (candidates.size != items.size) {
+                        Text("Всего проанализировано ссылок: ${items.size}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    MediaFilters(mediaFilter, photos, videos) { kind ->
+                        mediaFilter = kind
+                        gridScope.launch { gridState.scrollToItem(0) }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { selected = selected + visibleItems.map(Media::url) },
+                            enabled = searchAllowed && visibleItems.any { it.url !in selected }
+                        ) { Text("Выбрать все в фильтре") }
+                        TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
+                            Text("Снять выделение")
+                        }
+                    }
+                    QueueShortcut()
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GalleryDisclosure("Данные публикации", metadataExpanded) { metadataExpanded = !metadataExpanded }
+                    if (metadataExpanded) GalleryFieldsForm(searchAllowed)
+                    GalleryDisclosure("Разрешение и варианты", checksExpanded) { checksExpanded = !checksExpanded }
+                    if (checksExpanded) DownloadQualityControls(searchAllowed, otherLinks)
+                }
+            }
+            items(visibleItems, key = { "media:${it.url}" }) { media ->
+                MediaTile(media, media.url in selected, searchAllowed, imageProbeResults[media.url]?.display()) { checked ->
+                    selected = if (checked) selected + media.url else selected - media.url
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GalleryDisclosure("Поиск по ссылке", linkExpanded) { linkExpanded = !linkExpanded }
+                    if (linkExpanded) {
+                        GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
+                        FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
+                    }
+                }
+            }
+        }
+        if (showDestination) DestinationDialog()
+    }
+
+    @Composable
+    private fun QueueShortcut() {
         if (transferRunning || (savedQueue?.remaining ?: 0) > 0) {
             TextButton(onClick = { screen = GalleryPage.QUEUE }) {
                 Text(if (transferRunning) "Открыть ход загрузки" else "Открыть сохранённую очередь")
             }
         }
-        OutlinedTextField(model, {model=it}, label={Text("Имя модели")}, modifier=Modifier.fillMaxWidth())
-        OutlinedTextField(title, {title=it}, label={Text("Название публикации")}, modifier=Modifier.fillMaxWidth())
-        OutlinedTextField(date, {date=it}, label={Text("Дата YYYY-MM-DD")}, modifier=Modifier.fillMaxWidth())
-        if (metadataReport.isNotBlank()) Text(metadataReport, style=MaterialTheme.typography.bodySmall)
+    }
+
+    @Composable
+    private fun GalleryFieldsForm(enabled: Boolean) {
+        OutlinedTextField(model, { model = it }, label = { Text("Имя модели") },
+            modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true)
+        OutlinedTextField(title, { title = it }, label = { Text("Название публикации") },
+            modifier = Modifier.fillMaxWidth(), enabled = enabled)
+        OutlinedTextField(date, { date = it }, label = { Text("Дата ГГГГ-ММ-ДД") },
+            modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+            isError = !GalleryKeys.validDate(date.trim()),
+            supportingText = if (GalleryKeys.validDate(date.trim())) null else { { Text("Укажите реальную дату") } })
+        if (metadataReport.isNotBlank()) Text(metadataReport, style = MaterialTheme.typography.bodySmall)
         OutlinedButton(
-            onClick=::saveGalleryMetadata,
-            enabled=!working && !transferRunning && !imageProbeRunning &&
-                GalleryKeys.canonical(url) != null &&
-                model.isNotBlank() && title.isNotBlank(),
-            modifier=Modifier.fillMaxWidth()
-        ) { Text("Сохранить данные этой галереи") }
-        Text(
-            "Данные привязываются к HTTPS-ссылке и хранятся только на этом устройстве. " +
-                "Дата должна соответствовать YYYY-MM-DD или оставаться пустой.",
-            style=MaterialTheme.typography.bodySmall
-        )
-        Text("Найдено: ${items.size}; выбрано: ${selected.size}")
-        val visibleItems = remember(items, showOtherMedia, recommendedUrls) {
-            MediaResults.visible(items, showOtherMedia, recommendedUrls)
-        }
-        val displayedItems = remember(visibleItems, mediaPageLimit) {
-            MediaResults.page(visibleItems, mediaPageLimit)
-        }
-        if (items.isNotEmpty()) {
-            Row {
-                TextButton(onClick={selected=visibleItems.map { it.url }.toSet()}) { Text("Выбрать видимые") }
-                TextButton(onClick={selected=emptySet()}) { Text("Снять выделение") }
-            }
-            if (visibleItems.size < items.size || showOtherMedia) {
-                TextButton(onClick={showOtherMedia=!showOtherMedia; mediaPageLimit=MediaResults.PAGE_SIZE}) {
-                    Text(if (showOtherMedia) "Скрыть остальные варианты" else "Показать остальные ${items.size-visibleItems.size} ссылок")
-                }
-            }
-        }
-        if (items.isNotEmpty()) {
-            OutlinedButton(
-                onClick={selected=recommendedUrls},
-                modifier=Modifier.fillMaxWidth(),
-                enabled=!working
-            ) { Text("Выбрать лучшие найденные варианты") }
-            Text(
-                "Выбор основан на признаках в URL и HTML, а не на проверенном разрешении. " +
-                    "Для спорных файлов можно изменить галочки вручную.",
-                style=MaterialTheme.typography.bodySmall
-            )
-        }
-        if (visibleItems.size > displayedItems.size) {
-            Text("Показано ${displayedItems.size} из ${visibleItems.size} ссылок", style=MaterialTheme.typography.bodySmall)
-            OutlinedButton(
-                onClick={mediaPageLimit = (mediaPageLimit + MediaResults.PAGE_SIZE).coerceAtMost(visibleItems.size)},
-                modifier=Modifier.fillMaxWidth(),
-                enabled=!working
-            ) { Text("Показать ещё ${minOf(MediaResults.PAGE_SIZE, visibleItems.size-displayedItems.size)}") }
-        }
-        if (items.isNotEmpty()) {
-            OutlinedButton(
-                onClick=::verifyImageSizes,
-                enabled=!imageProbeRunning && !working && !transferRunning &&
-                    ImageProbePlan.selectedPhotoCount(items, selected)>0,
-                modifier=Modifier.fillMaxWidth()
-            ) { Text("Проверить разрешение выбранных фотографий") }
-            Text(
-                "Проверка читает ограниченную часть каждого исходного изображения (до 4 МиБ). " +
-                    "Максимум 40 фотографий за запуск, без сохранения и загрузки в облако.",
-                style=MaterialTheme.typography.bodySmall
-            )
-            if (imageProbeRunning) {
-                Text(imageProbeProgress, style=MaterialTheme.typography.bodySmall)
-                LinearProgressIndicator(modifier=Modifier.fillMaxWidth())
-                TextButton(onClick=::cancelImageSizes) { Text("Остановить проверку") }
-            }
-            OutlinedButton(
-                onClick=::compareImageVariants,
-                enabled=!imageProbeRunning && !working && !transferRunning &&
-                    selected.isNotEmpty(),
-                modifier=Modifier.fillMaxWidth()
-            ) { Text("Сравнить с другими вариантами") }
-            Text(
-                "Сопоставляет до 20 пар по URL из этой страницы. Проверка не добавляет новые адреса " +
-                    "и не меняет выбранные фотографии.",
-                style=MaterialTheme.typography.bodySmall
-            )
-            if (imageProbeResults.isNotEmpty()) {
-                Text("Размеры получены для ${imageProbeResults.values.count { it.verified }} из ${imageProbeResults.size} проверенных файлов.")
-            }
-            if (comparisonReport.isNotBlank()) {
-                Text(comparisonReport, style=MaterialTheme.typography.bodySmall)
-            }
-        }
-        displayedItems.forEach { item -> Row {
-            Checkbox(item.url in selected, onCheckedChange={v -> selected=if(v) selected+item.url else selected-item.url}, enabled=!working)
-            Column {
-                Text(item.name)
-                Text(item.source, style=MaterialTheme.typography.bodySmall)
-                val verified = imageProbeResults[item.url]
-                Text(verified?.display() ?: QualitySelector.hint(item), style=MaterialTheme.typography.bodySmall)
-            }
-        }}
-        Text("Куда загрузить", style = MaterialTheme.typography.titleMedium)
-        DestinationPicker(target) { target = it }
-        if (target == "Папка Android") Text("Папка: $treeName", style = MaterialTheme.typography.bodyMedium)
-        OutlinedButton(onClick = { openSettings(target) }, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Outlined.Settings, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Настроить назначение")
-        }
-        Button(
-            onClick = ::beginUpload,
-            enabled = !working && !transferRunning && !imageProbeRunning && selected.isNotEmpty(),
+            onClick = ::saveGalleryMetadata,
+            enabled = enabled && GalleryKeys.canonical(url) != null && model.isNotBlank() && title.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
-        ) { Text("Скачать и загрузить") }
+        ) { Text("Сохранить данные этой галереи") }
+    }
+
+    @Composable
+    private fun DownloadQualityControls(searchAllowed: Boolean, others: Int) {
+        if (others > 0) {
+            TextButton(
+                onClick = { showOtherMedia = !showOtherMedia; mediaFilter = null },
+                enabled = searchAllowed
+            ) { Text(if (showOtherMedia) "Скрыть дополнительные варианты" else "Показать ещё $others ссылок") }
+        }
+        OutlinedButton(
+            onClick = { selected = recommendedUrls }, enabled = searchAllowed && recommendedUrls.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Выбрать рекомендуемые варианты") }
+        OutlinedButton(
+            onClick = ::verifyImageSizes,
+            enabled = searchAllowed && ImageProbePlan.selectedPhotoCount(items, selected) > 0,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Проверить разрешение фото") }
+        OutlinedButton(
+            onClick = ::compareImageVariants, enabled = searchAllowed && selected.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Сравнить варианты разрешения") }
+        if (imageProbeRunning) {
+            Text(imageProbeProgress, style = MaterialTheme.typography.bodySmall)
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            TextButton(onClick = ::cancelImageSizes) { Text("Остановить проверку") }
+        } else if (imageProbeResults.isNotEmpty()) {
+            Text("Размеры подтверждены у ${imageProbeResults.values.count { it.verified }} из ${imageProbeResults.size} проверенных файлов.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        if (comparisonReport.isNotBlank()) Text(comparisonReport, style = MaterialTheme.typography.bodySmall)
+        if (imageProbeStatus.isNotBlank()) Text(imageProbeStatus, style = MaterialTheme.typography.bodySmall)
+    }
+
+    @Composable
+    private fun DestinationDialog() {
+        var showFields by rememberSaveable { mutableStateOf(model.isBlank() || title.isBlank() || !GalleryKeys.validDate(date.trim())) }
+        val enabled = !working && !transferRunning
+        AlertDialog(
+            onDismissRequest = { if (enabled) showDestination = false },
+            title = { Text("Куда загрузить") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DestinationPicker(target, enabled) { target = it; uploadStatus = "" }
+                    val folder = when (target) {
+                        "Mail WebDAV" -> mailRoot.ifBlank { "Корневая папка Mail" }
+                        "Google Drive" -> if (driveId.isBlank()) "Папка не выбрана" else "Папка Google Drive задана"
+                        else -> treeName
+                    }
+                    Text(folder, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { openSettings(target) }, enabled = enabled) {
+                        Text("Настроить назначение")
+                    }
+                    GalleryDisclosure("Данные публикации", showFields) { showFields = !showFields }
+                    if (showFields) GalleryFieldsForm(enabled)
+                    if (uploadStatus.isNotBlank()) {
+                        Text(uploadStatus, style = MaterialTheme.typography.bodyMedium,
+                            color = if (working) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
+                    }
+                    if (working) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                Button(onClick = ::beginUpload, enabled = enabled && selected.isNotEmpty()) { Text("Начать загрузку") }
+            },
+            dismissButton = { TextButton(onClick = { showDestination = false }, enabled = enabled) { Text("Отмена") } }
+        )
     }
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
-    private fun DestinationPicker(destination: String, select: (String) -> Unit) {
+    private fun DestinationPicker(destination: String, enabled: Boolean = true, select: (String) -> Unit) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(destination == "Mail WebDAV", { select("Mail WebDAV") }, { Text("Mail WebDAV") })
-            FilterChip(destination == "Google Drive", { select("Google Drive") }, { Text("Google Drive API") })
-            FilterChip(destination == "Папка Android", { select("Папка Android") }, { Text("Папка Android / облака") })
+            FilterChip(destination == "Mail WebDAV", { select("Mail WebDAV") }, { Text("Mail WebDAV") }, enabled = enabled)
+            FilterChip(destination == "Google Drive", { select("Google Drive") }, { Text("Google Drive API") }, enabled = enabled)
+            FilterChip(destination == "Папка Android", { select("Папка Android") }, { Text("Папка Android / облака") }, enabled = enabled)
         }
     }
 
@@ -866,7 +966,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun TransferReport() {
-        if (transferStatus.isNotBlank()) Text(transferStatus, style = MaterialTheme.typography.bodySmall)
+        if (transferStatus.isNotBlank() && (transferRunning || savedQueue?.remaining != 0)) {
+            Text(transferStatus, style = MaterialTheme.typography.bodySmall)
+        }
         if (reportDetails.isBlank()) return
         TextButton(onClick = { showReportDetails = !showReportDetails }) {
             Text(if (showReportDetails) "Скрыть подробности" else "Показать подробности и причины ошибок")
@@ -888,31 +990,27 @@ class MainActivity : ComponentActivity() {
         val done = queue.entries.count { it.state == "DONE" }
         val skipped = queue.entries.count { it.state == "SKIPPED" }
         val failed = queue.entries.count { it.state == "FAILED" }
-        Text(queue.model, style=MaterialTheme.typography.titleLarge)
-        Text(queue.title, maxLines=3, style=MaterialTheme.typography.bodyMedium)
-        Text("Облако: ${queue.target} · Файлов: ${queue.entries.size}", style=MaterialTheme.typography.bodySmall)
-        val inCloud = done + skipped
-        val percent = if (queue.entries.isEmpty()) 0 else (inCloud * 100 / queue.entries.size)
-        Text(
-            if (queue.target == "Папка Android")
-                "Передано провайдеру: $inCloud из ${queue.entries.size} ($percent%)"
-            else "В облаке: $inCloud из ${queue.entries.size} ($percent%)",
-            style=MaterialTheme.typography.titleMedium
-        )
-        if (queue.target == "Папка Android") {
-            Text(
-                "Передача Android-провайдеру не подтверждает завершение синхронизации Google Диска.",
-                style=MaterialTheme.typography.bodySmall
-            )
+        val completed = done + skipped
+        val total = queue.entries.size
+        GalleryCard {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(queue.model, style = MaterialTheme.typography.titleMedium)
+                Text(queue.title, maxLines = 3, style = MaterialTheme.typography.bodyMedium)
+                Text(queue.target, style = MaterialTheme.typography.bodySmall)
+                Text("Готово: $completed из $total", style = MaterialTheme.typography.titleMedium)
+                if (total > 0) {
+                    LinearProgressIndicator(
+                        progress = { completed.toFloat() / total },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+                TransferCounts(done, skipped, failed, queue.remaining, queue.target)
+                if (queue.target == "Папка Android" && done > 0) {
+                    Text("Синхронизация зависит от выбранного провайдера папки.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
-        if (queue.entries.isNotEmpty()) {
-            LinearProgressIndicator(
-                progress = { inCloud.toFloat() / queue.entries.size },
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.secondary
-            )
-        }
-        Text("Новых: $done · Уже были: $skipped · Ошибок: $failed · Осталось: ${queue.remaining}")
         if (transferRunning) {
             Text("Передача выполняется в фоне")
             TextButton(onClick = { TransferService.cancel(this@MainActivity); transferStatus = "Остановка запрошена" }) { Text("Остановить передачу") }
@@ -925,7 +1023,6 @@ class MainActivity : ComponentActivity() {
             }
             Button(onClick=::resumeUpload, enabled = !working, modifier=Modifier.fillMaxWidth()) { Text("Продолжить оставшиеся ${queue.remaining} файлов") }
         } else {
-            Text("Очередь завершена. Можно добавить следующую галерею.")
             if (queue.target == "Папка Android") {
                 OutlinedButton(
                     onClick=::auditQueue,
@@ -933,8 +1030,7 @@ class MainActivity : ComponentActivity() {
                     modifier=Modifier.fillMaxWidth()
                 ) { Text(if (auditing) "Проверка выполняется..." else "Проверить SHA-256 и размеры") }
                 Text(
-                    "Ручная проверка скачивает исходные файлы снова и читает сохранённые через Google Drive. " +
-                    "Она расходует трафик; файлы не изменяет. До 32 МиБ на файл.",
+                    "Сверка повторно скачивает исходники и читает файлы из выбранной папки. До 32 МиБ на файл.",
                     style=MaterialTheme.typography.bodySmall
                 )
                 if (auditProgress.isNotBlank()) Text(auditProgress, style=MaterialTheme.typography.bodySmall)
@@ -991,12 +1087,19 @@ class MainActivity : ComponentActivity() {
                     Text(record.model, style=MaterialTheme.typography.titleMedium)
                     Text(record.title, maxLines=2, style=MaterialTheme.typography.bodyMedium)
                     Text("${record.target} · ${record.outcome}", style=MaterialTheme.typography.bodySmall)
-                    Text("${if (record.target == "Папка Android") "Передано провайдеру" else "В облаке"} ${record.uploaded + record.skipped}/${record.total} · Новых ${record.uploaded} · Уже было ${record.skipped}", style=MaterialTheme.typography.bodySmall)
-                    Text("Ошибок ${record.failed} · Осталось ${record.remaining}", style=MaterialTheme.typography.bodySmall)
+                    Text("Готово: ${record.uploaded + record.skipped} из ${record.total}", style = MaterialTheme.typography.bodySmall)
+                    TransferCounts(record.uploaded, record.skipped, record.failed, record.remaining, record.target)
                     Text(SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(record.updatedAt)), style=MaterialTheme.typography.bodySmall)
                 }
             }
         }
+    }
+
+    @Composable
+    private fun TransferCounts(uploaded: Int, skipped: Int, failed: Int, remaining: Int, destination: String) {
+        val first = if (destination == "Папка Android") "Передано" else "Загружено"
+        Text("$first: $uploaded · Уже были: $skipped", style = MaterialTheme.typography.bodySmall)
+        Text("Ошибки: $failed · Осталось: $remaining", style = MaterialTheme.typography.bodySmall)
     }
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 }

@@ -15,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -32,6 +31,7 @@ internal enum class GalleryPage(val label: String, val title: String = label) {
 }
 
 private val NavigationPages = listOf(GalleryPage.HOME, GalleryPage.DOWNLOADS, GalleryPage.QUEUE, GalleryPage.HISTORY)
+internal val GalleryContentWidth = 640.dp
 
 @Composable
 internal fun GalleryShell(
@@ -39,7 +39,8 @@ internal fun GalleryShell(
     onNavigate: (GalleryPage) -> Unit,
     onSettings: () -> Unit,
     onBack: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
+    actions: @Composable () -> Unit = {},
+    content: @Composable () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     Scaffold(
@@ -55,7 +56,8 @@ internal fun GalleryShell(
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
-                        Modifier.widthIn(max = 640.dp).fillMaxWidth().heightIn(min = 68.dp).padding(horizontal = 16.dp),
+                        Modifier.widthIn(max = GalleryContentWidth).fillMaxWidth().heightIn(min = 68.dp)
+                            .padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -85,9 +87,10 @@ internal fun GalleryShell(
         bottomBar = {
             if (page != GalleryPage.SETTINGS) {
                 Surface(color = colors.surface) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        actions()
                         NavigationBar(
-                            modifier = Modifier.widthIn(max = 640.dp),
+                            modifier = Modifier.widthIn(max = GalleryContentWidth),
                             containerColor = colors.surface,
                             tonalElevation = 0.dp,
                             windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
@@ -122,21 +125,24 @@ internal fun GalleryShell(
                 }
             }
         }
-    ) { room ->
+    ) { insets ->
         Box(
-            Modifier.fillMaxSize().padding(room).consumeWindowInsets(room).imePadding(),
+            Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(),
             contentAlignment = Alignment.TopCenter
         ) {
-            key(page) {
-                Column(
-                    Modifier.widthIn(max = 640.dp).fillMaxWidth().verticalScroll(rememberScrollState())
-                        .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    content = content
-                )
-            }
+            key(page) { content() }
         }
     }
+}
+
+@Composable
+internal fun GalleryPageColumn(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.widthIn(max = GalleryContentWidth).fillMaxWidth().verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content
+    )
 }
 
 @Composable

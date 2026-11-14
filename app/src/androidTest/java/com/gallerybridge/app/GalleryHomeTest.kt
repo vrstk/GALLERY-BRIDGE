@@ -2,13 +2,18 @@ package com.gallerybridge.app
 
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -52,6 +57,31 @@ class GalleryHomeTest {
         }
         compose.onNodeWithContentDescription("Назад").performClick()
         compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
+    }
+
+    @Test
+    fun resultsKeepSelectionVisibleAndOpenDestinationForm() {
+        compose.onNodeWithText("Ссылка на галерею или видео").performTextInput("https://example.com/fixture.mp4")
+        compose.onNodeWithText("Найти медиафайлы").performClick()
+        awaitSearchResult()
+
+        compose.onNodeWithText("Фото (0)").assertIsNotEnabled()
+        compose.onNodeWithText("Видео (1)").performClick()
+        compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
+        compose.onNodeWithText("Снять выделение").performClick()
+        compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
+        compose.onNodeWithText("Загрузить").assertIsNotEnabled()
+        compose.onNodeWithText("Выбрать все в фильтре").performClick()
+        compose.onNodeWithText("Загрузить").performClick()
+
+        compose.onNodeWithText("Куда загрузить").assertIsDisplayed()
+        compose.onNode(hasSetTextAction() and hasText("Дата ГГГГ-ММ-ДД"))
+            .performScrollTo().performTextReplacement("2026-02-31")
+        compose.onNodeWithText("Укажите реальную дату").assertExists()
+        compose.onNodeWithText("Начать загрузку").performClick()
+        compose.onNodeWithText("Укажите реальную дату в формате ГГГГ-ММ-ДД или оставьте поле пустым.").assertExists()
+        compose.onNodeWithText("Отмена").performClick()
+        compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
     }
 
     private fun awaitSearchResult() {
