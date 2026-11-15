@@ -94,6 +94,20 @@ object Services {
                     videoMetadata.publishedDate, primary,
                     videoMetadata.model, videoMetadata.modelSource, videoMetadata.dateSource)
             }
+            // Prefer the real gallery lightbox when the site has a stable
+            // gallery structure. Do not mix related sets, ads or site icons.
+            val gallery = PhotoGallerySources.extract(doc, response.request.url.toString())
+            if (gallery != null) {
+                val title = PageMetadata.publicationTitle(doc)
+                val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
+                return@use Scan(
+                    title.ifBlank { "Без названия" },
+                    metadata.publishedDate,
+                    gallery,
+                    metadata.model, metadata.modelSource, metadata.dateSource,
+                    metadata.suggestedDate, metadata.suggestedDateSource
+                )
+            }
             val urls = linkedMapOf<String, Media>()
             fun add(rawUrl: String, source: String) {
                 val parsed = rawUrl.toHttpUrlOrNull() ?: return
