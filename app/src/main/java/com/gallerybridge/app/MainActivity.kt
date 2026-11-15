@@ -826,11 +826,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     QueueShortcut()
-                    OutlinedButton(
-                        onClick = ::pickLocalMedia,
-                        enabled = searchAllowed,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Добавить фотографии с устройства") }
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
