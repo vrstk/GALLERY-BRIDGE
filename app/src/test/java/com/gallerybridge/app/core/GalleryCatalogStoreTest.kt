@@ -45,6 +45,46 @@ class GalleryCatalogStoreTest {
         assertEquals(restored, GalleryCatalogStore.decode(GalleryCatalogStore.encode(restored)))
     }
 
+    @Test fun transferDoesNotOverwriteEditedLabels() {
+        val old = CatalogGallery("https://example.com/alba", "Alba", "New title",
+            "2026-01-04", 90, "Mail WebDAV", "Done", 4, 4)
+        val incoming = CatalogGallery("https://example.com/alba", "Old model", "Old title",
+            "2020-02-02", 100, "Google Drive", "Done", 8, 8)
+        val updated = GalleryCatalogStore.merge(listOf(old), incoming).single()
+        assertEquals("Alba", updated.model)
+        assertEquals("New title", updated.title)
+        assertEquals("2026-01-04", updated.date)
+        assertEquals("Google Drive", updated.target)
+        assertEquals(8, updated.completed)
+    }
+
+    @Test fun editedRecordCanClearDateAndKeepTransferResult() {
+        val old = CatalogGallery("https://example.com/one", "Alba", "Old",
+            "2026-01-04", 90, "Mail WebDAV", "Done", 4, 4)
+        val updated = GalleryCatalogStore.merge(listOf(old),
+            CatalogGallery(old.url, "Alba", "New", "", 110)).single()
+        assertEquals("", updated.date)
+        assertEquals("New", updated.title)
+        assertEquals(4, updated.completed)
+    }
+
+    @Test fun catalogSearchFiltersAndSortsWithoutChangingRecords() {
+        val entries = listOf(
+            CatalogGallery("https://example.com/1", "Alba", "Studio", "", 5),
+            CatalogGallery("https://example.com/2", "Zara", "Outdoor", "", 8,
+                "Google Drive", "Done", 2, 2),
+            CatalogGallery("https://example.com/3", "ALBA", "Evening", "", 10,
+                "Mail WebDAV", "Done", 3, 3)
+        )
+        assertEquals(listOf("Evening", "Studio"),
+            GalleryCatalogFilter.apply(entries, " alba ", false, false).map { it.title })
+        assertEquals(listOf("Evening", "Outdoor"),
+            GalleryCatalogFilter.apply(entries, "", false, true).map { it.title })
+        assertEquals(listOf("Studio", "Evening", "Outdoor"),
+            GalleryCatalogFilter.apply(entries, "", true, false).map { it.title })
+        assertEquals(3, entries.size)
+    }
+
     @Test fun boundedCatalogKeepsNewestRecords() {
         val records = (0..GalleryCatalogStore.LIMIT).fold(emptyList<CatalogGallery>()) { all, index ->
             GalleryCatalogStore.merge(all, gallery("https://example.com/" + index, "A", "T", index.toLong()))

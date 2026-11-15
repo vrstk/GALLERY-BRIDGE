@@ -765,6 +765,19 @@ class MainActivity : ComponentActivity() {
                         if (GalleryCatalogStore.remove(this@MainActivity, gallery.url)) {
                             catalog = GalleryCatalogStore.load(this@MainActivity)
                         }
+                    },
+                    onEdit = { gallery, fields ->
+                        try {
+                            GalleryMetadataStore.save(this@MainActivity, gallery.url, fields)
+                            check(GalleryCatalogStore.remember(this@MainActivity, gallery.url, fields))
+                            catalog = GalleryCatalogStore.load(this@MainActivity)
+                            if (GalleryKeys.same(url, gallery.url)) {
+                                model = fields.model
+                                title = fields.title
+                                date = fields.date
+                            }
+                            true
+                        } catch (_: Exception) { false }
                     }
                 )
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)

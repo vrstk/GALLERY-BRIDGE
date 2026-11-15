@@ -4,6 +4,7 @@ import android.content.Context
 import com.gallerybridge.app.transfer.QueueStore
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Local, user-controlled catalog of gallery PAGE URLs (never direct media URLs).
@@ -72,11 +73,17 @@ object GalleryCatalogStore {
         if (!GalleryKeys.validDate(incoming.date)) return existing
         val old = existing.firstOrNull { GalleryKeys.same(it.url, url) }
         val hasTransfer = incoming.target.isNotBlank()
+        val nextModel = incoming.model.trim().take(130)
+        val nextTitle = incoming.title.trim().take(250)
+        val nextDate = incoming.date.trim().take(10)
         val entry = incoming.copy(
             url = url,
-            model = incoming.model.trim().take(130).ifBlank { old?.model.orEmpty() },
-            title = incoming.title.trim().take(250).ifBlank { old?.title.orEmpty() },
-            date = incoming.date.trim().take(10).ifBlank { old?.date.orEmpty() },
+            // A transfer refreshes progress, never the labels that the user already edited.
+            model = if (hasTransfer) old?.model?.takeIf { it.isNotBlank() } ?: nextModel
+                else nextModel.ifBlank { old?.model.orEmpty() },
+            title = if (hasTransfer) old?.title?.takeIf { it.isNotBlank() } ?: nextTitle
+                else nextTitle.ifBlank { old?.title.orEmpty() },
+            date = if (hasTransfer) old?.date ?: nextDate else nextDate,
             target = if (hasTransfer) incoming.target.take(60) else old?.target.orEmpty(),
             outcome = if (hasTransfer) incoming.outcome.take(80) else old?.outcome.orEmpty(),
             completed = if (hasTransfer) incoming.completed.coerceAtLeast(0) else old?.completed ?: 0,
@@ -118,5 +125,30 @@ object GalleryCatalogStore {
     @Synchronized fun remove(context: Context, url: String): Boolean {
         val canonical = GalleryKeys.canonical(url) ?: return false
         return write(context, load(context).filterNot { GalleryKeys.same(it.url, canonical) })
+    }
+}
+
+
+/** Read-only catalog projection. Filtering and sorting never modify saved data. */
+internal object GalleryCatalogFilter {
+    fun apply(
+        entries: List<CatalogGallery>,
+        search: String,
+        alphabetical: Boolean,
+        onlyTransferred: Boolean
+    ): List<CatalogGallery> {
+        val needle = search.trim().lowercase(Locale.ROOT)
+        val matching = entries.filter { entry ->
+            (!onlyTransferred || entry.target.isNotBlank()) &&
+                (needle.isBlank() ||
+                    listOf(entry.model, entry.title, entry.date, entry.url, entry.target, entry.outcome)
+                        .any { it.lowercase(Locale.ROOT).contains(needle) })
+        }
+        return if (alphabetical) {
+            matching.sortedWith(compareBy<CatalogGallery> { it.model.lowercase(Locale.ROOT) }
+                .thenBy { it.title.lowercase(Locale.ROOT) }.thenByDescending { it.updatedAt })
+        } else {
+            matching.sortedWith(compareByDescending<CatalogGallery> { it.updatedAt }.thenBy { it.url })
+        }
     }
 }
