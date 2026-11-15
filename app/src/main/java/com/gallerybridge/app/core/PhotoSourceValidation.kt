@@ -30,7 +30,11 @@ object PhotoSourceValidation {
     }
 
     fun verifyFile(file: File, contentType: String?) {
-        val header = file.inputStream().use { it.readNBytes(128) }
+        val header = file.inputStream().use { input ->
+            val bytes = ByteArray(128)
+            val size = input.read(bytes)
+            if (size <= 0) ByteArray(0) else bytes.copyOf(size)
+        }
         validateHeader(header, contentType)
     }
 }
