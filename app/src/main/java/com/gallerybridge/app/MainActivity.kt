@@ -797,7 +797,8 @@ class MainActivity : ComponentActivity() {
                     Text("Найдено фотографий: ${items.size}", style = MaterialTheme.typography.titleLarge)
                     if (otherLinks > 0) {
                         Text(
-                            "Показано рекомендуемых: $photos · Дополнительных вариантов: $otherLinks",
+                            if (showOtherMedia) "Показаны все варианты: $photos" else
+                                "Показано рекомендуемых: $photos · Дополнительных: $otherLinks",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
