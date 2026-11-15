@@ -777,8 +777,8 @@ class MainActivity : ComponentActivity() {
             MediaResults.visible(items, showOtherMedia, recommendedUrls)
         }
         val photos = remember(candidates) { candidates.count { it.kind == Kind.PHOTO } }
-        val otherLinks = items.size - remember(items, recommendedUrls) {
-            MediaResults.visible(items, false, recommendedUrls).size
+        val otherLinks = remember(items, recommendedUrls) {
+            MediaResults.extraCount(items, recommendedUrls)
         }
         val visibleItems = candidates
         val gridState = rememberLazyGridState()
@@ -794,13 +794,26 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Найдено фотографий: ${candidates.size}", style = MaterialTheme.typography.titleLarge)
-                    if (candidates.size != items.size) {
-                        Text("Всего проанализировано ссылок: ${items.size}", style = MaterialTheme.typography.bodySmall)
+                    Text("Найдено фотографий: ${items.size}", style = MaterialTheme.typography.titleLarge)
+                    if (otherLinks > 0) {
+                        Text(
+                            "Показано лучших вариантов: $photos · Других вариантов: $otherLinks",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = { showOtherMedia = !showOtherMedia },
+                            enabled = searchAllowed,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (showOtherMedia) "Показывать только лучшие варианты"
+                                else "Показать все варианты ($otherLinks)")
+                        }
+                    } else {
+                        Text("Все найденные фотографии показаны ниже.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("Фотографии · $photos", style = MaterialTheme.typography.titleMedium)
-                    Text("Выберите снимки для сохранения. В разделе качества можно проверить разрешение.",
-                        style = MaterialTheme.typography.bodySmall)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = {
@@ -825,7 +838,7 @@ class MainActivity : ComponentActivity() {
                     GalleryDisclosure("Данные публикации", metadataExpanded) { metadataExpanded = !metadataExpanded }
                     if (metadataExpanded) GalleryFieldsForm(searchAllowed)
                     GalleryDisclosure("Разрешение и варианты", checksExpanded) { checksExpanded = !checksExpanded }
-                    if (checksExpanded) DownloadQualityControls(searchAllowed, otherLinks)
+                    if (checksExpanded) DownloadQualityControls(searchAllowed)
                 }
             }
             items(visibleItems, key = { "media:${it.url}" }) { media ->
@@ -875,13 +888,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun DownloadQualityControls(searchAllowed: Boolean, others: Int) {
-        if (others > 0) {
-            TextButton(
-                onClick = { showOtherMedia = !showOtherMedia; mediaFilter = null },
-                enabled = searchAllowed
-            ) { Text(if (showOtherMedia) "Скрыть дополнительные варианты" else "Показать ещё $others ссылок") }
-        }
+    private fun DownloadQualityControls(searchAllowed: Boolean) {
         OutlinedButton(
             onClick = { selected = recommendedUrls }, enabled = searchAllowed && recommendedUrls.isNotEmpty(),
             modifier = Modifier.fillMaxWidth()
