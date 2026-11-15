@@ -819,7 +819,7 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Найдено фотографий: ${items.size}", style = MaterialTheme.typography.titleLarge)
+                    Text("Найдено ссылок на изображения: ${items.size}", style = MaterialTheme.typography.titleLarge)
                     if (otherLinks > 0) {
                         Text(
                             if (showOtherMedia) "Показаны все варианты: $photos" else
