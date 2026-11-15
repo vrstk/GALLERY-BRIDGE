@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Publish only the newest preview for a branch; concurrent older builds must
+# not replace the Release APK with stale code.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
