@@ -46,6 +46,18 @@ class JustifiedRowsTest {
         }
     }
 
+    @Test fun widePhotosDoNotOverflowTheAvailableRow() {
+        val image = photo(5)
+        val available = 320f
+        val rows = JustifiedRows.pack(
+            listOf(image), mapOf(image.url to 4f),
+            availableWidth = available, targetHeight = 160f,
+            minHeight = 95f, maxHeight = 235f
+        )
+        assertTrue(rows.first().widths.sum() <= available + 0.01f)
+        assertTrue(rows.first().height < 95f)
+    }
+
     @Test fun emptyGalleryReturnsNoRows() {
         assertTrue(JustifiedRows.pack(emptyList(), emptyMap(), 350f).isEmpty())
     }
