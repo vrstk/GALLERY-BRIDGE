@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -815,32 +816,26 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Найдено ссылок на изображения: ${items.size}", style = MaterialTheme.typography.titleLarge)
+                    Text("Показано фотографий: $photos", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        if (otherLinks > 0) "Найдено ссылок: ${items.size} · Альтернатив: $otherLinks"
+                        else "Все найденные изображения показаны ниже",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (otherLinks > 0) {
-                        Text(
-                            if (showOtherMedia) "Показаны все варианты: $photos" else
-                                "Показано рекомендуемых: $photos · Дополнительных: $otherLinks",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        OutlinedButton(
+                        TextButton(
                             onClick = { showOtherMedia = !showOtherMedia },
-                            enabled = searchAllowed,
-                            modifier = Modifier.fillMaxWidth()
+                            enabled = searchAllowed
                         ) {
-                            Text(if (showOtherMedia) "Показывать рекомендуемые варианты"
-                                else "Показать все варианты ($otherLinks)")
+                            Text(if (showOtherMedia) "Только рекомендованные (${items.size - otherLinks})" else "Показать альтернативы ($otherLinks)")
                         }
-                    } else {
-                        Text("Все найденные фотографии показаны ниже.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = justified,
                             onClick = { justified = true },
-                            label = { Text("Justified") }
+                            label = { Text("Мозаика") }
                         )
                         FilterChip(
                             selected = !justified,
@@ -854,7 +849,7 @@ class MainActivity : ComponentActivity() {
                                 selected = selected + visibleItems.map(Media::url)
                             },
                             enabled = searchAllowed && visibleItems.any { it.url !in selected }
-                        ) { Text("Выбрать все фото") }
+                        ) { Text("Выбрать показанные") }
                         TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
                             Text("Снять выделение")
                         }
@@ -940,7 +935,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun GalleryFieldsForm(enabled: Boolean) {
+    private fun GalleryFieldsForm(enabled: Boolean, allowSave: Boolean = true) {
         OutlinedTextField(model, { model = it }, label = { Text("Имя модели") },
             modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true)
         OutlinedTextField(title, { title = it }, label = { Text("Название публикации") },
@@ -963,29 +958,52 @@ class MainActivity : ComponentActivity() {
                 metadataReport = "Предполагаемая дата применена по вашему выбору. Источник не подтверждает дату публикации."
             }, enabled = enabled) { Text("Использовать предполагаемую дату") }
         }
-        if (metadataReport.isNotBlank()) Text(metadataReport, style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(
-            onClick = ::saveGalleryMetadata,
-            enabled = enabled && GalleryKeys.canonical(url) != null && model.isNotBlank() && title.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Сохранить данные этой галереи") }
+        if (allowSave) {
+            val fields = GalleryFields(model.trim(), title.trim(), date.trim())
+            val saved = GalleryCatalogStore.hasSavedFields(catalog, url, fields)
+            if (saved) {
+                Text(
+                    "Данные сохранены в каталоге",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            } else {
+                if (metadataReport.isNotBlank()) {
+                    Text(metadataReport, style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(
+                    onClick = ::saveGalleryMetadata,
+                    enabled = enabled && GalleryKeys.canonical(url) != null &&
+                        fields.model.isNotBlank() && fields.title.isNotBlank() &&
+                        GalleryKeys.validDate(fields.date),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (GalleryCatalogStore.contains(catalog, url)) "Сохранить изменения"
+                    else "Сохранить данные галереи") }
+            }
+        }
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun DownloadQualityControls(searchAllowed: Boolean) {
-        OutlinedButton(
-            onClick = { selected = recommendedUrls }, enabled = searchAllowed && recommendedUrls.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Выбрать рекомендуемые варианты") }
-        OutlinedButton(
-            onClick = ::verifyImageSizes,
-            enabled = searchAllowed && ImageProbePlan.selectedPhotoCount(items, selected) > 0,
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Проверить разрешение фото") }
-        OutlinedButton(
-            onClick = ::compareImageVariants, enabled = searchAllowed && selected.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Сравнить варианты разрешения") }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            TextButton(
+                onClick = { selected = recommendedUrls },
+                enabled = searchAllowed && recommendedUrls.isNotEmpty() &&
+                    selected != recommendedUrls
+            ) { Text("Выбрать рекомендованные") }
+            OutlinedButton(
+                onClick = ::verifyImageSizes,
+                enabled = searchAllowed && ImageProbePlan.selectedPhotoCount(items, selected) > 0
+            ) { Text("Проверить размеры") }
+            OutlinedButton(
+                onClick = ::compareImageVariants,
+                enabled = searchAllowed && selected.isNotEmpty()
+            ) { Text("Сравнить качество") }
+        }
         if (imageProbeRunning) {
             Text(imageProbeProgress, style = MaterialTheme.typography.bodySmall)
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1000,7 +1018,9 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun DestinationDialog() {
-        var showFields by rememberSaveable { mutableStateOf(model.isBlank() || title.isBlank() || !GalleryKeys.validDate(date.trim())) }
+        var showFields by remember(url) {
+            mutableStateOf(model.isBlank() || title.isBlank() || !GalleryKeys.validDate(date.trim()))
+        }
         val enabled = !working && !transferRunning
         AlertDialog(
             onDismissRequest = { if (enabled) showDestination = false },
@@ -1016,8 +1036,20 @@ class MainActivity : ComponentActivity() {
                     TextButton(onClick = { openSettings(target) }, enabled = enabled) {
                         Text("Настроить назначение")
                     }
+                    Text(
+                        "Публикация: " + model.ifBlank { "Без имени" } +
+                            if (date.isBlank()) "" else " · $date",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
                     GalleryDisclosure("Данные публикации", showFields) { showFields = !showFields }
-                    if (showFields) GalleryFieldsForm(enabled)
+                    if (showFields) {
+                        GalleryFieldsForm(enabled, allowSave = false)
+                        Text("Данные публикации сохраняются при начале загрузки.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     if (uploadStatus.isNotBlank()) {
                         Text(uploadStatus, style = MaterialTheme.typography.bodyMedium,
                             color = if (working) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)

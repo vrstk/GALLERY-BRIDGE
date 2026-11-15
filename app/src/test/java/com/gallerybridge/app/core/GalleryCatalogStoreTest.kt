@@ -85,6 +85,20 @@ class GalleryCatalogStoreTest {
         assertEquals(3, entries.size)
     }
 
+    @Test fun savedMetadataDetectsChangesWithoutMutatingCatalog() {
+        val record = CatalogGallery("https://EXAMPLE.com/a/", "Leona Mia",
+            "Sea", "2021-06-18", 4, "Mail WebDAV", "Завершено", 12, 12)
+        val saved = listOf(record)
+        assertTrue(GalleryCatalogStore.contains(saved, "https://example.com/a"))
+        assertTrue(GalleryCatalogStore.hasSavedFields(saved,
+            "https://example.com/a", GalleryFields(" Leona Mia ", "Sea", "2021-06-18")))
+        assertFalse(GalleryCatalogStore.hasSavedFields(saved,
+            "https://example.com/a", GalleryFields("Leona Mia", "Different", "2021-06-18")))
+        assertFalse(GalleryCatalogStore.hasSavedFields(saved,
+            "https://example.com/other", GalleryFields("Leona Mia", "Sea", "2021-06-18")))
+        assertEquals(12, saved.single().completed)
+    }
+
     @Test fun boundedCatalogKeepsNewestRecords() {
         val records = (0..GalleryCatalogStore.LIMIT).fold(emptyList<CatalogGallery>()) { all, index ->
             GalleryCatalogStore.merge(all, gallery("https://example.com/" + index, "A", "T", index.toLong()))

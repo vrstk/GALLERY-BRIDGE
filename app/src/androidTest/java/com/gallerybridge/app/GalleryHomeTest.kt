@@ -79,12 +79,12 @@ class GalleryHomeTest {
         compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
-        compose.onNodeWithText("Найдено ссылок на изображения: 1").assertIsDisplayed()
+        compose.onNodeWithText("Показано фотографий: 1").assertIsDisplayed()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
         compose.onNodeWithText("Снять выделение").performClick()
         compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
         compose.onNodeWithText("Загрузить").assertIsNotEnabled()
-        compose.onNodeWithText("Выбрать все фото").performClick()
+        compose.onNodeWithText("Выбрать показанные").performClick()
         compose.onNodeWithText("Загрузить").performClick()
 
         compose.onNodeWithText("Куда загрузить").assertIsDisplayed()
@@ -136,7 +136,7 @@ class GalleryHomeTest {
 
     private fun awaitSearchResult() {
         compose.waitUntil(timeoutMillis = 8_000) {
-            compose.onNodeWithText("Найдено ссылок на изображения: 1").isDisplayed()
+            compose.onNodeWithText("Показано фотографий: 1").isDisplayed()
         }
     }
 }

@@ -95,6 +95,19 @@ object GalleryCatalogStore {
             .take(LIMIT)
     }
 
+    /** Compare values without writing them to disk. Useful for avoiding duplicate save actions. */
+    internal fun contains(entries: List<CatalogGallery>, url: String): Boolean =
+        entries.any { GalleryKeys.same(it.url, url) }
+
+    internal fun hasSavedFields(
+        entries: List<CatalogGallery>, url: String, fields: GalleryFields
+    ): Boolean {
+        val stored = entries.firstOrNull { GalleryKeys.same(it.url, url) } ?: return false
+        return stored.model == fields.model.trim() &&
+            stored.title == fields.title.trim() &&
+            stored.date == fields.date.trim()
+    }
+
     @Synchronized fun load(context: Context): List<CatalogGallery> =
         decode(context.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY, null))
 
