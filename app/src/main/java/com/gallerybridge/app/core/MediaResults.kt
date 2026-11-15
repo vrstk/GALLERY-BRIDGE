@@ -25,6 +25,16 @@ object MediaResults {
         (all.count { it.kind == Kind.PHOTO } -
             visible(all, false, recommendedUrls).size).coerceAtLeast(0)
 
+    /**
+     * A filter may hide selected alternate resolutions. Never silently change
+     * the pending transfer selection when toggling the visible photo variants.
+     */
+    fun hiddenSelectionCount(selectedUrls: Set<String>, visible: List<Media>): Int {
+        if (selectedUrls.isEmpty()) return 0
+        val visibleUrls = visible.mapTo(HashSet<String>(visible.size)) { it.url }
+        return selectedUrls.count { it !in visibleUrls }
+    }
+
     /** Pagination helper used by large gallery tests and future paging. */
     fun page(all: List<Media>, limit: Int): List<Media> =
         all.take(limit.coerceIn(0, all.size))

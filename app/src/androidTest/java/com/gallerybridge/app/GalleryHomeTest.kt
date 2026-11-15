@@ -79,7 +79,9 @@ class GalleryHomeTest {
         compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
-        compose.onNodeWithText("Показано фотографий: 1").assertIsDisplayed()
+        compose.onNodeWithText("Фотографии: 1").assertIsDisplayed()
+        compose.onNodeWithText("Новая галерея").assertIsDisplayed()
+        compose.onNodeWithText("Поиск по ссылке").assertDoesNotExist()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
         compose.onNodeWithText("Снять выделение").performClick()
         compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
@@ -136,7 +138,7 @@ class GalleryHomeTest {
 
     private fun awaitSearchResult() {
         compose.waitUntil(timeoutMillis = 8_000) {
-            compose.onNodeWithText("Показано фотографий: 1").isDisplayed()
+            compose.onNodeWithText("Фотографии: 1").isDisplayed()
         }
     }
 }

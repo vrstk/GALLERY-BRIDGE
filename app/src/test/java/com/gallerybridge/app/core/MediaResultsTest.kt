@@ -40,6 +40,18 @@ class MediaResultsTest {
         assertEquals(listOf(photo), MediaResults.visible(all, false, setOf(photo.url, video.url)))
     }
 
+    @Test fun hiddenAlternativesAreCountedWithoutClearingSelection() {
+        val original = media(1)
+        val alternate = media(2)
+        val all = listOf(original, alternate)
+        val selected = setOf(original.url, alternate.url)
+        val recommended = MediaResults.visible(all, false, setOf(original.url))
+        assertEquals(1, MediaResults.hiddenSelectionCount(selected, recommended))
+        assertEquals(0, MediaResults.hiddenSelectionCount(selected, all))
+        assertEquals(0, MediaResults.hiddenSelectionCount(emptySet(), recommended))
+        assertEquals(2, selected.size)
+    }
+
     @Test fun pagingNeverMutatesSelection() {
         val all = (0 until 300).map(::media)
         val selected = setOf(all[1].url, all[290].url)

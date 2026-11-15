@@ -781,7 +781,6 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        var linkExpanded by rememberSaveable(url) { mutableStateOf(false) }
         var metadataExpanded by rememberSaveable(url) { mutableStateOf(false) }
         var checksExpanded by rememberSaveable(url) { mutableStateOf(false) }
         val candidates = remember(items, showOtherMedia, recommendedUrls) {
@@ -792,6 +791,9 @@ class MainActivity : ComponentActivity() {
             MediaResults.extraCount(items, recommendedUrls)
         }
         val visibleItems = candidates
+        val hiddenSelected = remember(selected, visibleItems) {
+            MediaResults.hiddenSelectionCount(selected, visibleItems)
+        }
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
         var justified by rememberSaveable(url) { mutableStateOf(true) }
@@ -799,13 +801,16 @@ class MainActivity : ComponentActivity() {
         val aspectRatios = remember(url) { mutableStateMapOf<String, Float>() }
 
         BoxWithConstraints(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize()) {
-        val justifiedRows = JustifiedRows.pack(
-            photos = visibleItems,
-            aspectRatios = aspectRatios.toMap(),
-            availableWidth = (maxWidth.value - 32f).coerceAtLeast(48f),
-            targetHeight = if (fontScale > 1.3f) 190f else 154f,
-            spacing = 6f
-        )
+        val ratioSnapshot = aspectRatios.toMap()
+        val justifiedRows = remember(visibleItems, ratioSnapshot, maxWidth, fontScale, justified) {
+            if (justified) JustifiedRows.pack(
+                photos = visibleItems,
+                aspectRatios = ratioSnapshot,
+                availableWidth = (maxWidth.value - 32f).coerceAtLeast(48f),
+                targetHeight = if (fontScale > 1.3f) 190f else 154f,
+                spacing = 6f
+            ) else emptyList()
+        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(if (fontScale > 1.3f) 144.dp else 104.dp),
             state = gridState,
@@ -816,10 +821,10 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Показано фотографий: $photos", style = MaterialTheme.typography.titleLarge)
+                    Text("Фотографии: $photos", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (otherLinks > 0) "Найдено ссылок: ${items.size} · Альтернатив: $otherLinks"
-                        else "Все найденные изображения показаны ниже",
+                        if (otherLinks > 0) "Всего найдено: ${items.size} · Других вариантов: $otherLinks"
+                        else "Все найденные фотографии показаны ниже",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -828,7 +833,9 @@ class MainActivity : ComponentActivity() {
                             onClick = { showOtherMedia = !showOtherMedia },
                             enabled = searchAllowed
                         ) {
-                            Text(if (showOtherMedia) "Только рекомендованные (${items.size - otherLinks})" else "Показать альтернативы ($otherLinks)")
+                            Text(if (showOtherMedia)
+                                "Скрыть дополнительные варианты"
+                            else "Показать ещё $otherLinks вариантов")
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -853,6 +860,22 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { selected = emptySet() }, enabled = searchAllowed && selected.isNotEmpty()) {
                             Text("Снять выделение")
                         }
+                    }
+                    if (hiddenSelected > 0) {
+                        Text(
+                            "Выбрано скрытых вариантов: $hiddenSelected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        TextButton(onClick = {
+                            val shown = visibleItems.map(Media::url).toSet()
+                            selected = selected.intersect(shown)
+                        }, enabled = searchAllowed) {
+                            Text("Снять выбор скрытых")
+                        }
+                    }
+                    TextButton(onClick = { screen = GalleryPage.HOME }) {
+                        Text("Новая галерея")
                     }
                     QueueShortcut()
                 }
@@ -892,15 +915,6 @@ class MainActivity : ComponentActivity() {
                         onOpen = { openedPhoto = media.url }
                     ) { checked ->
                         selected = if (checked) selected + media.url else selected - media.url
-                    }
-                }
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    GalleryDisclosure("Поиск по ссылке", linkExpanded) { linkExpanded = !linkExpanded }
-                    if (linkExpanded) {
-                        GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
-                        FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
                     }
                 }
             }
