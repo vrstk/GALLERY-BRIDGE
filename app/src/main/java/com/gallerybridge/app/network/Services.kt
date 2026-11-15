@@ -58,14 +58,12 @@ object Services {
             url.newBuilder().addPathSegment(Paths.clean(segment)).build()
         }
 
-    private fun mailExists(url: HttpUrl, auth: String): Boolean =
+    private fun mailLookup(url: HttpUrl, auth: String, directory: Boolean): WebDavResourcePolicy.Lookup =
         mailCall(Request.Builder().url(url).header("Authorization", auth)
-            .header("Depth", "0").method("PROPFIND", null).build()).use { r ->
-            when (r.code) {
-                200, 207 -> true
-                404 -> false
-                else -> error("Mail WebDAV PROPFIND: HTTP ${r.code}")
-            }
+            .header("Depth", "0").method("PROPFIND", null).build()).use { response ->
+            WebDavResourcePolicy.inspect(
+                response.code, response.body?.string(), url.toString(), expectDirectory = directory
+            )
         }
     private val ext = Regex("\\.(jpe?g|png|webp|gif|avif|bmp|mp4|m4v|mov|webm)$", RegexOption.IGNORE_CASE)
     private fun kind(path: String) = if (Regex("\\.(mp4|m4v|mov|webm)$", RegexOption.IGNORE_CASE).containsMatchIn(path)) Kind.VIDEO else Kind.PHOTO
@@ -188,11 +186,8 @@ object Services {
         val auth = Credentials.basic(email, password)
         for (segment in path) {
             current = current.toHttpUrl().newBuilder().addPathSegment(Paths.clean(segment)).build().toString()
-            val check = Request.Builder().url(current).header("Authorization", auth).header("Depth", "0").method("PROPFIND", null).build()
-            val exists = mailCall(check).use { r ->
-                when (r.code) { 200, 207 -> true; 404 -> false; else -> error("WebDAV проверка HTTP ${r.code}") }
-            }
-            if (!exists) {
+            val exists = mailLookup(current.toHttpUrl(), auth, directory = true)
+            if (exists is WebDavResourcePolicy.Lookup.Missing) {
                 val mkcol = Request.Builder().url(current).header("Authorization", auth).method("MKCOL", null).build()
                 mailCall(mkcol).use { r -> if (r.code !in listOf(200, 201, 204, 405)) error("WebDAV папка HTTP ${r.code}") }
             }
@@ -305,7 +300,8 @@ object Services {
                     }
                     val destination = mailUrl(cloudPath + Paths.clean(item.name))
                     // Пропускаем ранее сохранённый файл до повторного скачивания.
-                    if (mailExists(destination, mailAuth)) {
+                    if (mailLookup(destination, mailAuth, directory = false)
+                        is WebDavResourcePolicy.Lookup.Existing) {
                         coroutineContext.ensureActive()
                         skipped++
                         onItemResult(index, item, "SKIPPED")
@@ -322,6 +318,15 @@ object Services {
                                 error("Mail WebDAV PUT: HTTP ${response.code}")
                             }
                         }
+                        coroutineContext.ensureActive()
+                        val remote = mailLookup(destination, mailAuth, directory = false)
+                        if (remote !is WebDavResourcePolicy.Lookup.Existing ||
+                            remote.bytes != local.length()
+                        ) throw WebDavResourcePolicy.UnsafeResource(
+                            "После PUT размер файла в Mail WebDAV не подтверждён: " +
+                                "локально ${local.length()} байт, в облаке " +
+                                (remote as? WebDavResourcePolicy.Lookup.Existing)?.bytes
+                        )
                         coroutineContext.ensureActive()
                         uploaded++
                         onItemResult(index, item, "DONE")
@@ -389,6 +394,12 @@ object Services {
                 coroutineContext.ensureActive()
                 failed++
                 onItemResult(index, item, "FAILED")
+                if (e is WebDavResourcePolicy.UnsafeResource) {
+                    stoppedReason = "Проверка Mail WebDAV выявила неопределённое или повреждённое состояние. " +
+                        "Очередь остановлена без перезаписи существующих файлов."
+                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
                 if (e is CloudListingPolicy.UnsafeListing) {
                     stoppedReason = "Обнаружена неоднозначность в Google Drive. " +
                         "Загрузка остановлена, чтобы не пропускать повреждённые файлы " +
