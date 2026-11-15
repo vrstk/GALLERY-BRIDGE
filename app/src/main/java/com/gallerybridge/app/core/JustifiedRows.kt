@@ -1,7 +1,5 @@
 package com.gallerybridge.app.core
 
-import kotlin.math.abs
-
 /**
  * A row-based justified photo layout. Dimensions are in density-independent
  * logical units, so the calculation can be tested without Android UI classes.
@@ -42,10 +40,12 @@ object JustifiedRows {
             if (pending.isEmpty()) return
             val widthForImages = (availableWidth - safeGap * (pending.size - 1)).coerceAtLeast(1f)
             val idealHeight = widthForImages / ratioSum.coerceAtLeast(0.1f)
+            // An unusually wide photo can require a shorter row to fit.
+            // Prevent sideways clipping instead of enforcing minHeight.
             val height = if (last) {
                 minOf(desiredHeight, idealHeight).coerceAtLeast(1f)
             } else {
-                idealHeight.coerceIn(minHeight.coerceAtLeast(1f), maxHeight.coerceAtLeast(minHeight))
+                idealHeight.coerceAtMost(maxHeight.coerceAtLeast(1f)).coerceAtLeast(1f)
             }
             // Never crop; each tile's ratio determines its width.
             val widths = pending.map { (ratio(it) * height).coerceAtLeast(1f) }
