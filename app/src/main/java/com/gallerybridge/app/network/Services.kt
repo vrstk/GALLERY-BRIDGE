@@ -201,36 +201,51 @@ object Services {
 
 
     private fun driveRequest(token: String, body: RequestBody, url: String): Request = Request.Builder().url(url).header("Authorization", "Bearer $token").post(body).build()
+    /**
+     * Search one exact parent/name pair. A partial listing is not evidence
+     * that a file is absent, so never create or skip on an ambiguous response.
+     */
+    private fun driveListing(token: String, parent: String, name: String, folderOnly: Boolean): String {
+        val query = CloudListingPolicy.searchQuery(parent, name, folderOnly)
+        val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .addQueryParameter("fields", CloudListingPolicy.FIELDS)
+            .addQueryParameter("pageSize", "100")
+            .build()
+        return http.newCall(Request.Builder().url(url)
+            .header("Authorization", "Bearer $token").build()).execute().use { response ->
+            if (!response.isSuccessful) error("Drive список HTTP ${response.code}")
+            response.body?.string() ?: error("Google Drive вернул пустой ответ")
+        }
+    }
+
     private fun driveFolders(token: String, root: String, path: List<String>): String {
         var parent = root
         for (part in path) {
             val name = Paths.clean(part)
-            val q = "'${parent.replace("'", "\\'")}' in parents and name = '${name.replace("'", "\\'")}' and trashed = false and mimeType = 'application/vnd.google-apps.folder'"
-            val findUrl = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder().addQueryParameter("q", q).addQueryParameter("fields", "files(id)").build()
-            val found = http.newCall(Request.Builder().url(findUrl).header("Authorization", "Bearer $token").build()).execute().use { r ->
-                if (!r.isSuccessful) error("Drive список HTTP ${r.code}")
-                JSONObject(r.body?.string().orEmpty()).optJSONArray("files")?.optJSONObject(0)?.optString("id")?.ifBlank { null }
-            }
+            val found = CloudListingPolicy.folderIdOrNull(
+                driveListing(token, parent, name, folderOnly = true), name
+            )
             parent = found ?: run {
-                val json = JSONObject().put("name", name).put("mimeType", "application/vnd.google-apps.folder").put("parents", JSONArray().put(parent))
-                http.newCall(driveRequest(token, json.toString().toRequestBody("application/json".toMediaType()), "https://www.googleapis.com/drive/v3/files?fields=id")).execute().use { r ->
-                    if (!r.isSuccessful) error("Drive создание HTTP ${r.code}")
-                    JSONObject(r.body?.string().orEmpty()).getString("id")
+                val json = JSONObject().put("name", name)
+                    .put("mimeType", CloudListingPolicy.FOLDER_MIME)
+                    .put("parents", JSONArray().put(parent))
+                http.newCall(driveRequest(token,
+                    json.toString().toRequestBody("application/json".toMediaType()),
+                    "https://www.googleapis.com/drive/v3/files?fields=id"
+                )).execute().use { response ->
+                    if (!response.isSuccessful) error("Drive создание HTTP ${response.code}")
+                    JSONObject(response.body?.string().orEmpty()).getString("id")
                 }
             }
         }
         return parent
     }
 
-    private fun driveFileExists(token: String, folder: String, name: String): Boolean {
-        val q = "'${folder.replace("'", "\\'")}' in parents and name = '${name.replace("'", "\\'")}' and trashed = false"
-        val findUrl = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder().addQueryParameter("q", q).addQueryParameter("fields", "files(id)").build()
-        val exists = http.newCall(Request.Builder().url(findUrl).header("Authorization", "Bearer $token").build()).execute().use { r ->
-            if (!r.isSuccessful) error("Drive список HTTP ${r.code}")
-            (JSONObject(r.body?.string().orEmpty()).optJSONArray("files")?.length() ?: 0) > 0
-        }
-        return exists
-    }
+    private fun driveFileExists(token: String, folder: String, name: String): Boolean =
+        CloudListingPolicy.existingFile(
+            driveListing(token, folder, name, folderOnly = false), name
+        )
 
     private fun driveUpload(token: String, folder: String, name: String, file: File, mime: String): Boolean {
         if (driveFileExists(token, folder, name)) return false
