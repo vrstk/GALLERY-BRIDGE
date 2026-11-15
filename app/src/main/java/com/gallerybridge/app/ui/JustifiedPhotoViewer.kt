@@ -11,7 +11,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -107,15 +106,23 @@ internal fun JustifiedPhotoRow(
                         enabled = enabled,
                         modifier = Modifier.size(34.dp)
                     ) {
-                        Icon(
-                            if (checked) Icons.Outlined.CheckCircle
-                                else Icons.Outlined.RadioButtonUnchecked,
-                            contentDescription = if (checked) "Снять выделение: ${media.name}"
-                                else "Выбрать: ${media.name}",
-                            modifier = Modifier.size(21.dp),
-                            tint = if (checked) MaterialTheme.colorScheme.onPrimary
-                                else MaterialTheme.colorScheme.onSurface
-                        )
+                        if (checked) {
+                            Icon(
+                                Icons.Outlined.CheckCircle,
+                                contentDescription = "Снять выделение: ${media.name}",
+                                modifier = Modifier.size(21.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Surface(
+                                modifier = Modifier.size(19.dp),
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = Color.Transparent,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.5.dp, MaterialTheme.colorScheme.onSurface
+                                )
+                            ) {}
+                        }
                     }
                 }
             }
