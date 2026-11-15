@@ -16,11 +16,28 @@ class MediaResultsTest {
         assertEquals(0, MediaResults.page(all, -1).size)
     }
 
-    @Test fun defaultViewShowsDirectAndRecommendedOnly() {
-        val all = listOf(media(0), media(1, "Ссылка"), media(2))
-        val visible = MediaResults.visible(all, false, setOf(all[2].url))
-        assertEquals(listOf(all[1], all[2]), visible)
-        assertEquals(all, MediaResults.visible(all, true, emptySet()))
+    @Test fun recommendedViewShowsOnlyThePreferredPhotoVariant() {
+        val first = media(0, "Ссылка")
+        val thumbnail = media(1, "Изображение (качество не подтверждено)")
+        val full = media(2, "Ссылка")
+        val all = listOf(first, thumbnail, full)
+        assertEquals(listOf(first, full), MediaResults.visible(all, false, setOf(first.url, full.url)))
+        assertEquals(all, MediaResults.visible(all, true, setOf(first.url, full.url)))
+        assertEquals(1, MediaResults.extraCount(all, setOf(first.url, full.url)))
+    }
+
+    @Test fun noRecommendationFallsBackToAllPhotos() {
+        val all = listOf(media(1), media(2))
+        assertEquals(all, MediaResults.visible(all, false, emptySet()))
+        assertEquals(0, MediaResults.extraCount(all, emptySet()))
+    }
+
+    @Test fun videoItemsNeverAppearInPhotoResults() {
+        val photo = media(1)
+        val video = Media("https://cdn.example.com/clip.mp4", "clip.mp4", Kind.VIDEO, "Видео")
+        val all = listOf(photo, video)
+        assertEquals(listOf(photo), MediaResults.visible(all, true, setOf(photo.url, video.url)))
+        assertEquals(listOf(photo), MediaResults.visible(all, false, setOf(photo.url, video.url)))
     }
 
     @Test fun pagingNeverMutatesSelection() {
