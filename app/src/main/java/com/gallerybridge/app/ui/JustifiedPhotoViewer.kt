@@ -11,12 +11,14 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -34,7 +36,6 @@ import coil3.request.ImageRequest
 import com.gallerybridge.app.R
 import com.gallerybridge.app.core.JustifiedRows
 import com.gallerybridge.app.core.Media
-import kotlin.math.roundToInt
 
 @Composable
 private fun GalleryPhoto(
@@ -98,15 +99,24 @@ internal fun JustifiedPhotoRow(
                 Surface(
                     modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
                     color = if (checked) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.87f),
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
                     shape = MaterialTheme.shapes.small
                 ) {
-                    Checkbox(
-                        checked = checked,
-                        onCheckedChange = { onSelection(media, it) },
+                    IconButton(
+                        onClick = { onSelection(media, !checked) },
                         enabled = enabled,
                         modifier = Modifier.size(34.dp)
-                    )
+                    ) {
+                        Icon(
+                            if (checked) Icons.Outlined.CheckCircle
+                                else Icons.Outlined.RadioButtonUnchecked,
+                            contentDescription = if (checked) "Снять выделение: ${media.name}"
+                                else "Выбрать: ${media.name}",
+                            modifier = Modifier.size(21.dp),
+                            tint = if (checked) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
@@ -180,24 +190,30 @@ internal fun FullscreenPhotoViewer(
                     val density = androidx.compose.ui.platform.LocalDensity.current
                     val maxX = with(density) { maxWidth.toPx() } * (zoom - 1f) / 2f
                     val maxY = with(density) { maxHeight.toPx() } * (zoom - 1f) / 2f
-                    GalleryPhoto(
-                        media = media,
-                        modifier = Modifier.fillMaxSize()
-                            .pointerInput(media.url) {
-                                detectTapGestures(onDoubleTap = {
-                                    zoom = if (zoom > 1f) 1f else 2.5f
-                                    if (zoom == 1f) { panX = 0f; panY = 0f }
-                                    currentZoom = zoom
-                                })
-                            }
-                            .transformable(transform)
-                            .graphicsLayer {
-                                scaleX = zoom
-                                scaleY = zoom
-                                translationX = panX.coerceIn(-maxX, maxX)
-                                translationY = panY.coerceIn(-maxY, maxY)
-                            }
-                    )
+                    Box(
+                        modifier = Modifier.fillMaxSize().clipToBounds(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        GalleryPhoto(
+                            media = media,
+                            modifier = Modifier.fillMaxSize()
+                                .pointerInput(media.url) {
+                                    detectTapGestures(onDoubleTap = {
+                                        zoom = if (zoom > 1f) 1f else 2.5f
+                                        if (zoom == 1f) { panX = 0f; panY = 0f }
+                                        currentZoom = zoom
+                                    })
+                                }
+                                .transformable(transform)
+                                .graphicsLayer {
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                    translationX = panX.coerceIn(-maxX, maxX)
+                                    translationY = panY.coerceIn(-maxY, maxY)
+                                    clip = true
+                                }
+                        )
+                    }
                 }
             }
             Text(
