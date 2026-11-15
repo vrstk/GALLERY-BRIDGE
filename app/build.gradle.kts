@@ -10,16 +10,36 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "0.27.0"
+        versionCode = 28
+        versionName = "0.28.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    // The old .preview.next APK was signed with an ephemeral GitHub runner key.
+    // Android cannot upgrade it with another key, even when both APKs are valid.
+    // This recovery package coexists with the previous app instead of replacing
+    // or deleting its private catalog, queue and settings.
+    val previewKeyFile = System.getenv("GB_PREVIEW_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+    signingConfigs {
+        if (previewKeyFile != null) {
+            create("previewPersistent") {
+                storeFile = file(previewKeyFile)
+                storePassword = System.getenv("GB_PREVIEW_STORE_PASSWORD")
+                keyAlias = System.getenv("GB_PREVIEW_KEY_ALIAS")
+                keyPassword = System.getenv("GB_PREVIEW_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
     buildTypes {
         debug {
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
-                applicationIdSuffix = ".preview.next"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.27"
+                applicationIdSuffix = ".preview.recovery"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.28"
+                if (previewKeyFile != null) {
+                    signingConfig = signingConfigs.getByName("previewPersistent")
+                }
             }
         }
     }

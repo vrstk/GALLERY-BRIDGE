@@ -35,9 +35,39 @@ jobs:
           gradle-version: '8.13'
       - name: Build and test
         run: gradle --no-daemon testDebugUnitTest assembleDebug
-      - name: Build standalone preview APK
+      - name: Configure optional persistent preview signing
         if: github.ref != 'refs/heads/main'
-        run: gradle --no-daemon -PgalleryBridgePreview=true assembleDebug
+        env:
+          KEYSTORE_B64: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::Preview uses a temporary debug signing key. Future in-place upgrades need the repository signing secrets."
+            exit 0
+          fi
+          test -n "$STORE_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/gallerybridge-preview.jks"
+          test -s "$RUNNER_TEMP/gallerybridge-preview.jks"
+          echo "GB_PREVIEW_KEYSTORE_FILE=$RUNNER_TEMP/gallerybridge-preview.jks" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build standalone recovery APK
+        if: github.ref != 'refs/heads/main'
+        run: gradle --no-daemon clean -PgalleryBridgePreview=true assembleDebug
+      - name: Verify archive, APK signature and recovery package ID
+        if: github.ref != 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -tq "$APK" | tail -n 1
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -F "name='com.gallerybridge.app.preview.recovery'"
+          sha256sum "$APK"
       - uses: actions/upload-artifact@v4
         if: github.ref != 'refs/heads/main'
         with:
@@ -132,9 +162,60 @@ jobs:
               --notes "Тестовая Android APK GALLERY BRIDGE $TAG. Скачайте APK в разделе Assets. Сборка с отладочной подписью; для постоянных обновлений нужна стабильная подпись."
           fi
 
-  publish-preview:
+  install-smoke:
     if: github.event_name == 'push' && github.ref == 'refs/heads/codex/gallery-bridge-home'
     needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android emulator
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' platform-tools emulator 'system-images;android-35;default;x86_64'
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/gallery-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name gallery-install --package 'system-images;android-35;default;x86_64' \
+            --device pixel_4 --path "$ANDROID_AVD_HOME/gallery-install.avd"
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-preview-apk
+      - name: Install and launch preview package on Android
+        run: |
+          set -euo pipefail
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd gallery-install -no-window -no-audio \
+            -no-snapshot -gpu swiftshader_indirect -no-metrics -no-boot-anim \
+            > "$RUNNER_TEMP/gallery-install-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 210 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
+            tail -n 70 "$RUNNER_TEMP/gallery-install-emulator.log"
+            exit 1
+          fi
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          adb install -r app-debug.apk
+          adb shell pm path com.gallerybridge.app.preview.recovery | grep -F "package:"
+          adb shell monkey -p com.gallerybridge.app.preview.recovery -c android.intent.category.LAUNCHER 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-install-smoke-log
+          path: ${{ runner.temp }}/gallery-install-emulator.log
+
+  publish-preview:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    needs: [build, install-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,8 +230,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="preview-photos"
-          FILE="GalleryBridge-preview-photos.apk"
+          TAG="preview-recovery"
+          FILE="GalleryBridge-preview-recovery.apk"
           test -s app-debug.apk
           mv app-debug.apk "$FILE"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -158,6 +239,6 @@ jobs:
           else
             gh release create "$TAG" "$FILE" --prerelease \
               --target "$GITHUB_SHA" \
-              --title "Gallery Bridge Photos Preview" \
-              --notes "Photo-first preview: image galleries, quality comparison, Google Drive, Mail WebDAV and Android folder transfers. Video workflows are deferred. Do not remove an installed stable version."
+              --title "Gallery Bridge Preview Recovery 0.28" \
+              --notes "Separate recovery package (com.gallerybridge.app.preview.recovery). Installs alongside older preview. Existing preview catalog, queue and settings remain in the old app, and are not transferred automatically. Verified APK signature and Android emulator installation. For future upgrades, configure a persistent signing key via GitHub Actions secrets."
           fi
