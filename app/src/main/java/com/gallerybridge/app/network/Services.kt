@@ -121,7 +121,7 @@ object Services {
                 }
             }
             doc.select("video[src],source[src]").forEach { add(it.absUrl("src"), "Видео") }
-            val title = doc.selectFirst("meta[property=og:title]")?.attr("content")?.ifBlank { doc.title() } ?: doc.title()
+            val title = PageMetadata.publicationTitle(doc)
             val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
             Scan(
                 title.ifBlank { "Без названия" },
@@ -129,7 +129,9 @@ object Services {
                 urls.values.take(300),
                 metadata.model,
                 metadata.modelSource,
-                metadata.dateSource
+                metadata.dateSource,
+                metadata.suggestedDate,
+                metadata.suggestedDateSource
             )
         }
     }
