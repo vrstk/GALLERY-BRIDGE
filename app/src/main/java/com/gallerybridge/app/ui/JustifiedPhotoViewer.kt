@@ -211,7 +211,13 @@ internal fun FullscreenPhotoViewer(
                                         currentZoom = zoom
                                     })
                                 }
-                                .transformable(transform)
+                                // At 1x scale leave one-finger horizontal drags to
+                                // HorizontalPager. Pinch-zoom still works; after zooming
+                                // past 1x, this image handles panning instead.
+                                .transformable(
+                                    state = transform,
+                                    canPan = { zoom > 1.01f }
+                                )
                                 .graphicsLayer {
                                     scaleX = zoom
                                     scaleY = zoom
