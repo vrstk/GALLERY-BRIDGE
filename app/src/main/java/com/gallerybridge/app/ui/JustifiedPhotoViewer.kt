@@ -183,6 +183,16 @@ internal fun FullscreenPhotoViewer(
                 var zoom by remember(media.url) { mutableFloatStateOf(1f) }
                 var panX by remember(media.url) { mutableFloatStateOf(0f) }
                 var panY by remember(media.url) { mutableFloatStateOf(0f) }
+                // Do not restore a stale zoom/pan when revisiting an image.
+                // Keep the pager's one-finger swipe enabled on each new page.
+                LaunchedEffect(pager.currentPage) {
+                    if (pager.currentPage == page) {
+                        zoom = 1f
+                        panX = 0f
+                        panY = 0f
+                        currentZoom = 1f
+                    }
+                }
                 val transform = rememberTransformableState { scale, offset, _ ->
                     zoom = (zoom * scale).coerceIn(1f, 5f)
                     if (zoom > 1.01f) {
