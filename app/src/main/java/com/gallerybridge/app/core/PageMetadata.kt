@@ -18,7 +18,9 @@ object PageMetadata {
         val model: String = "",
         val modelSource: String = "",
         val publishedDate: String = "",
-        val dateSource: String = ""
+        val dateSource: String = "",
+        val suggestedDate: String = "",
+        val suggestedDateSource: String = ""
     )
 
     private val modelLead = Regex(
@@ -117,6 +119,43 @@ object PageMetadata {
         return "" to ""
     }
 
+    /**
+     * A gallery page's visible headline is more meaningful than the SEO title
+     * in the browser tab. Do not use a generic site header if none exists.
+     */
+    fun publicationTitle(doc: Document): String {
+        val visible = listOf(
+            "header#top h1", "main h1", "article h1", "h1"
+        ).firstNotNullOfOrNull { selector ->
+            doc.selectFirst(selector)?.text()?.trim()?.takeIf { it.isNotBlank() }
+        }
+        return (visible ?: doc.selectFirst("meta[property=og:title]")?.attr("content")
+            ?.takeIf { it.isNotBlank() } ?: doc.title()).trim().take(200)
+    }
+
+    /**
+     * A six-digit directory in image URLs may resemble YYMMDD. It is only a
+     * *hint*, never publication metadata. Require a consensus among several
+     * links from the same actual photo-gallery group; sidebar links excluded.
+     */
+    private fun galleryDirectoryDateHint(doc: Document, host: String): Pair<String, String> {
+        if (host != "elitebabes.com" && !host.endsWith(".elitebabes.com")) return "" to ""
+        val galleryAnchors = doc.select("a.fancy[data-fancybox=gallery-01][href]")
+        if (galleryAnchors.size < 3) return "" to ""
+        val pattern = Regex("""/content/(\\d{6})/""")
+        val codes = galleryAnchors.mapNotNull { anchor ->
+            pattern.find(anchor.absUrl("href"))?.groupValues?.getOrNull(1)
+        }
+        if (codes.size < 3 || codes.size != galleryAnchors.size || codes.distinct().size != 1) return "" to ""
+        val code = codes.singleOrNull() ?: codes.first()
+        val year = 2000 + (code.substring(0, 2).toIntOrNull() ?: return "" to "")
+        val month = code.substring(2, 4).toIntOrNull() ?: return "" to ""
+        val day = code.substring(4, 6).toIntOrNull() ?: return "" to ""
+        val parsed = runCatching { LocalDate.of(year, month, day) }.getOrNull() ?: return "" to ""
+        if (parsed.isAfter(LocalDate.now().plusDays(1))) return "" to ""
+        return parsed.toString() to "Код каталога фотографий /content/$code/; дата не подтверждена"
+    }
+
     fun extract(doc: Document, pageUrl: String, title: String): Fields {
         val host = runCatching { URI(pageUrl).host.orEmpty().lowercase(Locale.ROOT) }
             .getOrDefault("")
@@ -126,11 +165,14 @@ object PageMetadata {
             modelLead.find(title.trim())?.groupValues?.getOrNull(1).orEmpty().take(100)
         else ""
         val (date, dateSource) = published(doc)
+        val (hint, hintSource) = if (date.isBlank()) galleryDirectoryDateHint(doc, host) else "" to ""
         return Fields(
             model = suggestedModel,
             modelSource = if (suggestedModel.isBlank()) "" else "Предположительно по заголовку",
             publishedDate = date,
-            dateSource = dateSource
+            dateSource = dateSource,
+            suggestedDate = hint,
+            suggestedDateSource = hintSource
         )
     }
 }
