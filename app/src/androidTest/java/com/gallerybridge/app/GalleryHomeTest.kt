@@ -70,7 +70,7 @@ class GalleryHomeTest {
         compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
-        compose.onNodeWithText("Найдено фотографий: 1").assertIsDisplayed()
+        compose.onNodeWithText("Найдено ссылок на изображения: 1").assertIsDisplayed()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
         compose.onNodeWithText("Снять выделение").performClick()
         compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
