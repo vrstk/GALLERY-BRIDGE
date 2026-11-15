@@ -87,6 +87,8 @@ class MainActivity : ComponentActivity() {
     private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
     private var comparisonReport by mutableStateOf("")
     private var metadataReport by mutableStateOf("")
+    private var suggestedPublicationDate by mutableStateOf("")
+    private var suggestedPublicationDateSource by mutableStateOf("")
 
     private var imageProbeJob: Job? = null
     private var reportDetails by mutableStateOf("")
@@ -371,6 +373,8 @@ class MainActivity : ComponentActivity() {
         title = ""
         date = ""
         metadataReport = ""
+        suggestedPublicationDate = ""
+        suggestedPublicationDateSource = ""
         val cached = GalleryMetadataStore.load(this, newUrl)
         if (cached != null) {
             model = cached.model
@@ -404,6 +408,8 @@ class MainActivity : ComponentActivity() {
         imageProbeStatus = ""
         comparisonReport = ""
         metadataReport = ""
+        suggestedPublicationDate = ""
+        suggestedPublicationDateSource = ""
         showOtherMedia = false
         mediaFilter = null
         showDestination = false
@@ -417,13 +423,21 @@ class MainActivity : ComponentActivity() {
                 }
                 if (requestedUrl != url) return@launch
                 val saved = GalleryMetadataStore.load(this@MainActivity, requestedUrl)
+                // Explicit saved edits always win; visible H1 wins over SEO title
+                // for new galleries. Never overwrite confirmed or user-entered dates.
                 if (title.isBlank()) title = saved?.title?.takeIf { it.isNotBlank() } ?: scan.title
-                if (date.isBlank()) date = saved?.date ?: scan.date
+                if (date.isBlank()) date = saved?.date?.takeIf { it.isNotBlank() } ?: scan.date
                 if (model.isBlank()) model = saved?.model?.takeIf { it.isNotBlank() } ?: scan.suggestedModel
+                if (date.isBlank() && scan.suggestedDate.isNotBlank()) {
+                    suggestedPublicationDate = scan.suggestedDate
+                    suggestedPublicationDateSource = scan.suggestedDateSource
+                }
                 metadataReport = listOfNotNull(
                     "Сохранённые данные восстановлены.".takeIf { saved != null },
                     "Проверьте имя модели, предложенное по заголовку страницы.".takeIf { scan.suggestedModel.isNotBlank() },
-                    "Укажите дату, если она известна.".takeIf { date.isBlank() }
+                    "Дата публикации подтверждена: ${scan.dateSource}.".takeIf { scan.date.isNotBlank() && date == scan.date },
+                    "Возможная дата обнаружена по пути изображений, требуется подтверждение.".takeIf { suggestedPublicationDate.isNotBlank() },
+                    "Точная дата публикации не найдена.".takeIf { date.isBlank() && suggestedPublicationDate.isBlank() }
                 ).joinToString(" ")
                 recommendedUrls = recommended
                 selected = recommended
@@ -875,6 +889,19 @@ class MainActivity : ComponentActivity() {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
             isError = !GalleryKeys.validDate(date.trim()),
             supportingText = if (GalleryKeys.validDate(date.trim())) null else { { Text("Укажите реальную дату") } })
+        if (suggestedPublicationDate.isNotBlank() && date.isBlank()) {
+            Text("Предполагаемая дата: $suggestedPublicationDate",
+                style = MaterialTheme.typography.bodyMedium)
+            Text(suggestedPublicationDateSource,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = {
+                date = suggestedPublicationDate
+                suggestedPublicationDate = ""
+                suggestedPublicationDateSource = ""
+                metadataReport = "Предполагаемая дата применена по вашему выбору. Источник не подтверждает дату публикации."
+            }, enabled = enabled) { Text("Использовать предполагаемую дату") }
+        }
         if (metadataReport.isNotBlank()) Text(metadataReport, style = MaterialTheme.typography.bodySmall)
         OutlinedButton(
             onClick = ::saveGalleryMetadata,
