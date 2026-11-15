@@ -16,6 +16,7 @@ import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import com.gallerybridge.app.core.TransferTargets
 import com.gallerybridge.app.network.Services
+import com.gallerybridge.app.network.SafFolderAccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +69,11 @@ class TransferService : Service() {
             sourceUrl: String = ""
         ) {
             require(TransferTargets.isSupported(target)) { "Устаревший способ передачи: $target" }
+            if (target == TransferTargets.FOLDER) {
+                require(SafFolderAccess.inspect(context, root).ready) {
+                    "Нет доступа к выбранной папке Android. Выберите её снова в настройках."
+                }
+            }
             val array = JSONArray()
             for (file in files) {
                 array.put(JSONObject().put("url", file.url).put("name", file.name)
@@ -103,6 +109,11 @@ class TransferService : Service() {
             require(queue.remaining > 0) { "Очередь уже завершена" }
             require(TransferTargets.isSupported(queue.target)) {
                 "Google Drive API удалён. Закройте старую очередь и начните новую через папку Android."
+            }
+            if (queue.target == TransferTargets.FOLDER) {
+                require(SafFolderAccess.inspect(context, queue.root).ready) {
+                    "Нет доступа к папке сохранённой очереди. Выберите исходную папку снова."
+                }
             }
             val intent = Intent(context, TransferService::class.java).setAction(ACTION_RESUME)
                 .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password)

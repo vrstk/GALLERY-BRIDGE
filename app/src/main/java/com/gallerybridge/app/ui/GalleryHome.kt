@@ -96,7 +96,9 @@ internal fun GalleryHome(
             StorageCard(
                 title = "Папка Android / облака",
                 configured = folderConfigured,
-                configuredLabel = if (folderConfigured) "Выбрана: $folderName" else "Выбрать папку",
+                configuredLabel = if (folderConfigured) "Выбрана: $folderName" else
+                    if (folderName == "Папка не выбрана") "Выбрать папку"
+                    else "Доступ утрачен · выбрать снова",
                 onClick = onFolderSettings,
                 modifier = Modifier.weight(1f),
                 testTag = "storage-android-folder"
@@ -227,8 +229,8 @@ private fun StorageCard(
             }
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(
-                if (configured) configuredLabel else if (testTag == "storage-android-folder")
-                    "Выбрать папку" else "Настроить доступ",
+                if (configured || testTag == "storage-android-folder") configuredLabel
+                else "Настроить доступ",
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
                 color = if (configured) colors.secondary else colors.onSurfaceVariant

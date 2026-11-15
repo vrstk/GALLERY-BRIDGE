@@ -216,6 +216,13 @@ object Services {
         val documentFoldersByKind = mutableMapOf<Kind, Uri>()
         val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
         require(TransferTargets.isSupported(target)) { "Устаревший или неизвестный способ передачи" }
+        // A granted tree URI can be revoked while the app is in the background.
+        // Fail before downloading any source bytes or creating provider folders.
+        if (target == TransferTargets.FOLDER) {
+            require(SafFolderAccess.inspect(context, root).ready) {
+                "Доступ к папке назначения утрачен. Выберите исходную папку снова."
+            }
+        }
 
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()

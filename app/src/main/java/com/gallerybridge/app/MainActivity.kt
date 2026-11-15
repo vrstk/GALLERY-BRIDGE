@@ -40,6 +40,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
+import com.gallerybridge.app.network.SafFolderAccess
 import com.gallerybridge.app.network.IntegrityAudit
 import com.gallerybridge.app.network.ImageQualityProbe
 import com.gallerybridge.app.transfer.TransferService
@@ -63,6 +64,8 @@ class MainActivity : ComponentActivity() {
     private var password by mutableStateOf("")
     private var treeUri by mutableStateOf("")
     private var treeName by mutableStateOf("Папка не выбрана")
+    private var folderPermissionReady by mutableStateOf(false)
+    private var folderPermissionMessage by mutableStateOf("")
     private var mailRoot by mutableStateOf("Models")
     private var target by mutableStateOf("Папка Android")
     private var dark by mutableStateOf(true)
@@ -151,16 +154,18 @@ class MainActivity : ComponentActivity() {
                 contentResolver.takePersistableUriPermission(
                     uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                val dir = DocumentFile.fromTreeUri(this, uri)
-                require(dir != null && dir.canWrite()) { "Папка не разрешает запись" }
-                treeUri = uri.toString()
-                treeName = dir.name ?: "Выбранная папка"
-                getSharedPreferences("settings", MODE_PRIVATE).edit().putString("treeUri", treeUri).apply()
+                val newUri = uri.toString()
+                val access = SafFolderAccess.inspect(this, newUri)
+                require(access.ready) { access.message }
+                // Persist first. A failed replacement never erases the previous folder.
+                check(getSharedPreferences("settings", MODE_PRIVATE).edit()
+                    .putString("treeUri", newUri).commit()) { "Не удалось сохранить выбор папки" }
+                treeUri = newUri
+                refreshFolderAccess()
                 settingsStatus = "Выбрана папка: $treeName"
             } catch (e: Exception) {
-                treeUri = ""
-                treeName = "Нет доступа"
-                settingsStatus = "Ошибка выбора папки: ${e.message}"
+                refreshFolderAccess()
+                settingsStatus = "Не удалось выбрать новую папку: ${e.message}"
             }
         }
     }
@@ -181,11 +186,7 @@ class MainActivity : ComponentActivity() {
             rememberMailPassword = true
         }
         treeUri = p.getString("treeUri", "") ?: ""
-        if (treeUri.isNotBlank()) {
-            try {
-                treeName = DocumentFile.fromTreeUri(this, Uri.parse(treeUri))?.name ?: "Сохранённая папка"
-            } catch (_: Exception) { treeName = "Папка недоступна" }
-        }
+        refreshFolderAccess()
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", true)
         applySystemBars()
@@ -209,6 +210,18 @@ class MainActivity : ComponentActivity() {
             date = savedInstanceState?.getString("galleryDate") ?: date
         }
         setContent { GalleryTheme(dark) { Ui() } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshFolderAccess()
+    }
+
+    private fun refreshFolderAccess() {
+        val current = SafFolderAccess.inspect(this, treeUri)
+        folderPermissionReady = current.ready
+        treeName = current.name
+        folderPermissionMessage = current.message
     }
 
     private fun Bundle?.galleryPage(key: String): GalleryPage =
@@ -471,6 +484,13 @@ class MainActivity : ComponentActivity() {
             }
             val chosen = items.filter { it.kind == Kind.PHOTO && it.url in selected }
             require(chosen.isNotEmpty()) { "Выберите фотографии для передачи" }
+            if (target == "Папка Android") {
+                val access = SafFolderAccess.inspect(this, treeUri)
+                folderPermissionReady = access.ready
+                treeName = access.name
+                folderPermissionMessage = access.message
+                require(access.ready) { access.message }
+            }
             TransferService.begin(
                 this, chosen, model, title, date.trim(), target, email, password,
                 if (target == "Папка Android") treeUri else mailRoot,
@@ -500,7 +520,11 @@ class MainActivity : ComponentActivity() {
                 "Очередь содержит видео из прежней версии. Закройте её, чтобы начать новую фотозагрузку."
             }
             if (queue.target == "Папка Android") {
-                require(queue.root.isNotBlank()) { "Выбранная папка Android отсутствует" }
+                val access = SafFolderAccess.inspect(this, queue.root)
+                require(access.ready) {
+                    "Исходная папка сохранённой очереди недоступна. ${access.message} " +
+                        "Выберите ту же папку и повторите продолжение."
+                }
             }
             if (queue.target == "Mail WebDAV") {
                 if (email.isBlank() || password.isBlank()) {
@@ -622,7 +646,13 @@ class MainActivity : ComponentActivity() {
         }
         val setupError = when (target) {
             "Mail WebDAV" -> "Укажите почту и пароль приложения Mail.".takeIf { email.isBlank() || password.isBlank() }
-            "Папка Android" -> "Выберите папку Android или доступного облака.".takeIf { treeUri.isBlank() }
+            "Папка Android" -> {
+                val access = SafFolderAccess.inspect(this, treeUri)
+                folderPermissionReady = access.ready
+                treeName = access.name
+                folderPermissionMessage = access.message
+                access.message.takeUnless { access.ready }
+            }
             else -> "Этот способ передачи больше не поддерживается."
         }
         if (setupError != null) {
@@ -695,7 +725,7 @@ class MainActivity : ComponentActivity() {
                         screen = GalleryPage.CATALOG
                     },
                     mailConfigured = email.isNotBlank() && password.isNotBlank(),
-                    folderConfigured = treeUri.isNotBlank(),
+                    folderConfigured = folderPermissionReady,
                     folderName = treeName,
                     onMailSettings = { openSettings("Mail WebDAV") },
                     onFolderSettings = { openSettings("Папка Android") },
@@ -1083,6 +1113,10 @@ class MainActivity : ComponentActivity() {
                         else -> treeName
                     }
                     Text(folder, style = MaterialTheme.typography.bodyMedium)
+                    if (target == "Папка Android" && !folderPermissionReady && treeUri.isNotBlank()) {
+                        Text(folderPermissionMessage, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
+                    }
                     TextButton(onClick = { openSettings(target) }, enabled = enabled) {
                         Text("Настроить назначение")
                     }
@@ -1172,6 +1206,15 @@ class MainActivity : ComponentActivity() {
             }
             else -> {
                 Text(treeName, style = MaterialTheme.typography.bodyMedium)
+                if (treeUri.isNotBlank() && !folderPermissionReady) {
+                    Text(folderPermissionMessage, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+                Text(
+                    "Папку Google Диска можно выбрать без OAuth, если облачный провайдер " +
+                        "поддерживает запись через Android. Синхронизация с облаком может продолжиться позже.",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 OutlinedButton(
                     onClick = { treePicker.launch(null) }, enabled = settingsEnabled, modifier = Modifier.fillMaxWidth()
                 ) {

@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 26
-        versionName = "0.26.0"
+        versionCode = 27
+        versionName = "0.27.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -19,7 +19,7 @@ android {
         debug {
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
                 applicationIdSuffix = ".preview.next"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.26"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.27"
             }
         }
     }
