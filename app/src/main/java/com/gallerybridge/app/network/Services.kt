@@ -389,6 +389,13 @@ object Services {
                 coroutineContext.ensureActive()
                 failed++
                 onItemResult(index, item, "FAILED")
+                if (e is CloudListingPolicy.UnsafeListing) {
+                    stoppedReason = "Обнаружена неоднозначность в Google Drive. " +
+                        "Загрузка остановлена, чтобы не пропускать повреждённые файлы " +
+                        "и не создавать дубликаты."
+                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
                 if (target == "Папка Android" && (
                     e.message.orEmpty().contains("дубликат", ignoreCase = true) ||
                     e.message.orEmpty().contains("одноимённые", ignoreCase = true) ||
