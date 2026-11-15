@@ -41,6 +41,8 @@ internal fun GalleryHome(
     hasResults: Boolean,
     onSearch: () -> Unit,
     onResults: () -> Unit,
+    catalogCount: Int,
+    onCatalog: () -> Unit,
     mailConfigured: Boolean,
     driveConfigured: Boolean,
     onMailSettings: () -> Unit,
@@ -59,6 +61,27 @@ internal fun GalleryHome(
                     Text("Открыть результаты")
                 }
             }
+        }
+    }
+    OutlinedCard(
+        onClick = onCatalog,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainerLow)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Каталог галерей", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Сохранено галерей: " + catalogCount,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Открыть каталог")
         }
     }
     Text("Мои хранилища", style = MaterialTheme.typography.titleMedium)

@@ -65,7 +65,8 @@ class TransferService : Service() {
             email: String,
             password: String,
             root: String,
-            token: String?
+            token: String?,
+            sourceUrl: String = ""
         ) {
             val array = JSONArray()
             for (file in files) {
@@ -93,7 +94,7 @@ class TransferService : Service() {
             }
             QueueStore.save(context, QueueStore.newSnapshot(
                 model, title, date, target, root,
-                if (target == "Mail WebDAV") email.trim() else "", files
+                if (target == "Mail WebDAV") email.trim() else "", files, sourceUrl
             ))
             context.startForegroundService(intent)
         }

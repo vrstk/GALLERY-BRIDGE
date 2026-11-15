@@ -98,6 +98,7 @@ class MainActivity : ComponentActivity() {
     private var resumeRequest = false
     private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
+    private var catalog by mutableStateOf<List<CatalogGallery>>(emptyList())
     private var screen by mutableStateOf(GalleryPage.HOME)
     private var settingsOrigin = GalleryPage.HOME
     private var settingsDestination by mutableStateOf("Mail WebDAV")
@@ -208,6 +209,7 @@ class MainActivity : ComponentActivity() {
         screen = savedInstanceState.galleryPage("galleryPage")
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
+        catalog = GalleryCatalogStore.load(this)
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
         val previousLink = savedInstanceState?.getString("galleryUrl")
@@ -387,8 +389,11 @@ class MainActivity : ComponentActivity() {
 
     private fun saveGalleryMetadata() {
         metadataReport = try {
-            GalleryMetadataStore.save(this, url, GalleryFields(model, title, date))
-            "Данные сохранены для этой ссылки."
+            val fields = GalleryFields(model, title, date)
+            GalleryMetadataStore.save(this, url, fields)
+            check(GalleryCatalogStore.remember(this, url, fields)) { "Не удалось добавить запись в каталог" }
+            catalog = GalleryCatalogStore.load(this)
+            "Данные сохранены в каталоге для этой ссылки."
         } catch (e: Exception) {
             "Не удалось сохранить данные галереи: ${e.message}"
         }
@@ -481,9 +486,14 @@ class MainActivity : ComponentActivity() {
             require(chosen.isNotEmpty()) { "Выберите фотографии для передачи" }
             TransferService.begin(
                 this, chosen, model, title, date.trim(), target, email, password,
-                if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token
+                if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token,
+                GalleryKeys.canonical(url)?.takeIf { chosen.all { media -> media.url.startsWith("https://") } }.orEmpty()
             )
             savedQueue = QueueStore.load(this)
+            savedQueue?.sourceUrl?.takeIf { it.isNotBlank() }?.let { source ->
+                runCatching { GalleryCatalogStore.remember(this, source, GalleryFields(model, title, date)) }
+            }
+            catalog = GalleryCatalogStore.load(this)
             getSharedPreferences("settings", MODE_PRIVATE).edit().putString("transferTarget", target).apply()
             transferRunning = true
             showDestination = false
@@ -547,6 +557,7 @@ class MainActivity : ComponentActivity() {
             }
             savedQueue = QueueStore.load(this)
             history = HistoryStore.load(this)
+            catalog = GalleryCatalogStore.load(this)
             showCloseQueueConfirmation = false
             reportDetails = ""
             transferStatus = ""
@@ -695,6 +706,7 @@ class MainActivity : ComponentActivity() {
                     reportDetails = p.getString(TransferService.KEY_DETAILS, "").orEmpty()
                     savedQueue = QueueStore.load(this@MainActivity)
                     history = HistoryStore.load(this@MainActivity)
+                    catalog = GalleryCatalogStore.load(this@MainActivity)
                 }
                 delay(800)
             }
@@ -726,6 +738,11 @@ class MainActivity : ComponentActivity() {
                     hasResults = items.isNotEmpty(),
                     onSearch = startSearch,
                     onResults = { screen = GalleryPage.DOWNLOADS },
+                    catalogCount = catalog.size,
+                    onCatalog = {
+                        catalog = GalleryCatalogStore.load(this@MainActivity)
+                        screen = GalleryPage.CATALOG
+                    },
                     mailConfigured = email.isNotBlank() && password.isNotBlank(),
                     driveConfigured = driveId.isNotBlank(),
                     onMailSettings = { openSettings("Mail WebDAV") },
@@ -735,6 +752,21 @@ class MainActivity : ComponentActivity() {
                         screen = if (savedQueue != null) GalleryPage.QUEUE else GalleryPage.HISTORY
                     }
                 ) }
+                GalleryPage.CATALOG -> GalleryCatalog(
+                    entries = catalog,
+                    onOpen = { gallery ->
+                        setGalleryUrl(gallery.url)
+                        model = gallery.model
+                        title = gallery.title
+                        date = gallery.date
+                        screen = GalleryPage.HOME
+                    },
+                    onRemove = { gallery ->
+                        if (GalleryCatalogStore.remove(this@MainActivity, gallery.url)) {
+                            catalog = GalleryCatalogStore.load(this@MainActivity)
+                        }
+                    }
+                )
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }

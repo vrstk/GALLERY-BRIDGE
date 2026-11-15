@@ -2,6 +2,7 @@ package com.gallerybridge.app.transfer
 
 import android.content.Context
 import com.gallerybridge.app.core.Kind
+import com.gallerybridge.app.core.GalleryKeys
 import com.gallerybridge.app.core.Media
 import org.json.JSONArray
 import org.json.JSONObject
@@ -22,7 +23,8 @@ object QueueStore {
         val target: String,
         val root: String,
         val account: String,
-        val entries: List<Entry>
+        val entries: List<Entry>,
+        val sourceUrl: String = ""
     ) {
         val remaining: Int get() = entries.count { it.state != "DONE" && it.state != "SKIPPED" }
         val completed: Int get() = entries.count { it.state == "DONE" || it.state == "SKIPPED" }
@@ -46,7 +48,8 @@ object QueueStore {
             }
             Snapshot(data.getLong("id"), data.getString("model"), data.getString("title"),
                 data.optString("date"), data.getString("target"),
-                data.getString("root"), data.optString("account", ""), entries)
+                data.getString("root"), data.optString("account", ""), entries,
+                GalleryKeys.canonical(data.optString("sourceUrl")).orEmpty())
         } catch (_: Exception) { null }
     }
 
@@ -59,6 +62,7 @@ object QueueStore {
             .put("target", snapshot.target)
             .put("root", snapshot.root)
             .put("account", snapshot.account)
+            .put("sourceUrl", GalleryKeys.canonical(snapshot.sourceUrl).orEmpty())
         val entries = JSONArray()
         for (entry in snapshot.entries) {
             entries.put(JSONObject()
@@ -102,7 +106,8 @@ object QueueStore {
 
     fun newSnapshot(
         model: String, title: String, date: String, target: String,
-        root: String, account: String, files: List<Media>
+        root: String, account: String, files: List<Media>, sourceUrl: String = ""
     ): Snapshot = Snapshot(System.currentTimeMillis(), model, title, date, target,
-        root, account, files.map { Entry(it, "PENDING") })
+        root, account, files.map { Entry(it, "PENDING") },
+        GalleryKeys.canonical(sourceUrl).orEmpty())
 }

@@ -48,6 +48,15 @@ class GalleryHomeTest {
     }
 
     @Test
+    fun galleryCatalogOpensAndReturnsHomeWithoutStartingScan() {
+        compose.onNodeWithText("Каталог галерей").performClick()
+        compose.onNodeWithText("Каталог галерей").assertIsDisplayed()
+        compose.onNodeWithText("Каталог пока пуст.", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Назад").performClick()
+        compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
+    }
+
+    @Test
     fun storageShortcutOpensDriveAndThemePersistsAcrossActivityRecreation() {
         compose.onNodeWithText("Google Drive", substring = true).performClick()
         compose.onNodeWithText("ID папки Google Drive").assertIsDisplayed()

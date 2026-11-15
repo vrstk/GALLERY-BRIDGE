@@ -1,6 +1,7 @@
 package com.gallerybridge.app.transfer
 
 import android.content.Context
+import com.gallerybridge.app.core.GalleryCatalogStore
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -79,7 +80,12 @@ object HistoryStore {
                 .put("skipped", it.skipped).put("failed", it.failed)
                 .put("outcome", it.outcome))
         }
-        return context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+        val persisted = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString(KEY, arr.toString()).commit()
+        // The catalog is supplementary: its failure must not invalidate durable history.
+        if (persisted && queue.sourceUrl.isNotBlank()) {
+            runCatching { GalleryCatalogStore.recordTransfer(context, queue, outcome) }
+        }
+        return persisted
     }
 }
