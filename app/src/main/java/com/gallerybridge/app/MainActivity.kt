@@ -797,11 +797,22 @@ class MainActivity : ComponentActivity() {
         val visibleItems = candidates
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
+        var justified by rememberSaveable(url) { mutableStateOf(true) }
+        var openedPhoto by remember { mutableStateOf<String?>(null) }
+        val aspectRatios = remember(url) { mutableStateMapOf<String, Float>() }
 
+        BoxWithConstraints(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize()) {
+        val justifiedRows = JustifiedRows.pack(
+            photos = visibleItems,
+            aspectRatios = aspectRatios.toMap(),
+            availableWidth = (maxWidth.value - 32f).coerceAtLeast(48f),
+            targetHeight = if (fontScale > 1.3f) 190f else 154f,
+            spacing = 6f
+        )
         LazyVerticalGrid(
             columns = GridCells.Adaptive(if (fontScale > 1.3f) 144.dp else 104.dp),
             state = gridState,
-            modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
@@ -830,6 +841,18 @@ class MainActivity : ComponentActivity() {
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = justified,
+                            onClick = { justified = true },
+                            label = { Text("Justified") }
+                        )
+                        FilterChip(
+                            selected = !justified,
+                            onClick = { justified = false },
+                            label = { Text("Плитка") }
+                        )
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = {
                                 selected = selected + visibleItems.map(Media::url)
@@ -851,9 +874,34 @@ class MainActivity : ComponentActivity() {
                     if (checksExpanded) DownloadQualityControls(searchAllowed)
                 }
             }
-            items(visibleItems, key = { "media:${it.url}" }) { media ->
-                MediaTile(media, media.url in selected, searchAllowed, imageProbeResults[media.url]?.display()) { checked ->
-                    selected = if (checked) selected + media.url else selected - media.url
+            if (justified) {
+                items(justifiedRows, span = { GridItemSpan(maxLineSpan) },
+                    key = { row -> "justified:${row.photos.first().url}" }) { row ->
+                    JustifiedPhotoRow(
+                        row = row,
+                        selected = selected,
+                        enabled = searchAllowed,
+                        spacing = 6.dp,
+                        onOpen = { openedPhoto = it.url },
+                        onSelection = { media, checked ->
+                            selected = if (checked) selected + media.url else selected - media.url
+                        },
+                        onAspectRatio = { media, ratio ->
+                            if (aspectRatios[media.url] != ratio) aspectRatios[media.url] = ratio
+                        }
+                    )
+                }
+            } else {
+                items(visibleItems, key = { "media:${it.url}" }) { media ->
+                    MediaTile(
+                        media,
+                        media.url in selected,
+                        searchAllowed,
+                        imageProbeResults[media.url]?.display(),
+                        onOpen = { openedPhoto = media.url }
+                    ) { checked ->
+                        selected = if (checked) selected + media.url else selected - media.url
+                    }
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -864,6 +912,23 @@ class MainActivity : ComponentActivity() {
                         FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
                     }
                 }
+            }
+        }
+        }
+        openedPhoto?.let { photoUrl ->
+            val index = visibleItems.indexOfFirst { it.url == photoUrl }
+            if (index >= 0) {
+                FullscreenPhotoViewer(
+                    photos = visibleItems,
+                    initialIndex = index,
+                    selected = selected,
+                    onSelection = { media, checked ->
+                        selected = if (checked) selected + media.url else selected - media.url
+                    },
+                    onClose = { openedPhoto = null }
+                )
+            } else {
+                LaunchedEffect(photoUrl) { openedPhoto = null }
             }
         }
         if (showDestination) DestinationDialog()
