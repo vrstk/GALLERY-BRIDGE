@@ -142,7 +142,7 @@ object PageMetadata {
         if (host != "elitebabes.com" && !host.endsWith(".elitebabes.com")) return "" to ""
         val galleryAnchors = doc.select("a.fancy[data-fancybox=gallery-01][href]")
         if (galleryAnchors.size < 3) return "" to ""
-        val pattern = Regex("""/content/(\\d{6})/""")
+        val pattern = Regex("""/content/(\d{6})/""")
         val codes = galleryAnchors.mapNotNull { anchor ->
             pattern.find(anchor.absUrl("href"))?.groupValues?.getOrNull(1)
         }
