@@ -177,6 +177,7 @@ object Services {
                 if (expected > 0 && context.cacheDir.usableSpace < expected + 20_000_000) error("Недостаточно памяти")
                 body.byteStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
                 if (file.length() == 0L || expected >= 0 && file.length() != expected) error("Неполный файл")
+                if (media.kind == Kind.PHOTO) PhotoSourceValidation.verifyFile(file, mime)
                 return file to (mime.ifBlank { "application/octet-stream" })
             }
         } catch (e: Exception) { file.delete(); throw e }
