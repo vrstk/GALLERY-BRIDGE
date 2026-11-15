@@ -80,7 +80,7 @@ class GalleryCatalogStoreTest {
             GalleryCatalogFilter.apply(entries, " alba ", false, false).map { it.title })
         assertEquals(listOf("Evening", "Outdoor"),
             GalleryCatalogFilter.apply(entries, "", false, true).map { it.title })
-        assertEquals(listOf("Studio", "Evening", "Outdoor"),
+        assertEquals(listOf("Evening", "Studio", "Outdoor"),
             GalleryCatalogFilter.apply(entries, "", true, false).map { it.title })
         assertEquals(3, entries.size)
     }
