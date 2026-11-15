@@ -120,7 +120,7 @@ class GalleryHomeTest {
 
     private fun awaitSearchResult() {
         compose.waitUntil(timeoutMillis = 8_000) {
-            compose.onNodeWithText("Найдено фотографий: 1").isDisplayed()
+            compose.onNodeWithText("Найдено ссылок на изображения: 1").isDisplayed()
         }
     }
 }
