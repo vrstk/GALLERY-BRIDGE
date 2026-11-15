@@ -35,7 +35,7 @@ object MediaResults {
         return selectedUrls.count { it !in visibleUrls }
     }
 
-    /** Pagination helper used by large gallery tests and future paging. */
+    /** Show a bounded prefix in the alternate-variants view; never mutate all or selections. */
     fun page(all: List<Media>, limit: Int): List<Media> =
         all.take(limit.coerceIn(0, all.size))
 }

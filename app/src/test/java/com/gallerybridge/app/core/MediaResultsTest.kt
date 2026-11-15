@@ -52,6 +52,23 @@ class MediaResultsTest {
         assertEquals(2, selected.size)
     }
 
+    @Test fun galleryWithThreeHundredVariantsPagesSafely() {
+        val all = (0 until 300).map(::media)
+        val recommended = all.take(15)
+        val selected = setOf(all[0].url, all[90].url, all[299].url)
+        val firstPage = MediaResults.page(all, MediaResults.PAGE_SIZE)
+        val secondPage = MediaResults.page(all, MediaResults.PAGE_SIZE * 2)
+        assertEquals(15, recommended.size)
+        assertEquals(30, firstPage.size)
+        assertEquals(60, secondPage.size)
+        assertEquals(300, all.size)
+        assertEquals(2, MediaResults.hiddenSelectionCount(selected, recommended))
+        // Pagination itself must not be described as "hidden alternatives".
+        assertEquals(0, MediaResults.hiddenSelectionCount(selected, all))
+        assertTrue(selected.contains(all[299].url))
+        assertEquals(all.take(30), firstPage)
+    }
+
     @Test fun pagingNeverMutatesSelection() {
         val all = (0 until 300).map(::media)
         val selected = setOf(all[1].url, all[290].url)

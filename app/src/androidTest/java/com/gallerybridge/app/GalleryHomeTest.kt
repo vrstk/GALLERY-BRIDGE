@@ -80,7 +80,7 @@ class GalleryHomeTest {
         awaitSearchResult()
 
         compose.onNodeWithText("Фотографии: 1").assertIsDisplayed()
-        compose.onNodeWithText("Новая галерея").assertIsDisplayed()
+        compose.onNodeWithText("На главную").assertIsDisplayed()
         compose.onNodeWithText("Поиск по ссылке").assertDoesNotExist()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
         compose.onNodeWithText("Снять выделение").performClick()

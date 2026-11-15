@@ -786,13 +786,20 @@ class MainActivity : ComponentActivity() {
         val candidates = remember(items, showOtherMedia, recommendedUrls) {
             MediaResults.visible(items, showOtherMedia, recommendedUrls)
         }
-        val photos = remember(candidates) { candidates.count { it.kind == Kind.PHOTO } }
         val otherLinks = remember(items, recommendedUrls) {
             MediaResults.extraCount(items, recommendedUrls)
         }
-        val visibleItems = candidates
-        val hiddenSelected = remember(selected, visibleItems) {
-            MediaResults.hiddenSelectionCount(selected, visibleItems)
+        var pageLimit by rememberSaveable(url) { mutableIntStateOf(MediaResults.PAGE_SIZE) }
+        // Only extra variants are paged. The recommended set is always shown in full.
+        val visibleItems = remember(candidates, showOtherMedia, pageLimit) {
+            if (showOtherMedia) MediaResults.page(candidates, pageLimit) else candidates
+        }
+        val photos = visibleItems.size
+        val remainingInList = (candidates.size - photos).coerceAtLeast(0)
+        // Pagination is not the same as the hidden-alternative filter: avoid
+        // warning about photos merely waiting on another page.
+        val hiddenSelected = remember(selected, candidates) {
+            MediaResults.hiddenSelectionCount(selected, candidates)
         }
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
@@ -821,21 +828,28 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Фотографии: $photos", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        if (otherLinks > 0) "Всего найдено: ${items.size} · Других вариантов: $otherLinks"
+                        if (remainingInList > 0) "Фотографии: $photos из ${candidates.size}"
+                        else "Фотографии: $photos",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        if (otherLinks > 0)
+                            "Всего найдено: ${items.size} · Дополнительных вариантов: $otherLinks"
                         else "Все найденные фотографии показаны ниже",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (otherLinks > 0) {
                         TextButton(
-                            onClick = { showOtherMedia = !showOtherMedia },
+                            onClick = {
+                                showOtherMedia = !showOtherMedia
+                                pageLimit = MediaResults.PAGE_SIZE
+                            },
                             enabled = searchAllowed
                         ) {
-                            Text(if (showOtherMedia)
-                                "Скрыть дополнительные варианты"
-                            else "Показать ещё $otherLinks вариантов")
+                            Text(if (showOtherMedia) "Только рекомендуемые"
+                                else "Просмотреть дополнительные варианты ($otherLinks)")
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -868,14 +882,22 @@ class MainActivity : ComponentActivity() {
                             color = MaterialTheme.colorScheme.error
                         )
                         TextButton(onClick = {
-                            val shown = visibleItems.map(Media::url).toSet()
-                            selected = selected.intersect(shown)
+                            // Preserve selections on other loaded or not-yet-loaded pages.
+                            val allowed = candidates.map(Media::url).toSet()
+                            selected = selected.intersect(allowed)
                         }, enabled = searchAllowed) {
                             Text("Снять выбор скрытых")
                         }
                     }
                     TextButton(onClick = { screen = GalleryPage.HOME }) {
-                        Text("Новая галерея")
+                        Text("На главную")
+                    }
+                    if (transferRunning) {
+                        Text(
+                            "Идёт передача. Изменять выбор можно после её завершения.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     QueueShortcut()
                 }
@@ -915,6 +937,20 @@ class MainActivity : ComponentActivity() {
                         onOpen = { openedPhoto = media.url }
                     ) { checked ->
                         selected = if (checked) selected + media.url else selected - media.url
+                    }
+                }
+            }
+            if (showOtherMedia && remainingInList > 0) {
+                item(span = { GridItemSpan(maxLineSpan) }, key = "load-more-photo-variants") {
+                    OutlinedButton(
+                        onClick = {
+                            pageLimit = (pageLimit + MediaResults.PAGE_SIZE).coerceAtMost(candidates.size)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = searchAllowed
+                    ) {
+                        val batch = minOf(remainingInList, MediaResults.PAGE_SIZE)
+                        Text("Показать ещё $batch · Осталось $remainingInList")
                     }
                 }
             }
