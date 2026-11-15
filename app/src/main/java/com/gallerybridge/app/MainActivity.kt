@@ -797,7 +797,7 @@ class MainActivity : ComponentActivity() {
                     Text("Найдено фотографий: ${items.size}", style = MaterialTheme.typography.titleLarge)
                     if (otherLinks > 0) {
                         Text(
-                            "Показано лучших вариантов: $photos · Других вариантов: $otherLinks",
+                            "Показано рекомендуемых: $photos · Дополнительных вариантов: $otherLinks",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -806,7 +806,7 @@ class MainActivity : ComponentActivity() {
                             enabled = searchAllowed,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (showOtherMedia) "Показывать только лучшие варианты"
+                            Text(if (showOtherMedia) "Показывать рекомендуемые варианты"
                                 else "Показать все варианты ($otherLinks)")
                         }
                     } else {
