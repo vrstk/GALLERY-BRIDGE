@@ -24,6 +24,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -176,7 +177,7 @@ internal fun FullscreenPhotoViewer(
             HorizontalPager(
                 state = pager,
                 userScrollEnabled = currentZoom <= 1.01f,
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag("fullscreen-photo-pager")
             ) { page ->
                 val media = photos[page]
                 var zoom by remember(media.url) { mutableFloatStateOf(1f) }
