@@ -31,7 +31,7 @@ object GalleryCatalogStore {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
             val array = JSONArray(raw)
-            buildList {
+            buildList<CatalogGallery> {
                 for (i in 0 until array.length()) {
                     val item = array.optJSONObject(i) ?: continue
                     val url = GalleryKeys.canonical(item.optString("url")) ?: continue
@@ -49,7 +49,7 @@ object GalleryCatalogStore {
                         total = item.optInt("total").coerceAtLeast(0)
                     ))
                 }
-            }.fold(emptyList()) { list, entry -> merge(list, entry) }
+            }.fold(emptyList<CatalogGallery>()) { list, entry -> merge(list, entry) }
         }.getOrDefault(emptyList())
     }
 
