@@ -49,5 +49,7 @@ dependencies {
     testImplementation("org.json:json:20240303")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.09.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // Provides the test-only ComponentActivity used by createComposeRule().
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     androidTestImplementation("androidx.test:runner:1.7.0")
 }
