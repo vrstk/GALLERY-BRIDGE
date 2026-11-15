@@ -3,7 +3,7 @@ package com.gallerybridge.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -38,13 +38,14 @@ internal fun MediaTile(
     checked: Boolean,
     enabled: Boolean,
     detail: String?,
+    onOpen: () -> Unit,
     onCheckedChange: (Boolean) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val shape = MaterialTheme.shapes.medium
     Surface(
         modifier = Modifier.fillMaxWidth().clip(shape)
-            .toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = onCheckedChange)
+            .clickable(onClick = onOpen)
             .semantics { contentDescription = media.name },
         shape = shape,
         color = colors.surfaceContainerLow,
@@ -77,17 +78,16 @@ internal fun MediaTile(
                     placeholder = placeholder,
                     error = placeholder
                 )
-                Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                    shape = MaterialTheme.shapes.small,
-                    color = if (checked) colors.primary else colors.surface
-                ) {
-                    Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
-                        if (checked) Icon(Icons.Outlined.CheckCircle, null, Modifier.size(19.dp), tint = colors.onPrimary)
-                        else Surface(Modifier.size(13.dp), shape = MaterialTheme.shapes.extraSmall,
-                            color = Color.Transparent, border = BorderStroke(1.dp, colors.outline)) {}
-                    }
-                }
+                Checkbox(
+                    checked = checked,
+                    onCheckedChange = onCheckedChange,
+                    enabled = enabled,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                        .size(34.dp).background(
+                            if (checked) colors.primaryContainer else colors.surface.copy(alpha = 0.85f),
+                            MaterialTheme.shapes.small
+                        )
+                )
             }
             Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
                 Text(media.name, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
