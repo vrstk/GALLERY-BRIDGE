@@ -14,6 +14,7 @@ import android.os.IBinder
 import com.gallerybridge.app.MainActivity
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.core.TransferTargets
 import com.gallerybridge.app.network.Services
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +47,6 @@ class TransferService : Service() {
         private const val EXTRA_EMAIL = "email"
         private const val EXTRA_PASSWORD = "password"
         private const val EXTRA_ROOT = "root"
-        private const val EXTRA_TOKEN = "token"
 
         const val PREFS = "transfer_state"
         const val KEY_RUNNING = "running"
@@ -65,9 +65,9 @@ class TransferService : Service() {
             email: String,
             password: String,
             root: String,
-            token: String?,
             sourceUrl: String = ""
         ) {
+            require(TransferTargets.isSupported(target)) { "Устаревший способ передачи: $target" }
             val array = JSONArray()
             for (file in files) {
                 array.put(JSONObject().put("url", file.url).put("name", file.name)
@@ -84,7 +84,6 @@ class TransferService : Service() {
                 .putExtra(EXTRA_EMAIL, email)
                 .putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_ROOT, root)
-                .putExtra(EXTRA_TOKEN, token)
             // Don't silently overwrite a paused queue with unfinished files.
             QueueStore.load(context)?.let { previous ->
                 require(previous.remaining == 0) {
@@ -99,12 +98,14 @@ class TransferService : Service() {
             context.startForegroundService(intent)
         }
 
-        fun resume(context: Context, email: String, password: String, token: String?) {
+        fun resume(context: Context, email: String, password: String) {
             val queue = QueueStore.load(context) ?: error("Сохранённая очередь не найдена")
             require(queue.remaining > 0) { "Очередь уже завершена" }
+            require(TransferTargets.isSupported(queue.target)) {
+                "Google Drive API удалён. Закройте старую очередь и начните новую через папку Android."
+            }
             val intent = Intent(context, TransferService::class.java).setAction(ACTION_RESUME)
                 .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password)
-                .putExtra(EXTRA_TOKEN, token)
             context.startForegroundService(intent)
         }
 
@@ -150,6 +151,12 @@ class TransferService : Service() {
         if (job?.isActive == true) return START_NOT_STICKY
         if (intent?.action != ACTION_START && intent?.action != ACTION_RESUME) return START_NOT_STICKY
         val queue = QueueStore.load(this) ?: return START_NOT_STICKY
+        if (!TransferTargets.isSupported(queue.target)) {
+            save(false, "Старый способ загрузки больше не поддерживается",
+                "Google Drive API удалён. Очередь сохранена. Закройте её с сохранением истории.")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         if (queue.remaining == 0) {
             save(false, "Очередь уже завершена", "")
             return START_NOT_STICKY
@@ -174,7 +181,6 @@ class TransferService : Service() {
                     applicationContext, files, queue.model, queue.title, queue.date,
                     queue.target, src.getStringExtra(EXTRA_EMAIL).orEmpty(),
                     src.getStringExtra(EXTRA_PASSWORD).orEmpty(), queue.root,
-                    src.getStringExtra(EXTRA_TOKEN),
                     progress = { message ->
                         if (mySession != session || cancelRequested) return@transfer
                         save(true, message, "")

@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.22.0"
+        versionCode = 23
+        versionName = "0.23.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -19,7 +19,7 @@ android {
         debug {
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
                 applicationIdSuffix = ".preview.next"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.22"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.23"
             }
         }
     }
@@ -44,7 +44,6 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("io.coil-kt.coil3:coil-compose:3.3.0")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
-    implementation("com.google.android.gms:play-services-auth:21.6.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     androidTestImplementation(platform("androidx.compose:compose-bom:2025.09.00"))

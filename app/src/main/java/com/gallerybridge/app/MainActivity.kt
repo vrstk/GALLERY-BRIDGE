@@ -13,7 +13,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -51,8 +50,6 @@ import androidx.compose.ui.Alignment
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.google.android.gms.auth.api.identity.*
-import com.google.android.gms.common.api.Scope
 import kotlinx.coroutines.*
 
 class MainActivity : ComponentActivity() {
@@ -63,11 +60,10 @@ class MainActivity : ComponentActivity() {
     private var date by mutableStateOf("")
     private var email by mutableStateOf("")
     private var password by mutableStateOf("")
-    private var driveId by mutableStateOf("1vWsFWxllS6aOh6a0iD58w30moPHiDP4T")
     private var treeUri by mutableStateOf("")
     private var treeName by mutableStateOf("Папка не выбрана")
     private var mailRoot by mutableStateOf("Models")
-    private var target by mutableStateOf("Mail WebDAV")
+    private var target by mutableStateOf("Папка Android")
     private var dark by mutableStateOf(true)
     private var working by mutableStateOf(false)
     private var scanning by mutableStateOf(false)
@@ -94,7 +90,6 @@ class MainActivity : ComponentActivity() {
     private var reportDetails by mutableStateOf("")
     private var showReportDetails by mutableStateOf(false)
     private var transferRunning by mutableStateOf(false)
-    private var notificationToken: String? = null
     private var resumeRequest = false
     private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
@@ -171,18 +166,10 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Notification permission is optional for running a dataSync foreground service.
-        if (resumeRequest) beginResumeTransfer(notificationToken) else beginServiceTransfer(notificationToken)
+        if (resumeRequest) beginResumeTransfer() else beginServiceTransfer()
         resumeRequest = false
-        notificationToken = null
     }
 
-    private val auth = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        try {
-            finishGoogleAuthorization(Identity.getAuthorizationClient(this).getAuthorizationResultFromIntent(r.data).accessToken)
-        } catch (e: Exception) {
-            failGoogleAuthorization(e.message ?: "Ошибка авторизации Google")
-        }
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val p = getSharedPreferences("settings", MODE_PRIVATE)
@@ -192,7 +179,6 @@ class MainActivity : ComponentActivity() {
             password = it
             rememberMailPassword = true
         }
-        driveId = p.getString("driveId", driveId) ?: driveId
         treeUri = p.getString("treeUri", "") ?: ""
         if (treeUri.isNotBlank()) {
             try {
@@ -202,10 +188,11 @@ class MainActivity : ComponentActivity() {
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", true)
         applySystemBars()
-        target = savedInstanceState?.getString("transferTarget")
-            ?: p.getString("transferTarget", target) ?: target
+        // Legacy Google Drive API was removed. Never turn an old API queue into a SAF task.
+        target = TransferTargets.restore(savedInstanceState?.getString("transferTarget")
+            ?: p.getString("transferTarget", target))
         settingsOrigin = savedInstanceState.galleryPage("settingsOrigin")
-        settingsDestination = savedInstanceState?.getString("settingsDestination") ?: target
+        settingsDestination = TransferTargets.restore(savedInstanceState?.getString("settingsDestination") ?: target)
         screen = savedInstanceState.galleryPage("galleryPage")
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
@@ -459,7 +446,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    private fun upload(token: String?) {
+    private fun upload() {
         if (transferRunning) {
             working = false
             uploadStatus = "Загрузка уже выполняется в фоне"
@@ -470,14 +457,13 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            notificationToken = token
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            beginServiceTransfer(token)
+            beginServiceTransfer()
         }
     }
 
-    private fun beginServiceTransfer(token: String?) {
+    private fun beginServiceTransfer() {
         try {
             if (target == "Mail WebDAV" && rememberMailPassword && password.isNotBlank()) {
                 SecureMailCredentials.save(this, email, password)
@@ -486,7 +472,7 @@ class MainActivity : ComponentActivity() {
             require(chosen.isNotEmpty()) { "Выберите фотографии для передачи" }
             TransferService.begin(
                 this, chosen, model, title, date.trim(), target, email, password,
-                if (target == "Google Drive") driveId else if (target == "Папка Android") treeUri else mailRoot, token,
+                if (target == "Папка Android") treeUri else mailRoot,
                 GalleryKeys.canonical(url)?.takeIf { chosen.all { media -> media.url.startsWith("https://") } }.orEmpty()
             )
             savedQueue = QueueStore.load(this)
@@ -505,7 +491,7 @@ class MainActivity : ComponentActivity() {
             working = false
         }
     }
-    private fun beginResumeTransfer(token: String?) {
+    private fun beginResumeTransfer() {
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
             require(queue.entries.filter { it.state != "DONE" && it.state != "SKIPPED" }
@@ -524,7 +510,11 @@ class MainActivity : ComponentActivity() {
                 }
                 if (rememberMailPassword) SecureMailCredentials.save(this, email, password)
             }
-            TransferService.resume(this, email, password, token)
+            require(TransferTargets.isSupported(queue.target)) {
+                "Очередь Google Drive API из прежней версии больше не поддерживается. " +
+                    "Закройте её с сохранением истории и создайте новую загрузку через папку Android."
+            }
+            TransferService.resume(this, email, password)
             savedQueue = QueueStore.load(this)
             transferRunning = true
             screen = GalleryPage.QUEUE
@@ -602,22 +592,21 @@ class MainActivity : ComponentActivity() {
             transferStatus = "Это сохранённое задание содержит видео из прежней версии. Закройте очередь и начните новую с фотографиями."
             return
         }
-        if (queue.target != "Google Drive") {
-            uploadResume(null)
-        } else {
-            resumeRequest = true
-            beginGoogleAuthorization()
+        if (!TransferTargets.isSupported(queue.target)) {
+            transferStatus = "Эта очередь создана для удалённого Google Drive API. " +
+                "Закройте её с сохранением истории и начните новую передачу через папку Android."
+            return
         }
+        uploadResume()
     }
 
-    private fun uploadResume(token: String?) {
+    private fun uploadResume() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             resumeRequest = true
-            notificationToken = token
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else beginResumeTransfer(token)
+        } else beginResumeTransfer()
     }
 
     private fun beginUpload() {
@@ -632,8 +621,8 @@ class MainActivity : ComponentActivity() {
         }
         val setupError = when (target) {
             "Mail WebDAV" -> "Укажите почту и пароль приложения Mail.".takeIf { email.isBlank() || password.isBlank() }
-            "Google Drive" -> "Укажите ID папки Google Drive.".takeIf { driveId.isBlank() }
-            else -> "Выберите папку назначения.".takeIf { treeUri.isBlank() }
+            "Папка Android" -> "Выберите папку Android или доступного облака.".takeIf { treeUri.isBlank() }
+            else -> "Этот способ передачи больше не поддерживается."
         }
         if (setupError != null) {
             uploadStatus = setupError
@@ -641,48 +630,9 @@ class MainActivity : ComponentActivity() {
         }
         uploadStatus = ""
         working = true
-        if (target == "Google Drive") beginGoogleAuthorization() else upload(null)
+        upload()
     }
 
-    private fun beginGoogleAuthorization() {
-        working = true
-        if (resumeRequest) transferStatus = "Запрашиваем доступ к Google Drive…"
-        else uploadStatus = "Запрашиваем доступ к Google Drive…"
-        Identity.getAuthorizationClient(this).authorize(
-            AuthorizationRequest.builder().setRequestedScopes(listOf(Scope("https://www.googleapis.com/auth/drive"))).build()
-        ).addOnSuccessListener { a ->
-            if (a.hasResolution()) {
-                val p = a.pendingIntent
-                if (p != null) auth.launch(IntentSenderRequest.Builder(p.intentSender).build())
-                else failGoogleAuthorization("Google OAuth недоступен")
-            } else {
-                finishGoogleAuthorization(a.accessToken)
-            }
-        }.addOnFailureListener {
-            val msg = it.message.orEmpty()
-            val message = if (msg.contains("UNREGISTERED_ON_API_CONSOLE", true) || msg.contains("DEVELOPER_ERROR", true))
-                "Google Drive: зарегистрируйте OAuth-клиент для пакета $packageName и SHA-1 установленной APK."
-                else "Ошибка авторизации Google: $msg"
-            failGoogleAuthorization(message)
-        }
-    }
-
-    private fun finishGoogleAuthorization(token: String?) {
-        if (token.isNullOrEmpty()) {
-            failGoogleAuthorization("Google Drive не предоставил доступ")
-        } else if (resumeRequest) {
-            resumeRequest = false
-            uploadResume(token)
-        } else {
-            upload(token)
-        }
-    }
-
-    private fun failGoogleAuthorization(message: String) {
-        if (resumeRequest) transferStatus = message else uploadStatus = message
-        resumeRequest = false
-        working = false
-    }
     @Composable
     private fun Ui() {
         val keyboard = LocalSoftwareKeyboardController.current
@@ -744,9 +694,10 @@ class MainActivity : ComponentActivity() {
                         screen = GalleryPage.CATALOG
                     },
                     mailConfigured = email.isNotBlank() && password.isNotBlank(),
-                    driveConfigured = driveId.isNotBlank(),
+                    folderConfigured = treeUri.isNotBlank(),
+                    folderName = treeName,
                     onMailSettings = { openSettings("Mail WebDAV") },
-                    onDriveSettings = { openSettings("Google Drive") },
+                    onFolderSettings = { openSettings("Папка Android") },
                     latestTransfer = latestTransfer(),
                     onLatestTransfer = {
                         screen = if (savedQueue != null) GalleryPage.QUEUE else GalleryPage.HISTORY
@@ -1059,7 +1010,6 @@ class MainActivity : ComponentActivity() {
                     DestinationPicker(target, enabled) { target = it; uploadStatus = "" }
                     val folder = when (target) {
                         "Mail WebDAV" -> mailRoot.ifBlank { "Корневая папка Mail" }
-                        "Google Drive" -> if (driveId.isBlank()) "Папка не выбрана" else "Папка Google Drive задана"
                         else -> treeName
                     }
                     Text(folder, style = MaterialTheme.typography.bodyMedium)
@@ -1086,9 +1036,8 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun DestinationPicker(destination: String, enabled: Boolean = true, select: (String) -> Unit) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(destination == "Mail WebDAV", { select("Mail WebDAV") }, { Text("Mail WebDAV") }, enabled = enabled)
-            FilterChip(destination == "Google Drive", { select("Google Drive") }, { Text("Google Drive API") }, enabled = enabled)
             FilterChip(destination == "Папка Android", { select("Папка Android") }, { Text("Папка Android / облака") }, enabled = enabled)
+            FilterChip(destination == "Mail WebDAV", { select("Mail WebDAV") }, { Text("Mail WebDAV") }, enabled = enabled)
         }
     }
 
@@ -1139,14 +1088,6 @@ class MainActivity : ComponentActivity() {
                     supportingText = { Text("Например, Images/Models") }
                 )
             }
-            "Google Drive" -> {
-                OutlinedTextField(
-                    driveId, { driveId = it }, label = { Text("ID папки Google Drive") },
-                    enabled = settingsEnabled, modifier = Modifier.fillMaxWidth(), singleLine = true
-                )
-                Text("Для доступа нужен OAuth-клиент с SHA-1 подписи установленной APK. Вход запрашивается при загрузке.",
-                    style = MaterialTheme.typography.bodySmall)
-            }
             else -> {
                 Text(treeName, style = MaterialTheme.typography.bodyMedium)
                 OutlinedButton(
@@ -1180,7 +1121,6 @@ class MainActivity : ComponentActivity() {
     private fun saveSettings() {
         getSharedPreferences("settings", MODE_PRIVATE).edit()
             .putString("email", email)
-            .putString("driveId", driveId)
             .putString("mailRoot", mailRoot)
             .apply()
         settingsStatus = try {

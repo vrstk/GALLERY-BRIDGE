@@ -57,9 +57,9 @@ class GalleryHomeTest {
     }
 
     @Test
-    fun storageShortcutOpensDriveAndThemePersistsAcrossActivityRecreation() {
-        compose.onNodeWithText("Google Drive", substring = true).performClick()
-        compose.onNodeWithText("ID папки Google Drive").assertIsDisplayed()
+    fun storageShortcutOpensAndroidFolderAndThemePersistsAcrossActivityRecreation() {
+        compose.onNodeWithTag("storage-android-folder").performScrollTo().performClick()
+        compose.onNodeWithText("Выбрать папку в Android").assertIsDisplayed()
         compose.onNodeWithText("Тёмная тема").assertIsOn().performClick()
         compose.runOnIdle {
             assertFalse(compose.activity.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("dark", true))
@@ -95,6 +95,13 @@ class GalleryHomeTest {
         compose.onNodeWithText("Укажите реальную дату в формате ГГГГ-ММ-ДД или оставьте поле пустым.").assertExists()
         compose.onNodeWithText("Отмена").performClick()
         compose.onNodeWithText("Выбрано: 1").assertIsDisplayed()
+    }
+
+    @Test
+    fun removedGoogleApiIsNotOfferedInDestinations() {
+        compose.onNodeWithText("Google Drive API").assertDoesNotExist()
+        compose.onNodeWithTag("storage-android-folder").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("storage-mail-webdav").performScrollTo().assertIsDisplayed()
     }
 
     @Test

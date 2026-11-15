@@ -1,7 +1,6 @@
 package com.gallerybridge.app.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -44,9 +43,10 @@ internal fun GalleryHome(
     catalogCount: Int,
     onCatalog: () -> Unit,
     mailConfigured: Boolean,
-    driveConfigured: Boolean,
+    folderConfigured: Boolean,
+    folderName: String,
     onMailSettings: () -> Unit,
-    onDriveSettings: () -> Unit,
+    onFolderSettings: () -> Unit,
     latestTransfer: LatestTransfer?,
     onLatestTransfer: () -> Unit
 ) {
@@ -93,11 +93,27 @@ internal fun GalleryHome(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            StorageCard("Google Drive", driveConfigured, "Папка задана", onDriveSettings, Modifier.weight(1f)) {
-                Image(painterResource(R.drawable.ic_google_drive), null, Modifier.size(23.dp))
+            StorageCard(
+                title = "Папка Android / облака",
+                configured = folderConfigured,
+                configuredLabel = if (folderConfigured) "Выбрана: $folderName" else "Выбрать папку",
+                onClick = onFolderSettings,
+                modifier = Modifier.weight(1f),
+                testTag = "storage-android-folder"
+            ) {
+                Icon(painterResource(R.drawable.ic_folder), null,
+                    tint = colors.secondary, modifier = Modifier.size(23.dp))
             }
-            StorageCard("Mail WebDAV", mailConfigured, "Данные указаны", onMailSettings, Modifier.weight(1f)) {
-                Icon(Icons.Outlined.Email, null, tint = colors.secondary, modifier = Modifier.size(22.dp))
+            StorageCard(
+                title = "Mail WebDAV",
+                configured = mailConfigured,
+                configuredLabel = "Данные указаны",
+                onClick = onMailSettings,
+                modifier = Modifier.weight(1f),
+                testTag = "storage-mail-webdav"
+            ) {
+                Icon(Icons.Outlined.Email, null, tint = colors.secondary,
+                    modifier = Modifier.size(22.dp))
             }
         }
     }
@@ -185,12 +201,13 @@ private fun StorageCard(
     configuredLabel: String,
     onClick: () -> Unit,
     modifier: Modifier,
+    testTag: String,
     icon: @Composable () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     OutlinedCard(
         onClick = onClick,
-        modifier = modifier.testTag(if (title == "Mail WebDAV") "storage-mail-webdav" else "storage-google-drive"),
+        modifier = modifier.testTag(testTag),
         shape = MaterialTheme.shapes.medium,
         border = BorderStroke(1.dp, colors.outlineVariant),
         colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainerLow)
@@ -210,8 +227,10 @@ private fun StorageCard(
             }
             Text(title, style = MaterialTheme.typography.titleSmall)
             Text(
-                if (configured) configuredLabel else "Настроить доступ",
+                if (configured) configuredLabel else if (testTag == "storage-android-folder")
+                    "Выбрать папку" else "Настроить доступ",
                 style = MaterialTheme.typography.bodySmall,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
                 color = if (configured) colors.secondary else colors.onSurfaceVariant
             )
         }

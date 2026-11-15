@@ -13,10 +13,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.net.ConnectException
@@ -195,69 +192,6 @@ object Services {
     }
 
 
-    private fun driveRequest(token: String, body: RequestBody, url: String): Request = Request.Builder().url(url).header("Authorization", "Bearer $token").post(body).build()
-    /**
-     * Search one exact parent/name pair. A partial listing is not evidence
-     * that a file is absent, so never create or skip on an ambiguous response.
-     */
-    private fun driveListing(token: String, parent: String, name: String, folderOnly: Boolean): String {
-        val query = CloudListingPolicy.searchQuery(parent, name, folderOnly)
-        val url = "https://www.googleapis.com/drive/v3/files".toHttpUrl().newBuilder()
-            .addQueryParameter("q", query)
-            .addQueryParameter("fields", CloudListingPolicy.FIELDS)
-            .addQueryParameter("pageSize", "100")
-            .build()
-        return http.newCall(Request.Builder().url(url)
-            .header("Authorization", "Bearer $token").build()).execute().use { response ->
-            if (!response.isSuccessful) error("Drive список HTTP ${response.code}")
-            response.body?.string() ?: error("Google Drive вернул пустой ответ")
-        }
-    }
-
-    private fun driveFolders(token: String, root: String, path: List<String>): String {
-        var parent = root
-        for (part in path) {
-            val name = Paths.clean(part)
-            val found = CloudListingPolicy.folderIdOrNull(
-                driveListing(token, parent, name, folderOnly = true), name
-            )
-            parent = found ?: run {
-                val json = JSONObject().put("name", name)
-                    .put("mimeType", CloudListingPolicy.FOLDER_MIME)
-                    .put("parents", JSONArray().put(parent))
-                http.newCall(driveRequest(token,
-                    json.toString().toRequestBody("application/json".toMediaType()),
-                    "https://www.googleapis.com/drive/v3/files?fields=id"
-                )).execute().use { response ->
-                    if (!response.isSuccessful) error("Drive создание HTTP ${response.code}")
-                    JSONObject(response.body?.string().orEmpty()).getString("id")
-                }
-            }
-        }
-        return parent
-    }
-
-    private fun driveFileExists(token: String, folder: String, name: String): Boolean =
-        CloudListingPolicy.existingFile(
-            driveListing(token, folder, name, folderOnly = false), name
-        )
-
-    private fun driveUpload(token: String, folder: String, name: String, file: File, mime: String): Boolean {
-        if (driveFileExists(token, folder, name)) return false
-        val metadata = JSONObject().put("name", name).put("parents", JSONArray().put(folder))
-        val session = http.newCall(Request.Builder().url("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable")
-            .header("Authorization", "Bearer $token").header("X-Upload-Content-Type", mime)
-            .post(metadata.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { r ->
-            if (!r.isSuccessful) error("Drive сессия HTTP ${r.code}")
-            r.header("Location") ?: error("Нет URL для загрузки")
-        }
-        val target = session.toHttpUrl()
-        require(target.scheme == "https" && target.host == "www.googleapis.com") { "Неверный Drive URL" }
-        http.newCall(Request.Builder().url(target).header("Authorization", "Bearer $token")
-            .put(file.asRequestBody(mime.toMediaType())).build()).execute().use { r -> if (!r.isSuccessful) error("Drive загрузка HTTP ${r.code}") }
-        return true
-    }
-
     suspend fun transfer(
         context: Context,
         media: List<Media>,
@@ -268,7 +202,6 @@ object Services {
         username: String,
         password: String,
         root: String,
-        token: String?,
         progress: suspend (String) -> Unit,
         onItemResult: suspend (Int, Media, String) -> Unit = { _, _, _ -> }
     ): String = withContext(Dispatchers.IO) {
@@ -280,10 +213,9 @@ object Services {
         var stoppedReason: String? = null
         val failures = mutableListOf<String>()
         val readyMailFolders = mutableSetOf<Kind>()
-        val driveFoldersByKind = mutableMapOf<Kind, String>()
         val documentFoldersByKind = mutableMapOf<Kind, Uri>()
         val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
-        require(target in setOf("Mail WebDAV", "Google Drive", "Папка Android")) { "Неизвестное облако" }
+        require(TransferTargets.isSupported(target)) { "Устаревший или неизвестный способ передачи" }
 
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()
@@ -359,35 +291,6 @@ object Services {
                             local.delete()
                         }
                     }
-                } else {
-                    val driveToken = token ?: error("Нет Google OAuth")
-                    val folderId = driveFoldersByKind.getOrPut(item.kind) {
-                        driveFolders(driveToken, root, folders)
-                    }
-                    val fileName = Paths.clean(item.name)
-                    // Avoid fetching source bytes when Google Drive already has this name.
-                    if (driveFileExists(driveToken, folderId, fileName)) {
-                        coroutineContext.ensureActive()
-                        skipped++
-                        onItemResult(index, item, "SKIPPED")
-                        continue
-                    }
-                    val (local, mime) = download(context, item)
-                    try {
-                        coroutineContext.ensureActive()
-                        // Re-check after downloading in case another client created the file.
-                        if (driveUpload(driveToken, folderId, fileName, local, mime)) {
-                            coroutineContext.ensureActive()
-                            uploaded++
-                            onItemResult(index, item, "DONE")
-                        } else {
-                            coroutineContext.ensureActive()
-                            skipped++
-                            onItemResult(index, item, "SKIPPED")
-                        }
-                    } finally {
-                        local.delete()
-                    }
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -397,13 +300,6 @@ object Services {
                 if (e is WebDavResourcePolicy.UnsafeResource) {
                     stoppedReason = "Проверка Mail WebDAV выявила неопределённое или повреждённое состояние. " +
                         "Очередь остановлена без перезаписи существующих файлов."
-                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
-                    break
-                }
-                if (e is CloudListingPolicy.UnsafeListing) {
-                    stoppedReason = "Обнаружена неоднозначность в Google Drive. " +
-                        "Загрузка остановлена, чтобы не пропускать повреждённые файлы " +
-                        "и не создавать дубликаты."
                     if (failures.size < 20) failures.add(item.name + ": " + e.message)
                     break
                 }
