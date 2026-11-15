@@ -10,6 +10,8 @@ import org.json.JSONObject
  * Existing remote files are never removed or overwritten by this policy.
  */
 object CloudListingPolicy {
+    class UnsafeListing(message: String) : IllegalStateException(message)
+
     const val FOLDER_MIME = "application/vnd.google-apps.folder"
     const val FIELDS = "nextPageToken,incompleteSearch,files(id,name,mimeType,size)"
 
@@ -24,21 +26,21 @@ object CloudListingPolicy {
 
     fun entries(json: String): List<Entry> {
         val body = JSONObject(json)
-        require(!body.optBoolean("incompleteSearch", false)) {
+        if (body.optBoolean("incompleteSearch", false)) throw UnsafeListing(
             "Google Drive вернул неполные результаты поиска. Передача остановлена."
-        }
-        require(body.optString("nextPageToken").isBlank()) {
+        )
+        if (body.optString("nextPageToken").isNotBlank()) throw UnsafeListing(
             "Google Drive вернул ещё одну страницу результатов. Передача остановлена."
-        }
+        )
         val files = body.getJSONArray("files")
         return buildList {
             for (i in 0 until files.length()) {
                 val file = files.getJSONObject(i)
                 val id = file.getString("id").takeIf { it.isNotBlank() }
-                    ?: error("Google Drive вернул файл без ID")
+                    ?: throw UnsafeListing("Google Drive вернул файл без ID")
                 val size = if (file.has("size") && !file.isNull("size")) {
                     file.getLong("size").also {
-                        require(it >= 0L) { "Google Drive вернул неправильный размер файла" }
+                        if (it < 0L) throw UnsafeListing("Google Drive вернул неправильный размер файла")
                     }
                 } else null
                 add(Entry(id, file.optString("mimeType"), size))
@@ -48,28 +50,28 @@ object CloudListingPolicy {
 
     fun folderIdOrNull(json: String, name: String): String? {
         val found = entries(json)
-        require(found.size <= 1) {
+        if (found.size > 1) throw UnsafeListing(
             "В Google Drive несколько папок с именем $name. Выбери папку вручную."
-        }
+        )
         val one = found.singleOrNull() ?: return null
-        require(one.mime == FOLDER_MIME) {
+        if (one.mime != FOLDER_MIME) throw UnsafeListing(
             "Google Drive вернул не папку для имени $name"
-        }
+        )
         return one.id
     }
 
     fun existingFile(json: String, name: String): Boolean {
         val found = entries(json)
-        require(found.size <= 1) {
+        if (found.size > 1) throw UnsafeListing(
             "В Google Drive несколько файлов с именем $name. Проверь дубликаты."
-        }
+        )
         val one = found.singleOrNull() ?: return false
-        require(one.mime != FOLDER_MIME) {
+        if (one.mime == FOLDER_MIME) throw UnsafeListing(
             "Имя $name занято папкой, а не файлом."
-        }
-        require(one.size != 0L) {
+        )
+        if (one.size == 0L) throw UnsafeListing(
             "В Google Drive найден пустой файл $name (0 байт). Проверь его вручную."
-        }
+        )
         // Unknown size is not a byte-for-byte integrity guarantee.
         return true
     }
