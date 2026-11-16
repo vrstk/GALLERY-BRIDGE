@@ -20,7 +20,7 @@ internal fun UpdateSettings(manager: UpdateManager) {
         Checkbox(checked = manager.automatic, onCheckedChange = manager::setAutoCheck)
         Text("Автоматически проверять не чаще раза в сутки", Modifier.padding(top = 12.dp))
     }
-    if (s.lastCheck > 0) Text("Последняя проверка: ${DateFormat.getDateTimeInstance().format(Date(s.lastCheck))}")
+    if (s.lastCheck > 0) Text("Последняя успешная проверка: ${DateFormat.getDateTimeInstance().format(Date(s.lastCheck))}")
     OutlinedButton(onClick = { manager.check() }, enabled = !s.checking && !s.downloading) {
         Text(if (s.checking) "Проверяем…" else "Проверить обновления")
     }

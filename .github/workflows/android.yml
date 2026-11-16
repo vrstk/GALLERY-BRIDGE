@@ -12,7 +12,7 @@ permissions:
 # Publish only the newest preview for a branch; concurrent older builds must
 # not replace the Release APK with stale code.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -108,11 +108,15 @@ jobs:
           dist = pathlib.Path("release-bundle")
           dist.mkdir(exist_ok=True)
           shutil.copy2(apk, dist / name)
+          notes_file = pathlib.Path("docs/release-notes") / f"{version_name}.txt"
+          assert notes_file.is_file(), f"Missing release notes for {version_name}"
+          notes = notes_file.read_text(encoding="utf-8").strip()
+          assert 10 <= len(notes) <= 2000, "Release notes must be 10-2000 characters"
           data = dict(versionCode=int(version_code), versionName=version_name, packageName=package,
               apkUrl=url, size=apk.stat().st_size,
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(),
               certificateSha256=cert,
-              changes="Подписанная пользовательская сборка без отладки; усилена проверка существующих фотографий.")
+              changes=notes)
           (dist / "update.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
           print("Signed release candidate:", version_name, version_code, data["sha256"])
           PY
@@ -430,6 +434,12 @@ jobs:
           DIGEST="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | select(.name | endswith(".apk")) | .digest')"
           test "$DIGEST" = "sha256:$EXPECTED" || { echo "::error::Published APK digest mismatch"; exit 1; }
+          JSON_HASH="$(sha256sum update.json | cut -d ' ' -f1)"
+          VERSIONED_JSON_DIGEST="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "update.json") | .digest')"
+          test "$VERSIONED_JSON_DIGEST" = "sha256:$JSON_HASH" || {
+            echo "::error::Versioned manifest digest mismatch"; exit 1;
+          }
           # Existing direct preview APK address remains available for manual installation.
           cp "$APK" GalleryBridge-preview-signed.apk
           if gh release view preview-signed --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -444,5 +454,10 @@ jobs:
           ALIAS_DIGEST="$(gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | select(.name == "GalleryBridge-preview-signed.apk") | .digest')"
           test "$ALIAS_DIGEST" = "sha256:$EXPECTED" || { echo "::error::Preview APK digest mismatch"; exit 1; }
+          ALIAS_JSON_DIGEST="$(gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "update.json") | .digest')"
+          test "$ALIAS_JSON_DIGEST" = "sha256:$JSON_HASH" || {
+            echo "::error::Preview manifest digest mismatch"; exit 1;
+          }
           gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | {name, size, digest, url}'

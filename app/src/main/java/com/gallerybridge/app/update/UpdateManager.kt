@@ -49,8 +49,9 @@ internal class UpdateManager(
     private var downloadJob: Job? = null
     var automatic by mutableStateOf(preferences.getBoolean("automatic", true))
         private set
-    var state by mutableStateOf(State(lastCheck = preferences.getLong("lastCheck", 0L)))
+    var state by mutableStateOf(State(lastCheck = preferences.getLong("lastSuccess", preferences.getLong("lastCheck", 0L))))
         private set
+    private var lastAttempt = preferences.getLong("lastAttempt", state.lastCheck)
 
     fun setAutoCheck(enabled: Boolean) {
         automatic = enabled
@@ -60,7 +61,9 @@ internal class UpdateManager(
     fun check(auto: Boolean = false) {
         if (checkJob?.isActive == true || downloadJob?.isActive == true) return
         val now = System.currentTimeMillis()
-        if (auto && (!automatic || now - state.lastCheck < 86_400_000L)) return
+        if (auto && !UpdateCheckPolicy.shouldAutoCheck(automatic, now, state.lastCheck, lastAttempt)) return
+        lastAttempt = now
+        preferences.edit().putLong("lastAttempt", now).apply()
         checkJob = scope.launch {
             state = state.copy(checking = true, message = "Проверяем обновления…")
             try {
@@ -79,15 +82,15 @@ internal class UpdateManager(
                 }
                 val newer = UpdatePolicy.isNewer(release.code, installedCode())
                 removeTemp()
-                state = state.copy(release = release.takeIf { newer }, ready = false,
+                val checked = System.currentTimeMillis()
+                state = state.copy(release = release.takeIf { newer }, ready = false, lastCheck = checked,
                     message = if (newer) "Доступна версия ${release.version}" else "Установлена актуальная версия")
+                preferences.edit().putLong("lastSuccess", checked).apply()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 state = state.copy(message = "Проверка не удалась: ${e.message ?: "нет соединения"}")
             } finally {
-                val checked = System.currentTimeMillis()
-                state = state.copy(checking = false, lastCheck = checked)
-                preferences.edit().putLong("lastCheck", checked).apply()
+                state = state.copy(checking = false)
             }
         }
     }
