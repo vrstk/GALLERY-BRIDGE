@@ -79,7 +79,7 @@ object HistoryStore {
                 total = queue.entries.size,
                 uploaded = queue.entries.count { it.state == "DONE" },
                 skipped = queue.entries.count { it.state == "SKIPPED" },
-                failed = queue.entries.count { it.state == "FAILED" },
+                failed = queue.entries.count { it.state == "FAILED" || it.state == "BLOCKED" },
                 outcome = outcome
             )
         ) + load(context).filterNot { it.id == queue.id }

@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
     private var transferStatus by mutableStateOf("")
     private var queueFilter by mutableStateOf("ALL")
     private var showCloseQueueConfirmation by mutableStateOf(false)
+    private var pendingUnblock by mutableStateOf<Pair<Long, Int>?>(null)
     private var auditing by mutableStateOf(false)
     private var auditProgress by mutableStateOf("")
     private var auditReport by mutableStateOf("")
@@ -1423,9 +1424,46 @@ class MainActivity : ComponentActivity() {
                 }
             )
         }
+        pendingUnblock?.takeIf { it.first == queue.id }?.let { request ->
+            val item = queue.entries.getOrNull(request.second)
+            if (item != null && item.state == "BLOCKED") {
+                AlertDialog(
+                    onDismissRequest = { pendingUnblock = null },
+                    title = { Text("Разрешить повтор этого файла?") },
+                    text = {
+                        Text("Сначала проверьте файл в назначении. Если запись была неполной, " +
+                            "удалите её самостоятельно или исправьте в провайдере. " +
+                            "Приложение пропускает существующие файлы по имени и не проверяет их содержимое. " +
+                            "Подтвердите только после ручной проверки; другие файлы очередь не изменит.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            if (transferRunning || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                                    .getBoolean(TransferService.KEY_RUNNING, false)) {
+                                transferStatus = "Дождитесь остановки текущей передачи."
+                            } else {
+                                try {
+                                    val ok = QueueStore.allowRetryAfterReview(this@MainActivity,
+                                        queue.id, request.second, item.media)
+                                    savedQueue = QueueStore.load(this@MainActivity)
+                                    transferStatus = if (ok) "Повтор файла разрешён после подтверждения."
+                                        else "Элемент очереди изменился. Обновите экран."
+                                } catch (e: Exception) {
+                                    transferStatus = "Не удалось сохранить очередь: " + e.message.orEmpty()
+                                }
+                            }
+                            pendingUnblock = null
+                        }) { Text("Я проверил файл") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingUnblock = null }) { Text("Отмена") }
+                    }
+                )
+            }
+        }
         val done = queue.entries.count { it.state == "DONE" }
         val skipped = queue.entries.count { it.state == "SKIPPED" }
-        val failed = queue.entries.count { it.state == "FAILED" }
+        val failed = queue.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
         val completed = done + skipped
         val total = queue.entries.size
         GalleryCard {
@@ -1442,6 +1480,11 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 TransferCounts(done, skipped, failed, queue.remaining, queue.target)
+                if (queue.blocked > 0) {
+                    Text("Требуют ручной проверки: " + queue.blocked,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
                 if (queue.target == "Папка Android" && done > 0) {
                     Text("Синхронизация зависит от выбранного провайдера папки.", style = MaterialTheme.typography.bodySmall)
                 }
@@ -1457,7 +1500,7 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(password, {password=it}, label={Text("Пароль приложения Mail")}, visualTransformation=PasswordVisualTransformation(), modifier=Modifier.fillMaxWidth())
                 }
             }
-            Button(onClick=::resumeUpload, enabled = !working, modifier=Modifier.fillMaxWidth()) { Text("Продолжить оставшиеся ${queue.remaining} файлов") }
+            Button(onClick=::resumeUpload, enabled = !working && queue.retryable > 0, modifier=Modifier.fillMaxWidth()) { Text("Продолжить безопасно: ${queue.retryable} файлов") }
             OutlinedButton(
                 onClick = { showCloseQueueConfirmation = true },
                 enabled = !working && !auditing,
@@ -1491,21 +1534,21 @@ class MainActivity : ComponentActivity() {
             FilterChip(selected=queueFilter=="DONE", onClick={queueFilter="DONE"}, label={Text("Готово")})
             FilterChip(selected=queueFilter=="FAILED", onClick={queueFilter="FAILED"}, label={Text("Ошибки")})
         }
-        val filtered = queue.entries.filter {
-            when(queueFilter) {
-                "PENDING" -> it.state == "PENDING" || it.state == "FAILED"
-                "DONE" -> it.state == "DONE" || it.state == "SKIPPED"
-                "FAILED" -> it.state == "FAILED"
+        val filtered = queue.entries.withIndex().filter { (_, entry) ->
+            when (queueFilter) {
+                "PENDING" -> entry.state == "PENDING" || entry.state == "FAILED"
+                "DONE" -> entry.state == "DONE" || entry.state == "SKIPPED"
+                "FAILED" -> entry.state == "FAILED" || entry.state == "BLOCKED"
                 else -> true
             }
         }
         if (filtered.isEmpty()) Text("В этой категории файлов нет.")
-        filtered.take(80).forEach { item ->
+        filtered.take(80).forEach { (index, item) ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(when(item.state) {
                     "DONE" -> "✓"
                     "SKIPPED" -> "↷"
-                    "FAILED" -> "!"
+                    "FAILED", "BLOCKED" -> "!"
                     else -> "·"
                 })
                 Column(Modifier.weight(1f)) {
@@ -1513,9 +1556,19 @@ class MainActivity : ComponentActivity() {
                     Text(when(item.state) {
                         "DONE" -> if (queue.target == "Папка Android") "Передан провайдеру" else "Загружен"
                         "SKIPPED" -> if (queue.target == "Папка Android") "Существует у провайдера" else "Уже был в облаке"
-                        "FAILED" -> "Ошибка, можно повторить"
+                        "FAILED" -> "Ошибка, безопасный повтор доступен"
+                        "BLOCKED" -> "Требует проверки перед повтором"
                         else -> "Ожидает"
                     }, style=MaterialTheme.typography.bodySmall)
+                    if (item.failureReason.isNotBlank()) {
+                        Text(item.failureReason, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (item.state == "BLOCKED") {
+                        TextButton(onClick = { pendingUnblock = queue.id to index },
+                            enabled = !transferRunning && !working) {
+                            Text("Разрешить повтор после проверки")
+                        }
+                    }
                 }
             }
         }

@@ -106,7 +106,9 @@ class TransferService : Service() {
 
         fun resume(context: Context, email: String, password: String) {
             val queue = QueueStore.load(context) ?: error("Сохранённая очередь не найдена")
-            require(queue.remaining > 0) { "Очередь уже завершена" }
+            require(queue.retryable > 0) {
+                "Нет файлов для безопасного повтора. Заблокированные записи проверьте вручную."
+            }
             require(TransferTargets.isSupported(queue.target)) {
                 "Google Drive API удалён. Закройте старую очередь и начните новую через папку Android."
             }
@@ -168,8 +170,10 @@ class TransferService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (queue.remaining == 0) {
-            save(false, "Очередь уже завершена", "")
+        if (queue.retryable == 0) {
+            save(false, "Нет файлов для автоматического продолжения",
+                "Заблокированные записи требуют ручной проверки.")
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
@@ -185,7 +189,7 @@ class TransferService : Service() {
             try {
                 val src = intent ?: error("Не указано задание")
                 val pending = queue.entries.withIndex().filter {
-                    it.value.state != "DONE" && it.value.state != "SKIPPED"
+                    it.value.state == "PENDING" || it.value.state == "FAILED"
                 }
                 val files = pending.map { it.value.media }
                 val result = Services.transfer(
@@ -201,14 +205,14 @@ class TransferService : Service() {
                         val overall = (queue.completed + withinRun).coerceAtMost(queue.entries.size)
                         showProgress(overall, queue.entries.size)
                     },
-                    onItemResult = { index, item, state ->
+                    onItemResult = { index, item, state, reason ->
                         if (mySession == session && !cancelRequested) {
-                            QueueStore.checkpoint(applicationContext, queue.id, pending[index].index, item, state)
+                            QueueStore.checkpoint(applicationContext, queue.id, pending[index].index, item, state, reason)
                             QueueStore.load(applicationContext)?.let { updated ->
                                 if (updated.id == queue.id) {
                                     val successes = updated.entries.count { it.state == "DONE" }
                                     val skipped = updated.entries.count { it.state == "SKIPPED" }
-                                    val errors = updated.entries.count { it.state == "FAILED" }
+                                    val errors = updated.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
                                     val processed = successes + skipped + errors
                                     val verb = if (queue.target == "Папка Android") "Передано провайдеру" else "Загружено"
                                     save(true, "$verb: $successes · Было: $skipped · Ошибок: $errors · Осталось: ${updated.remaining}", "")
@@ -225,7 +229,7 @@ class TransferService : Service() {
                 val summary = if (currentQueue != null) {
                     val totalDone = currentQueue.entries.count { it.state == "DONE" }
                     val totalSkipped = currentQueue.entries.count { it.state == "SKIPPED" }
-                    val errors = currentQueue.entries.count { it.state == "FAILED" }
+                    val errors = currentQueue.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
                     val prefix = if (queue.target == "Папка Android") "Передано Android" else "Загружено"
                     "$prefix: $totalDone; уже было: $totalSkipped; ошибок: $errors; осталось: ${currentQueue.remaining}"
                 } else lastRunSummary

@@ -204,7 +204,7 @@ object Services {
         password: String,
         root: String,
         progress: suspend (String) -> Unit,
-        onItemResult: suspend (Int, Media, String) -> Unit = { _, _, _ -> }
+        onItemResult: suspend (Int, Media, String, String) -> Unit = { _, _, _, _ -> }
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -227,6 +227,7 @@ object Services {
 
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()
+            var destinationWriteStarted = false
             attempted++
             progress("${index + 1}/${media.size}: ${item.name}")
             try {
@@ -244,13 +245,14 @@ object Services {
                         is WebDavResourcePolicy.Lookup.Existing) {
                         coroutineContext.ensureActive()
                         skipped++
-                        onItemResult(index, item, "SKIPPED")
+                        onItemResult(index, item, "SKIPPED", "")
                         consecutiveNetworkFailures = 0
                         continue
                     }
                     val (local, mime) = download(context, item)
                     try {
                         coroutineContext.ensureActive()
+                        destinationWriteStarted = true
                         mailCall(Request.Builder().url(destination)
                             .header("Authorization", mailAuth)
                             .put(local.asRequestBody(mime.toMediaType())).build()).use { response ->
@@ -269,7 +271,7 @@ object Services {
                         )
                         coroutineContext.ensureActive()
                         uploaded++
-                        onItemResult(index, item, "DONE")
+                        onItemResult(index, item, "DONE", "")
                         consecutiveNetworkFailures = 0
                     } finally {
                         local.delete()
@@ -282,18 +284,19 @@ object Services {
                     // already existing files again, wasting time and traffic.
                     if (SafDestination.fileExists(context, destFolder, item.name)) {
                         skipped++
-                        onItemResult(index, item, "SKIPPED")
+                        onItemResult(index, item, "SKIPPED", "")
                     } else {
                         val (local, mime) = download(context, item)
                         try {
                             coroutineContext.ensureActive()
+                            destinationWriteStarted = true
                             if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {
                                 coroutineContext.ensureActive()
                                 uploaded++
-                                onItemResult(index, item, "DONE")
+                                onItemResult(index, item, "DONE", "")
                             } else {
                                 skipped++
-                                onItemResult(index, item, "SKIPPED")
+                                onItemResult(index, item, "SKIPPED", "")
                             }
                         } finally {
                             local.delete()
@@ -303,8 +306,29 @@ object Services {
             } catch (e: Exception) {
                 if (e is CancellationException || e is QueueStore.CheckpointFailure) throw e
                 coroutineContext.ensureActive()
+                val folderConflict = target == "Папка Android" && listOf(
+                    "дубликат", "одноимённые", "Создание заблокировано", "Новые папки не создавались"
+                ).any { e.message.orEmpty().contains(it, ignoreCase = true) }
+                val unsafe = destinationWriteStarted ||
+                    e is SafWritePolicy.UncertainWrite ||
+                    e is WebDavResourcePolicy.UnsafeResource || folderConflict
+                // Only generic reasons are persisted, never raw URLs or credentials.
+                val reason = when {
+                    e is SafWritePolicy.UncertainWrite ->
+                        "Провайдер Android не подтвердил запись; проверьте файл и размер в папке."
+                    e is WebDavResourcePolicy.UnsafeResource ->
+                        "WebDAV не подтвердил состояние файла; проверьте облако."
+                    folderConflict -> "Неоднозначное состояние папки; возможны одноимённые файлы."
+                    destinationWriteStarted ->
+                        "Результат начатой передачи не подтверждён; проверьте файл в назначении."
+                    e is SourceDownloadFailure.HttpError ->
+                        "Источник вернул HTTP " + e.statusCode + "; проверьте доступность фотографии."
+                    isTemporaryNetworkFailure(e) ->
+                        "Нет связи с источником или облаком; повторите позже."
+                    else -> "Ошибка до записи в назначение: " + e.javaClass.simpleName
+                }
                 failed++
-                onItemResult(index, item, "FAILED")
+                onItemResult(index, item, if (unsafe) "BLOCKED" else "FAILED", reason)
                 if (e is SourceDownloadFailure.HttpError &&
                     SourceDownloadFailure.shouldPauseQueue(e.statusCode)
                 ) {
@@ -325,19 +349,20 @@ object Services {
                     if (failures.size < 20) failures.add(item.name + ": " + e.message)
                     break
                 }
-                if (target == "Папка Android" && (
-                    e.message.orEmpty().contains("дубликат", ignoreCase = true) ||
-                    e.message.orEmpty().contains("одноимённые", ignoreCase = true) ||
-                    e.message.orEmpty().contains("Создание заблокировано", ignoreCase = true) ||
-                    e.message.orEmpty().contains("Новые папки не создавались", ignoreCase = true)
-                )) {
+                if (folderConflict) {
                     stoppedReason = "Обнаружена ошибка структуры папок или провайдера. " +
                         "Передача остановлена, чтобы не создавать новые дубли."
                     if (failures.size < 20) failures.add(item.name + ": " + e.message)
                     break
                 }
+                if (unsafe) {
+                    stoppedReason = "После начала записи результат не подтверждён. " +
+                        "Автоматический повтор файла заблокирован до ручной проверки."
+                    if (failures.size < 20) failures.add(item.name + ": " + reason)
+                    break
+                }
                 if (failures.size < 20) {
-                    failures.add("${item.name}: ${e.message ?: e.javaClass.simpleName}")
+                    failures.add(item.name + ": " + reason)
                 }
                 if (target == "Mail WebDAV" && isTemporaryNetworkFailure(e)) {
                     consecutiveNetworkFailures++

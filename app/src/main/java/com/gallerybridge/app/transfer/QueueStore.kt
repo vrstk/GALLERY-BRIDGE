@@ -28,8 +28,14 @@ object QueueStore {
     ) {
         val remaining: Int get() = entries.count { it.state != "DONE" && it.state != "SKIPPED" }
         val completed: Int get() = entries.count { it.state == "DONE" || it.state == "SKIPPED" }
+        val retryable: Int get() = entries.count { it.state == "PENDING" || it.state == "FAILED" }
+        val blocked: Int get() = entries.count { it.state == "BLOCKED" }
     }
-    data class Entry(val media: Media, val state: String)
+    data class Entry(val media: Media, val state: String, val failureReason: String = "")
+
+    /** Legacy FAILED items have no outcome classification and must be reviewed. */
+    internal fun restoreState(state: String, classified: Boolean): String =
+        if (state == "FAILED" && !classified) "BLOCKED" else state
 
     /** Never report a transfer complete unless its durable queue state was saved. */
     class CheckpointFailure(message: String) : IllegalStateException(message)
@@ -46,7 +52,10 @@ object QueueStore {
                     val x = list.getJSONObject(i)
                     add(Entry(Media(x.getString("url"), x.getString("name"),
                         Kind.valueOf(x.getString("kind")), x.optString("source"), x.optString("referrer")),
-                        x.optString("state", "PENDING")))
+                        restoreState(x.optString("state", "PENDING"), x.has("failureReason")),
+                        if (x.optString("state") == "FAILED" && !x.has("failureReason"))
+                            "Сбой из предыдущей версии. Проверьте назначение перед повтором."
+                        else x.optString("failureReason").take(240)))
                 }
             }
             Snapshot(data.getLong("id"), data.getString("model"), data.getString("title"),
@@ -72,7 +81,7 @@ object QueueStore {
                 .put("url", entry.media.url).put("name", entry.media.name)
                 .put("kind", entry.media.kind.name)
                 .put("source", entry.media.source).put("referrer", entry.media.referrer)
-                .put("state", entry.state))
+                .put("state", entry.state).put("failureReason", entry.failureReason.take(240)))
         }
         json.put("entries", entries)
         // Synchronous commit is necessary: .apply() or an unchecked false
@@ -87,26 +96,48 @@ object QueueStore {
      * URLs can repeat across entries with different names, and even identical
      * media can appear more than once in an imported queue.
      */
-    fun applyItemResult(snapshot: Snapshot, entryIndex: Int, media: Media, state: String): Snapshot {
-        require(state in setOf("DONE", "SKIPPED", "FAILED")) { "Invalid queue state: $state" }
+    fun applyItemResult(snapshot: Snapshot, entryIndex: Int, media: Media, state: String, reason: String = ""): Snapshot {
+        require(state in setOf("DONE", "SKIPPED", "FAILED", "BLOCKED")) { "Invalid queue state: $state" }
         val old = snapshot.entries.getOrNull(entryIndex) ?: return snapshot
-        if (old.media != media || old.state == "DONE" || old.state == "SKIPPED") return snapshot
+        if (old.media != media || old.state in setOf("DONE", "SKIPPED", "BLOCKED")) return snapshot
         val entries = snapshot.entries.toMutableList()
-        entries[entryIndex] = old.copy(state = state)
+        entries[entryIndex] = old.copy(state = state,
+            failureReason = if (state == "FAILED" || state == "BLOCKED")
+                reason.replace("\n", " ").take(240) else "")
         return snapshot.copy(entries = entries)
     }
 
-    @Synchronized fun checkpoint(context: Context, id: Long, entryIndex: Int, media: Media, state: String) {
+    @Synchronized fun checkpoint(
+        context: Context, id: Long, entryIndex: Int, media: Media, state: String, reason: String = ""
+    ) {
         val before = load(context)
             ?: throw CheckpointFailure("Сохранённая очередь недоступна; передача остановлена.")
         if (before.id != id) {
             throw CheckpointFailure("Очередь изменилась во время передачи; результат не записан.")
         }
-        val after = applyItemResult(before, entryIndex, media, state)
+        val after = applyItemResult(before, entryIndex, media, state, reason)
         if (after == before) {
             throw CheckpointFailure("Элемент очереди изменился; повторная запись результата заблокирована.")
         }
         save(context, after)
+    }
+
+    /** Only explicit user confirmation can re-enable a file whose write outcome was uncertain. */
+    fun allowRetry(snapshot: Snapshot, index: Int, media: Media): Snapshot {
+        val old = snapshot.entries.getOrNull(index) ?: return snapshot
+        if (old.media != media || old.state != "BLOCKED") return snapshot
+        val entries = snapshot.entries.toMutableList()
+        entries[index] = old.copy(state = "PENDING", failureReason = "")
+        return snapshot.copy(entries = entries)
+    }
+
+    @Synchronized fun allowRetryAfterReview(context: Context, id: Long, index: Int, media: Media): Boolean {
+        val before = load(context) ?: return false
+        if (before.id != id) return false
+        val after = allowRetry(before, index, media)
+        if (after == before) return false
+        save(context, after)
+        return true
     }
 
     /** Clear only the queue explicitly confirmed by the user; never clear a newer one. */

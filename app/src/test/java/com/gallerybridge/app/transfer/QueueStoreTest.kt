@@ -62,4 +62,50 @@ class QueueStoreTest {
         val retried = QueueStore.applyItemResult(failed, 0, photo, "DONE")
         assertEquals("DONE", retried.entries.single().state)
     }
+    @Test fun blockedWriteNeverRetriesAutomatically() {
+        val initial = queue(photo)
+        val blocked = QueueStore.applyItemResult(initial, 0, photo, "BLOCKED", "Проверьте файл")
+        assertEquals(1, blocked.blocked)
+        assertEquals(0, blocked.retryable)
+        assertEquals("Проверьте файл", blocked.entries.single().failureReason)
+        assertSame(blocked, QueueStore.applyItemResult(blocked, 0, photo, "DONE"))
+    }
+
+    @Test fun manualReviewReleasesOnlyMatchingFile() {
+        val other = photo.copy(name = "different.jpg")
+        val initial = queue(photo, other)
+        val blocked = QueueStore.applyItemResult(initial, 0, photo, "BLOCKED", "Нужна проверка")
+        assertSame(blocked, QueueStore.allowRetry(blocked, 0, other))
+        val unblocked = QueueStore.allowRetry(blocked, 0, photo)
+        assertEquals(listOf("PENDING", "PENDING"), unblocked.entries.map { it.state })
+        assertEquals(2, unblocked.retryable)
+        assertEquals("", unblocked.entries[0].failureReason)
+        assertEquals("PENDING", unblocked.entries[1].state)
+    }
+
+    @Test fun legacyFailedIsNotAutomaticallyRetried() {
+        assertEquals("BLOCKED", QueueStore.restoreState("FAILED", false))
+        assertEquals("FAILED", QueueStore.restoreState("FAILED", true))
+        assertEquals("PENDING", QueueStore.restoreState("PENDING", false))
+    }
+
+    @Test fun safeFailureCanBeRetriedAndClearsReason() {
+        val failed = QueueStore.applyItemResult(queue(photo), 0, photo,
+            "FAILED", "Временная ошибка сети")
+        assertEquals(1, failed.retryable)
+        assertEquals("Временная ошибка сети", failed.entries.single().failureReason)
+        val done = QueueStore.applyItemResult(failed, 0, photo, "DONE")
+        assertEquals(0, done.remaining)
+        assertEquals("", done.entries.single().failureReason)
+    }
+
+    @Test fun duplicateFileNamesNeverUnlockWrongQueueEntry() {
+        val original = queue(photo, photo)
+        val blocked = QueueStore.applyItemResult(original, 1, photo, "BLOCKED", "Проверьте")
+        val unblocked = QueueStore.allowRetry(blocked, 1, photo)
+        assertEquals("PENDING", unblocked.entries[0].state)
+        assertEquals("PENDING", unblocked.entries[1].state)
+        assertEquals(2, unblocked.retryable)
+    }
+
 }
