@@ -10,24 +10,17 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import coil3.request.CachePolicy
-import coil3.request.ImageRequest
-import coil3.network.NetworkHeaders
-import coil3.network.httpHeaders
 import com.gallerybridge.app.R
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
@@ -56,27 +49,10 @@ internal fun MediaTile(
                 Modifier.fillMaxWidth().aspectRatio(1f).background(colors.surfaceContainerHigh),
                 contentAlignment = Alignment.Center
             ) {
-                val context = LocalContext.current
-                val request = remember(context, media.url) {
-                    ImageRequest.Builder(context)
-                        .data(media.url)
-                        .apply {
-                            if (media.url.startsWith("https://")) {
-                                httpHeaders(NetworkHeaders.Builder()
-                                    .set("User-Agent", "GalleryBridge/0.1").build())
-                            }
-                        }
-                        .diskCachePolicy(CachePolicy.DISABLED)
-                        .build()
-                }
-                val placeholder = painterResource(R.drawable.ic_gallery_bridge)
-                AsyncImage(
-                    model = request,
-                    contentDescription = null,
+                CachedGalleryImage(
+                    media = media,
                     modifier = Modifier.matchParentSize(),
-                    contentScale = ContentScale.Crop,
-                    placeholder = placeholder,
-                    error = placeholder
+                    contentScale = ContentScale.Crop
                 )
                 Checkbox(
                     checked = checked,
@@ -93,6 +69,56 @@ internal fun MediaTile(
                 Text(media.name, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (detail != null) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
+        }
+    }
+}
+
+
+/**
+ * Zero automatic network requests: only names, selection and an explicit
+ * "Открыть" action. Opening a photo can then fetch it on user request.
+ */
+@Composable
+internal fun MediaListRow(
+    media: Media,
+    checked: Boolean,
+    enabled: Boolean,
+    detail: String?,
+    onOpen: () -> Unit,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = colors.surfaceContainerLow,
+        border = BorderStroke(1.dp, if (checked) colors.primary else colors.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp)
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Checkbox(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                enabled = enabled,
+                modifier = Modifier.semantics {
+                    contentDescription = "Выбрать файл: " + media.name
+                }
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    media.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (detail != null) Text(
+                    detail, style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant, maxLines = 2
+                )
+            }
+            TextButton(onClick = onOpen) { Text("Открыть") }
         }
     }
 }

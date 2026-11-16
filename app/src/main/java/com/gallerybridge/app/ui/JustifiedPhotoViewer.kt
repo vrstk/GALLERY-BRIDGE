@@ -22,18 +22,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil3.compose.AsyncImage
-import coil3.network.NetworkHeaders
-import coil3.network.httpHeaders
-import coil3.request.ImageRequest
-import com.gallerybridge.app.R
 import com.gallerybridge.app.core.JustifiedRows
 import com.gallerybridge.app.core.Media
 
@@ -44,31 +37,11 @@ private fun GalleryPhoto(
     contentScale: ContentScale = ContentScale.Fit,
     onAspectRatio: (Float) -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val request = remember(context, media.url) {
-        ImageRequest.Builder(context)
-            .data(media.url)
-            .apply {
-                if (media.url.startsWith("https://")) {
-                    httpHeaders(NetworkHeaders.Builder()
-                        .set("User-Agent", "GalleryBridge/0.1").build())
-                }
-            }.build()
-    }
-    val placeholder = painterResource(R.drawable.ic_gallery_bridge)
-    AsyncImage(
-        model = request,
-        contentDescription = media.name,
+    CachedGalleryImage(
+        media = media,
         modifier = modifier,
         contentScale = contentScale,
-        placeholder = placeholder,
-        error = placeholder,
-        onSuccess = { result ->
-            val intrinsic = result.painter.intrinsicSize
-            if (intrinsic.width > 0f && intrinsic.height > 0f) {
-                onAspectRatio(intrinsic.width / intrinsic.height)
-            }
-        }
+        onAspectRatio = onAspectRatio
     )
 }
 

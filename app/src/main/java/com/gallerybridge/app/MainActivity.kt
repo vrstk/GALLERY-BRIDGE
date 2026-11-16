@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var mailRoot by mutableStateOf("Models")
     private var target by mutableStateOf("Папка Android")
     private var dark by mutableStateOf(true)
+    private var galleryPreviewMode by mutableStateOf(GalleryPreviewMode.MOSAIC)
     private var working by mutableStateOf(false)
     private var scanning by mutableStateOf(false)
     private var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
@@ -246,6 +247,7 @@ class MainActivity : ComponentActivity() {
         refreshFolderAccess()
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", true)
+        galleryPreviewMode = GalleryPreviewMode.restore(p.getString("galleryPreviewMode", null))
         applySystemBars()
         // Legacy Google Drive API was removed. Never turn an old API queue into a SAF task.
         target = TransferTargets.restore(savedInstanceState?.getString("transferTarget")
@@ -310,6 +312,12 @@ class MainActivity : ComponentActivity() {
         val style = if (dark) SystemBarStyle.dark(Color.TRANSPARENT)
             else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+    }
+
+    private fun setGalleryPreviewMode(value: GalleryPreviewMode) {
+        galleryPreviewMode = value
+        getSharedPreferences("settings", MODE_PRIVATE).edit()
+            .putString("galleryPreviewMode", value.name).apply()
     }
 
     private fun setDarkTheme(enabled: Boolean) {
@@ -957,7 +965,8 @@ class MainActivity : ComponentActivity() {
         }
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
-        var justified by rememberSaveable(url) { mutableStateOf(true) }
+        val previewMode = galleryPreviewMode
+        val justified = previewMode == GalleryPreviewMode.MOSAIC
         var openedPhoto by remember { mutableStateOf<String?>(null) }
         val aspectRatios = remember(url) { mutableStateMapOf<String, Float>() }
 
@@ -1008,14 +1017,27 @@ class MainActivity : ComponentActivity() {
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
-                            selected = justified,
-                            onClick = { justified = true },
+                            selected = previewMode == GalleryPreviewMode.MOSAIC,
+                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.MOSAIC) },
                             label = { Text("Мозаика") }
                         )
                         FilterChip(
-                            selected = !justified,
-                            onClick = { justified = false },
+                            selected = previewMode == GalleryPreviewMode.TILES,
+                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.TILES) },
                             label = { Text("Плитка") }
+                        )
+                        FilterChip(
+                            selected = previewMode == GalleryPreviewMode.LIST,
+                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.LIST) },
+                            label = { Text("Список без фото") }
+                        )
+                    }
+                    if (previewMode == GalleryPreviewMode.LIST) {
+                        Text(
+                            "Экономия трафика: миниатюры не загружаются. " +
+                                "Для просмотра отдельной фотографии нажмите «Открыть».",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1064,7 +1086,21 @@ class MainActivity : ComponentActivity() {
                     if (checksExpanded) DownloadQualityControls(searchAllowed)
                 }
             }
-            if (justified) {
+            if (previewMode == GalleryPreviewMode.LIST) {
+                items(visibleItems, span = { GridItemSpan(maxLineSpan) },
+                    key = { media -> "text:" + media.url }) { media ->
+                    MediaListRow(
+                        media = media,
+                        checked = media.url in selected,
+                        enabled = searchAllowed,
+                        detail = imageProbeResults[media.url]?.display(),
+                        onOpen = { openedPhoto = media.url },
+                        onCheckedChange = { checked ->
+                            selected = if (checked) selected + media.url else selected - media.url
+                        }
+                    )
+                }
+            } else if (justified) {
                 items(justifiedRows, span = { GridItemSpan(maxLineSpan) },
                     key = { row -> "justified:${row.photos.first().url}" }) { row ->
                     JustifiedPhotoRow(
