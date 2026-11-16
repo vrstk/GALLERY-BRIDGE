@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 33
-        versionName = "0.33.0"
+        versionCode = 34
+        versionName = "0.34.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -37,7 +37,7 @@ android {
                 // A new application ID is necessary: existing Recovery APKs use
                 // different ephemeral debug keys and cannot be updated in-place.
                 applicationIdSuffix = ".preview.signed"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.33"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.34"
                 if (previewKeyFile != null) {
                     signingConfig = signingConfigs.getByName("previewPersistent")
                 }

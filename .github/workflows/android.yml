@@ -293,20 +293,39 @@ jobs:
         with:
           name: GalleryBridge-signed-release-bundle
           path: candidate
-      - name: Obtain pinned previous signed 0.32 APK
+      - name: Obtain previous signed APK from verified versioned release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          # The original signed 0.32 APK is pinned to its CI run, not a mutable tag.
+          CODE="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionCode"])')"
+          PREVIOUS="$((CODE - 1))"
           mkdir -p previous
-          gh run download 43817956582 --repo "$GITHUB_REPOSITORY" \
-            --name GalleryBridge-preview-apk --dir previous
-          echo '875eec96bcf9c59ee887694a7d2d9bb58de93b3ea8a12012af78dc2f0400429f  previous/app-debug.apk' | sha256sum -c -
+          if [ "$PREVIOUS" -eq 32 ]; then
+            gh run download 43817956582 --repo "$GITHUB_REPOSITORY" \
+              --name GalleryBridge-preview-apk --dir previous
+            echo '875eec96bcf9c59ee887694a7d2d9bb58de93b3ea8a12012af78dc2f0400429f  previous/app-debug.apk' | sha256sum -c -
+          else
+            VERSION="0.${PREVIOUS}.0"
+            TAG="v${VERSION}-signed"
+            NAME="GalleryBridge-v${VERSION}-signed.apk"
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir previous
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir previous
+            python3 - <<'PY'
+            import hashlib, json, pathlib
+            d = json.load(open("previous/update.json"))
+            f = pathlib.Path("previous/GalleryBridge-v%s-signed.apk" % d["versionName"])
+            assert d["packageName"] == "com.gallerybridge.app.preview.signed"
+            assert d["certificateSha256"] == "06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
+            assert f.stat().st_size == d["size"]
+            assert hashlib.sha256(f.read_bytes()).hexdigest() == d["sha256"]
+            PY
+            mv "previous/$NAME" previous/app-debug.apk
+          fi
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs previous/app-debug.apk | \
             grep -Fi '06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1'
-      - name: In-place 0.32 to 0.33 upgrade and data retention
+      - name: In-place signed upgrade and private-data retention
         shell: bash
         run: |
           set -euo pipefail
@@ -321,32 +340,35 @@ jobs:
             exit 1
           fi
           PACKAGE="com.gallerybridge.app.preview.signed"
+          NEW_CODE="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionCode"])')"
+          NEW_VERSION="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionName"])')"
+          PREVIOUS="$((NEW_CODE - 1))"
           adb install previous/app-debug.apk
-          adb shell dumpsys package "$PACKAGE" | grep -E 'versionCode=32 '
+          adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$PREVIOUS "
           adb shell run-as "$PACKAGE" mkdir -p files shared_prefs
           mkdir -p upgrade-fixtures
-          printf '%s' 'GALLERY_BRIDGE_UPGRADE_032_PRESERVED' > upgrade-fixtures/upgrade-sentinel.txt
-          printf '%s' '<map><string name="model">GB_UPGRADE_032</string><boolean name="dark" value="true" /></map>' > upgrade-fixtures/settings.xml
+          printf '%s' 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED' > upgrade-fixtures/upgrade-sentinel.txt
+          printf '%s' '<map><string name="model">GB_UPGRADE_PREVIOUS</string><boolean name="dark" value="true" /></map>' > upgrade-fixtures/settings.xml
           printf '%s' '<map><string name="galleries">[]</string></map>' > upgrade-fixtures/gallery_bridge_catalog_v1.xml
           printf '%s' '<map><string name="records">[]</string></map>' > upgrade-fixtures/gallery_bridge_history.xml
-          printf '%s' '<map><string name="snapshot">{"id":32033,"model":"GB_UPGRADE_032","title":"Очередь 0.32","date":"2026-11-16","target":"Mail WebDAV","root":"Models","account":"","entries":[]}</string></map>' > upgrade-fixtures/gallery_bridge_queue.xml
+          printf '%s' '<map><string name="snapshot">{"id":32033,"model":"GB_UPGRADE_PREVIOUS","title":"Очередь 0.32","date":"2026-11-16","target":"Mail WebDAV","root":"Models","account":"","entries":[]}</string></map>' > upgrade-fixtures/gallery_bridge_queue.xml
           adb push upgrade-fixtures/upgrade-sentinel.txt /data/local/tmp/upgrade-sentinel.txt
           adb shell run-as "$PACKAGE" cp /data/local/tmp/upgrade-sentinel.txt files/upgrade-sentinel.txt
           for name in settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml; do
             adb push "upgrade-fixtures/$name" "/data/local/tmp/$name"
             adb shell run-as "$PACKAGE" cp "/data/local/tmp/$name" "shared_prefs/$name"
           done
-          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_032_PRESERVED'
-          adb install -r candidate/GalleryBridge-v0.33.0-signed.apk
-          adb shell dumpsys package "$PACKAGE" | grep -E 'versionCode=33 '
-          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_032_PRESERVED'
-          adb shell run-as "$PACKAGE" cat shared_prefs/settings.xml | grep -F 'GB_UPGRADE_032'
+          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
+          adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
+          adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
+          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
+          adb shell run-as "$PACKAGE" cat shared_prefs/settings.xml | grep -F 'GB_UPGRADE_PREVIOUS'
           adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_catalog_v1.xml | grep -F 'galleries'
           adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_history.xml | grep -F 'records'
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_032'
+          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_PREVIOUS'
           adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
           sleep 3
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_032'
+          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_PREVIOUS'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

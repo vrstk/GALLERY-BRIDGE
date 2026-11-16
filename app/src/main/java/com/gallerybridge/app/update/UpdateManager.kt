@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -130,7 +131,8 @@ internal class UpdateManager(
                 state = state.copy(downloading = false, ready = true, progress = 100,
                     message = "APK проверена. Установка требует подтверждения Android.")
             } catch (e: CancellationException) {
-                withContext(Dispatchers.IO) { removeTemp() }
+                // Remove partial APK even after the parent coroutine was cancelled.
+                withContext(NonCancellable + Dispatchers.IO) { removeTemp() }
                 state = state.copy(downloading = false, ready = false, message = "Загрузка отменена")
             } catch (e: Exception) {
                 withContext(Dispatchers.IO) { removeTemp() }
