@@ -35,6 +35,7 @@ class GalleryCatalogStatusTest {
             MaterialTheme {
                 GalleryCatalog(
                     entries = listOf(blocked, processed), queue = queue,
+                    onBatchReview = {},
                     onQueue = { openedQueue = true },
                     onOpen = {}, onRemove = {},
                     onEdit = { _: CatalogGallery, _: GalleryFields -> true },

@@ -104,6 +104,9 @@ class MainActivity : ComponentActivity() {
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
     private var catalog by mutableStateOf<List<CatalogGallery>>(emptyList())
     private var catalogBackupStatus by mutableStateOf("")
+    // Ephemeral batch-review navigation; never writes into the durable transfer queue.
+    private var batchReviewUrls by mutableStateOf<List<String>>(emptyList())
+    private var batchReviewIndex by mutableIntStateOf(0)
     private var pendingCatalogImport by mutableStateOf<GalleryPortableBackup.Payload?>(null)
     private var screen by mutableStateOf(GalleryPage.HOME)
     private var settingsOrigin = GalleryPage.HOME
@@ -258,6 +261,12 @@ class MainActivity : ComponentActivity() {
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
         catalog = GalleryCatalogStore.load(this)
+        batchReviewUrls = GalleryBatchSelection.plan(
+            catalog, savedInstanceState?.getStringArrayList("batchReviewUrls") ?: emptyList(),
+            savedQueue
+        )
+        batchReviewIndex = savedInstanceState?.getInt("batchReviewIndex", 0)
+            ?.coerceIn(0, (batchReviewUrls.size - 1).coerceAtLeast(0)) ?: 0
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
         val previousLink = savedInstanceState?.getString("galleryUrl")
@@ -297,6 +306,8 @@ class MainActivity : ComponentActivity() {
         outState.putString("galleryModel", model)
         outState.putString("galleryTitle", title)
         outState.putString("galleryDate", date)
+        outState.putStringArrayList("batchReviewUrls", ArrayList(batchReviewUrls))
+        outState.putInt("batchReviewIndex", batchReviewIndex)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -420,6 +431,54 @@ class MainActivity : ComponentActivity() {
     private fun cancelImageSizes() {
         imageProbeJob?.cancel()
         ImageQualityProbe.cancel()
+    }
+
+    private fun batchOpenCurrent() {
+        val selectedUrl = batchReviewUrls.getOrNull(batchReviewIndex) ?: return
+        val fresh = GalleryBatchSelection.plan(
+            GalleryCatalogStore.load(this), listOf(selectedUrl), QueueStore.load(this)
+        )
+        if (fresh.isEmpty()) {
+            batchReviewUrls = emptyList()
+            status = "Пакетный просмотр изменился: запись больше недоступна."
+            screen = GalleryPage.CATALOG
+            return
+        }
+        setGalleryUrl(selectedUrl)
+        screen = GalleryPage.HOME
+    }
+
+    private fun batchBegin(urls: List<String>) {
+        batchReviewUrls = GalleryBatchSelection.plan(
+            GalleryCatalogStore.load(this), urls, QueueStore.load(this)
+        )
+        batchReviewIndex = 0
+        if (batchReviewUrls.isNotEmpty()) batchOpenCurrent()
+    }
+
+    private fun batchNext() {
+        if (working || scanning || transferRunning || imageProbeRunning ||
+            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false) ||
+            (QueueStore.load(this)?.remaining ?: 0) > 0
+        ) {
+            status = "Остановите передачу или завершите сохранённую очередь перед переходом."
+            return
+        }
+        if (batchReviewIndex + 1 >= batchReviewUrls.size) {
+            batchReviewUrls = emptyList()
+            catalog = GalleryCatalogStore.load(this)
+            screen = GalleryPage.CATALOG
+            return
+        }
+        batchReviewIndex += 1
+        batchOpenCurrent()
+    }
+
+    private fun batchClose() {
+        batchReviewUrls = emptyList()
+        catalog = GalleryCatalogStore.load(this)
+        screen = GalleryPage.CATALOG
     }
 
     private fun setGalleryUrl(newUrl: String) {
@@ -786,7 +845,9 @@ class MainActivity : ComponentActivity() {
             }
         ) {
             when (screen) {
-                GalleryPage.HOME -> GalleryPageColumn { GalleryHome(
+                GalleryPage.HOME -> GalleryPageColumn {
+                    BatchReviewControls()
+                    GalleryHome(
                     url = url,
                     onUrlChange = ::setGalleryUrl,
                     searchAllowed = searchAllowed,
@@ -807,9 +868,11 @@ class MainActivity : ComponentActivity() {
                     onLatestTransfer = {
                         screen = if (savedQueue != null) GalleryPage.QUEUE else GalleryPage.HISTORY
                     }
-                ) }
+                    )
+                }
                 GalleryPage.CATALOG -> GalleryCatalog(
                     entries = catalog,
+                    onBatchReview = ::batchBegin,
                     queue = savedQueue,
                     onQueue = { screen = GalleryPage.QUEUE },
                     onOpen = { gallery ->
@@ -936,6 +999,7 @@ class MainActivity : ComponentActivity() {
                 Text(status, style = MaterialTheme.typography.bodyMedium)
                 if (scanning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 QueueShortcut()
+                BatchReviewControls()
                 if (GalleryKeys.canonical(url) != null) {
                     var metadataExpanded by rememberSaveable(url) { mutableStateOf(false) }
                     GalleryDisclosure("Данные публикации", metadataExpanded) { metadataExpanded = !metadataExpanded }
@@ -1078,6 +1142,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                     QueueShortcut()
+                    BatchReviewControls()
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -1165,6 +1230,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (showDestination) DestinationDialog()
+    }
+
+    @Composable
+    private fun BatchReviewControls() {
+        GalleryBatchReviewBar(
+            position = batchReviewIndex, total = batchReviewUrls.size,
+            canAdvance = !working && !scanning && !transferRunning && !imageProbeRunning &&
+                (savedQueue?.remaining ?: 0) == 0,
+            onNext = ::batchNext,
+            onClose = ::batchClose
+        )
     }
 
     @Composable

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.core.CatalogGallery
+import com.gallerybridge.app.core.GalleryBatchSelection
 import com.gallerybridge.app.core.GalleryCatalogFilter
 import com.gallerybridge.app.core.GalleryCatalogProgress
 import com.gallerybridge.app.transfer.QueueStore
@@ -28,6 +29,7 @@ internal fun GalleryCatalog(
     entries: List<CatalogGallery>,
     queue: QueueStore.Snapshot?,
     onQueue: () -> Unit,
+    onBatchReview: (List<String>) -> Unit,
     onOpen: (CatalogGallery) -> Unit,
     onRemove: (CatalogGallery) -> Unit,
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
@@ -41,6 +43,8 @@ internal fun GalleryCatalog(
     var onlyTransferred by rememberSaveable { mutableStateOf(false) }
     var onlyQueued by rememberSaveable { mutableStateOf(false) }
     var onlyAttention by rememberSaveable { mutableStateOf(false) }
+    var batchSelection by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var showBatchConfirmation by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<CatalogGallery?>(null) }
     var pendingEdit by remember { mutableStateOf<CatalogGallery?>(null) }
     val filtered = remember(entries, queue, query, alphabetic, onlyTransferred, onlyQueued, onlyAttention) {
@@ -48,6 +52,12 @@ internal fun GalleryCatalog(
             GalleryCatalogFilter.apply(entries, query, alphabetic, onlyTransferred),
             queue, onlyQueued, onlyAttention
         )
+    }
+    val batchCandidates = remember(entries, queue) {
+        entries.filter { GalleryBatchSelection.eligible(it, queue) }
+    }
+    val selectedBatch = remember(entries, queue, batchSelection) {
+        GalleryBatchSelection.plan(entries, batchSelection, queue)
     }
     val attentionCount = remember(entries, queue) {
         entries.count { GalleryCatalogProgress.resolve(it, queue).needsAttention }
@@ -106,6 +116,40 @@ internal fun GalleryCatalog(
             Text(backupStatus, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.secondary)
         }
+        if (entries.isNotEmpty()) {
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("Пакетный просмотр", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Можно выбрать до ${GalleryBatchSelection.LIMIT} новых публикаций. " +
+                    "Каждая открывается вручную по очереди. " +
+                    "Передачи фотографий не запускаются автоматически.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    enabled = batchCandidates.isNotEmpty(),
+                    onClick = {
+                        batchSelection = batchCandidates.take(GalleryBatchSelection.LIMIT)
+                            .map { it.url }
+                    }
+                ) { Text("Выбрать новые") }
+                TextButton(
+                    enabled = batchSelection.isNotEmpty(),
+                    onClick = { batchSelection = emptyList() }
+                ) { Text("Снять выбор") }
+                Button(
+                    enabled = selectedBatch.isNotEmpty(),
+                    onClick = { showBatchConfirmation = true }
+                ) { Text("Просмотреть (${selectedBatch.size})") }
+            }
+            if (batchSelection.isNotEmpty()) {
+                Text(
+                    "Подходят для просмотра: ${selectedBatch.size} из ${batchSelection.size} выбранных.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
         Text(
             "Требуют внимания: " + attentionCount +
                 ". Статусы отражают обработку файлов приложением, не синхронизацию облака.",
@@ -154,6 +198,22 @@ internal fun GalleryCatalog(
                         )
                     ) {
                         Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                            if (GalleryBatchSelection.eligible(item, queue)) {
+                                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = item.url in batchSelection,
+                                        onCheckedChange = { checked ->
+                                            batchSelection = if (checked) {
+                                                (batchSelection + item.url)
+                                                    .distinct().take(GalleryBatchSelection.LIMIT)
+                                            } else batchSelection - item.url
+                                        },
+                                        enabled = item.url in batchSelection ||
+                                            batchSelection.size < GalleryBatchSelection.LIMIT
+                                    )
+                                    Text("В пакетный просмотр")
+                                }
+                            }
                             Text(
                                 item.model.ifBlank { "Без имени" },
                                 style = MaterialTheme.typography.titleMedium,
@@ -203,6 +263,28 @@ internal fun GalleryCatalog(
                 }
             }
         }
+    }
+    if (showBatchConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showBatchConfirmation = false },
+            title = { Text("Начать просмотр публикаций?") },
+            text = {
+                Text(
+                    "Будут открыты ${selectedBatch.size} сохранённых публикаций по одной. " +
+                        "Это не скачивает фотографии, не изменяет очередь и не запускает передачи. " +
+                        "После каждого просмотра переходите к следующей вручную."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showBatchConfirmation = false
+                    if (selectedBatch.isNotEmpty()) onBatchReview(selectedBatch)
+                }) { Text("Начать просмотр") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchConfirmation = false }) { Text("Отмена") }
+            }
+        )
     }
     pendingRemoval?.let { entry ->
         AlertDialog(
