@@ -246,7 +246,9 @@ class TransferService : Service() {
                 }
             } catch (e: Exception) {
                 if (mySession != session || cancelRequested) return@launch
-                save(false, "Ошибка фоновой передачи", e.message ?: e.javaClass.simpleName)
+                val title = if (e is QueueStore.CheckpointFailure)
+                    "Не удалось сохранить состояние очереди" else "Ошибка фоновой передачи"
+                save(false, title, e.message ?: e.javaClass.simpleName)
                 QueueStore.load(applicationContext)?.let { HistoryStore.record(applicationContext, it, "Ошибка") }
                 notificationManager.notify(FINISHED_ID, buildNotification(
                     "Ошибка передачи", "Открой GALLERY BRIDGE для отчёта", false, 0, 0

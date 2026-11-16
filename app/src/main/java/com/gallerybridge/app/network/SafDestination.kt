@@ -185,22 +185,44 @@ object SafDestination {
         if (fileExists(ctx, folder, name)) return false
         val created = DocumentsContract.createDocument(
             ctx.contentResolver, folder, mime, name
-        ) ?: error("Не удалось создать " + name)
+        ) ?: throw SafWritePolicy.UncertainWrite(
+            "Провайдер не подтвердил создание файла $name. Проверьте папку перед повторной попыткой."
+        )
+        var copied = false
         try {
             val output = ctx.contentResolver.openOutputStream(created, "w")
                 ?: error("Нет потока записи для " + name)
             output.use { stream ->
                 local.inputStream().use { input -> input.copyTo(stream) }
             }
+            copied = true
             val actual = metadata(ctx, folder, DocumentsContract.getDocumentId(created))
-            require(actual?.name == name) {
-                "Имя файла изменено провайдером; ожидалось " + name
-            }
+            SafWritePolicy.validate(name, local.length(), actual?.name, actual?.size)
         } catch (e: Exception) {
-            try { DocumentsContract.deleteDocument(ctx.contentResolver, created) } catch (_: Exception) {}
-            throw e
+            if (!copied) {
+                // Best-effort removal of a partial write. If the provider cannot
+                // confirm deletion, the user must inspect the folder manually.
+                val removed = runCatching {
+                    DocumentsContract.deleteDocument(ctx.contentResolver, created)
+                }.getOrDefault(false)
+                throw SafWritePolicy.UncertainWrite(
+                    if (removed) "Запись $name прервалась; частичный файл удалён. " +
+                        "Очередь остановлена для безопасного повтора."
+                    else "Запись $name прервалась, но удаление частичного файла не подтверждено. " +
+                        "Проверьте папку перед повтором.",
+                    e
+                )
+            }
+            // After the stream closes, do not delete a possibly complete file
+            // just because the provider's metadata is temporarily unavailable.
+            if (e is SafWritePolicy.UncertainWrite) throw e
+            throw SafWritePolicy.UncertainWrite(
+                "Файл $name передан провайдеру, но его состояние не подтверждено. " +
+                    "Файл оставлен без перезаписи; проверьте папку.",
+                e
+            )
         }
-        // Accepted by provider, but not necessarily synced to the remote server.
+        // Accepted by the Android provider, but not necessarily synced remotely.
         return true
     }
 }

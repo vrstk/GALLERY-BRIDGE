@@ -3,6 +3,7 @@ package com.gallerybridge.app.network
 import android.content.Context
 import android.net.Uri
 import com.gallerybridge.app.core.*
+import com.gallerybridge.app.transfer.QueueStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
@@ -164,7 +165,7 @@ object Services {
                 request(media.url).newBuilder(), media, context
             ).build()
             http.newCall(sourceRequest).execute().use { r ->
-                if (!r.isSuccessful) error(SourceDownloadFailure.describe(r.code))
+                if (!r.isSuccessful) throw SourceDownloadFailure.HttpError(r.code)
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
                 if (mime.startsWith("text/") || mime.contains("html")) error("Вместо файла получен текст")
                 val body = r.body ?: error("Пустой файл")
@@ -300,10 +301,24 @@ object Services {
                     }
                 }
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
+                if (e is CancellationException || e is QueueStore.CheckpointFailure) throw e
                 coroutineContext.ensureActive()
                 failed++
                 onItemResult(index, item, "FAILED")
+                if (e is SourceDownloadFailure.HttpError &&
+                    SourceDownloadFailure.shouldPauseQueue(e.statusCode)
+                ) {
+                    stoppedReason = "Источник временно ограничил доступ или перегружен (HTTP ${e.statusCode}). " +
+                        "Остальная очередь сохранена. Проверьте доступность источника и продолжите позже."
+                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
+                if (e is SafWritePolicy.UncertainWrite) {
+                    stoppedReason = "Провайдер папки Android не подтвердил целостность записи. " +
+                        "Проверьте файл и состояние папки перед продолжением очереди; дубли не создаются."
+                    if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
                 if (e is WebDavResourcePolicy.UnsafeResource) {
                     stoppedReason = "Проверка Mail WebDAV выявила неопределённое или повреждённое состояние. " +
                         "Очередь остановлена без перезаписи существующих файлов."

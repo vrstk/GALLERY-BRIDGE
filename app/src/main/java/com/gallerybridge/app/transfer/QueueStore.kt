@@ -31,6 +31,9 @@ object QueueStore {
     }
     data class Entry(val media: Media, val state: String)
 
+    /** Never report a transfer complete unless its durable queue state was saved. */
+    class CheckpointFailure(message: String) : IllegalStateException(message)
+
     private fun storage(context: Context) = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
     @Synchronized fun load(context: Context): Snapshot? {
@@ -72,8 +75,11 @@ object QueueStore {
                 .put("state", entry.state))
         }
         json.put("entries", entries)
-        // Synchronous commit for durable checkpoints.
-        storage(context).edit().putString(KEY, json.toString()).commit()
+        // Synchronous commit is necessary: .apply() or an unchecked false
+        // return may lose DONE/SKIPPED records after a process crash.
+        if (!storage(context).edit().putString(KEY, json.toString()).commit()) {
+            throw CheckpointFailure("Не удалось сохранить очередь. Передача остановлена, чтобы избежать повторной отправки.")
+        }
     }
 
     /**
@@ -91,10 +97,16 @@ object QueueStore {
     }
 
     @Synchronized fun checkpoint(context: Context, id: Long, entryIndex: Int, media: Media, state: String) {
-        val before = load(context) ?: return
-        if (before.id != id) return
+        val before = load(context)
+            ?: throw CheckpointFailure("Сохранённая очередь недоступна; передача остановлена.")
+        if (before.id != id) {
+            throw CheckpointFailure("Очередь изменилась во время передачи; результат не записан.")
+        }
         val after = applyItemResult(before, entryIndex, media, state)
-        if (after != before) save(context, after)
+        if (after == before) {
+            throw CheckpointFailure("Элемент очереди изменился; повторная запись результата заблокирована.")
+        }
+        save(context, after)
     }
 
     /** Clear only the queue explicitly confirmed by the user; never clear a newer one. */

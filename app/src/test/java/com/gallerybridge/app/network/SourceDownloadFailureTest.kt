@@ -1,6 +1,8 @@
 package com.gallerybridge.app.network
 
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SourceDownloadFailureTest {
@@ -9,6 +11,18 @@ class SourceDownloadFailureTest {
         assertTrue(message.contains("Источник медиа"))
         assertTrue(message.contains("HTTP 403"))
         assertTrue(message.contains("отказал в доступе"))
+    }
+
+    @Test fun rateLimitAndServerOverloadPauseRemainingQueue() {
+        assertTrue(SourceDownloadFailure.shouldPauseQueue(429))
+        assertTrue(SourceDownloadFailure.shouldPauseQueue(503))
+        assertTrue(SourceDownloadFailure.shouldPauseQueue(500))
+        assertFalse(SourceDownloadFailure.shouldPauseQueue(404))
+        assertFalse(SourceDownloadFailure.shouldPauseQueue(403))
+        assertFalse(SourceDownloadFailure.shouldPauseQueue(200))
+        val error = SourceDownloadFailure.HttpError(429)
+        assertEquals(429, error.statusCode)
+        assertTrue(error.message.orEmpty().contains("частоту запросов"))
     }
 
     @Test fun missingLinkAndRateLimitHaveDistinctDescriptions() {

@@ -50,6 +50,13 @@ class QueueStoreTest {
         assertSame(initial, QueueStore.applyItemResult(initial, 0, photo, "FAILED"))
     }
 
+    @Test fun laterFailureCannotChangeCompletedQueueItem() {
+        val original = queue(photo)
+        val done = QueueStore.applyItemResult(original, 0, photo, "DONE")
+        assertSame(done, QueueStore.applyItemResult(done, 0, photo, "FAILED"))
+        assertEquals(0, done.remaining)
+    }
+
     @Test fun failedEntryCanBeRetried() {
         val failed = QueueStore.applyItemResult(queue(photo), 0, photo, "FAILED")
         val retried = QueueStore.applyItemResult(failed, 0, photo, "DONE")
