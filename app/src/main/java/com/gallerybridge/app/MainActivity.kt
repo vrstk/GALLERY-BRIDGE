@@ -115,6 +115,20 @@ class MainActivity : ComponentActivity() {
     private var transferStatus by mutableStateOf("")
     private var queueFilter by mutableStateOf("ALL")
     private var showCloseQueueConfirmation by mutableStateOf(false)
+    private var showRepeatConfirmation by mutableStateOf(false)
+    // Consent is scoped to the exact gallery, destination and selected photo URLs.
+    private data class RepeatReviewKey(
+        val source: String, val target: String, val destination: String,
+        val account: String, val photos: List<String>
+    )
+    private var repeatConsent: RepeatReviewKey? = null
+
+    private fun repeatReviewKey() = RepeatReviewKey(
+        GalleryKeys.canonical(url).orEmpty(), target,
+        if (target == "Папка Android") treeUri else mailRoot,
+        if (target == "Mail WebDAV") email.trim() else "",
+        selected.sorted()
+    )
     private var pendingUnblock by mutableStateOf<Pair<Long, Int>?>(null)
     private var auditing by mutableStateOf(false)
     private var auditProgress by mutableStateOf("")
@@ -496,6 +510,8 @@ class MainActivity : ComponentActivity() {
         showOtherMedia = false
         mediaFilter = null
         showDestination = false
+        showRepeatConfirmation = false
+        repeatConsent = null
         uploadStatus = ""
         model = ""
         title = ""
@@ -627,7 +643,8 @@ class MainActivity : ComponentActivity() {
             TransferService.begin(
                 this, chosen, model, title, date.trim(), target, email, password,
                 if (target == "Папка Android") treeUri else mailRoot,
-                GalleryKeys.canonical(url)?.takeIf { chosen.all { media -> media.url.startsWith("https://") } }.orEmpty()
+                GalleryKeys.canonical(url)?.takeIf { chosen.all { media -> media.url.startsWith("https://") } }.orEmpty(),
+                allowRepeatedGallery = repeatConsent == repeatReviewKey()
             )
             savedQueue = QueueStore.load(this)
             savedQueue?.sourceUrl?.takeIf { it.isNotBlank() }?.let { source ->
@@ -642,6 +659,8 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             uploadStatus = "Не удалось запустить фоновую передачу: ${e.message}"
         } finally {
+            repeatConsent = null
+            showRepeatConfirmation = false
             working = false
         }
     }
@@ -791,6 +810,21 @@ class MainActivity : ComponentActivity() {
         if (setupError != null) {
             uploadStatus = setupError
             return
+        }
+        when (GalleryTransferGuard.assess(
+            url, GalleryCatalogStore.load(this), QueueStore.load(this)
+        )) {
+            GalleryTransferGuard.Decision.BLOCKED -> {
+                uploadStatus = "У этой публикации осталась незавершённая очередь. Откройте её и проверьте файлы перед повтором."
+                return
+            }
+            GalleryTransferGuard.Decision.REVIEW -> {
+                if (repeatConsent != repeatReviewKey()) {
+                    showRepeatConfirmation = true
+                    return
+                }
+            }
+            GalleryTransferGuard.Decision.CLEAR -> repeatConsent = null
         }
         uploadStatus = ""
         working = true
@@ -1336,6 +1370,20 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun DestinationDialog() {
+        if (showRepeatConfirmation) {
+            GalleryRepeatReviewDialog(
+                onConfirm = {
+                    repeatConsent = repeatReviewKey()
+                    showRepeatConfirmation = false
+                    beginUpload()
+                },
+                onCancel = {
+                    showRepeatConfirmation = false
+                    repeatConsent = null
+                }
+            )
+            return
+        }
         var showFields by remember(url) {
             mutableStateOf(model.isBlank() || title.isBlank() || !GalleryKeys.validDate(date.trim()))
         }
@@ -1345,7 +1393,11 @@ class MainActivity : ComponentActivity() {
             title = { Text("Куда загрузить") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DestinationPicker(target, enabled) { target = it; uploadStatus = "" }
+                    DestinationPicker(target, enabled) {
+                        target = it
+                        repeatConsent = null
+                        uploadStatus = ""
+                    }
                     val folder = when (target) {
                         "Mail WebDAV" -> mailRoot.ifBlank { "Корневая папка Mail" }
                         else -> treeName

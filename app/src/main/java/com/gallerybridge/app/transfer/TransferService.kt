@@ -14,6 +14,8 @@ import android.os.IBinder
 import com.gallerybridge.app.MainActivity
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.core.GalleryCatalogStore
+import com.gallerybridge.app.core.GalleryTransferGuard
 import com.gallerybridge.app.core.TransferTargets
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.SafFolderAccess
@@ -66,7 +68,8 @@ class TransferService : Service() {
             email: String,
             password: String,
             root: String,
-            sourceUrl: String = ""
+            sourceUrl: String = "",
+            allowRepeatedGallery: Boolean = false
         ) {
             require(TransferTargets.isSupported(target)) { "Устаревший способ передачи: $target" }
             if (target == TransferTargets.FOLDER) {
@@ -90,8 +93,19 @@ class TransferService : Service() {
                 .putExtra(EXTRA_EMAIL, email)
                 .putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_ROOT, root)
+            // Check durable state again immediately before replacing the queue.
+            val currentQueue = QueueStore.load(context)
+            when (GalleryTransferGuard.assess(sourceUrl, GalleryCatalogStore.load(context), currentQueue)) {
+                GalleryTransferGuard.Decision.BLOCKED ->
+                    error("У этой публикации есть незавершённая очередь. Проверьте её перед повтором.")
+                GalleryTransferGuard.Decision.REVIEW ->
+                    require(allowRepeatedGallery) {
+                        "Повторная передача публикации требует отдельного подтверждения."
+                    }
+                GalleryTransferGuard.Decision.CLEAR -> Unit
+            }
             // Don't silently overwrite a paused queue with unfinished files.
-            QueueStore.load(context)?.let { previous ->
+            currentQueue?.let { previous ->
                 require(previous.remaining == 0) {
                     "Сначала закончи сохранённую очередь из ${previous.remaining} файлов"
                 }
