@@ -342,7 +342,19 @@ jobs:
           PREVIOUS="$((NEW_CODE - 1))"
           adb install previous/app-debug.apk
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$PREVIOUS "
-          adb shell run-as "$PACKAGE" mkdir -p files shared_prefs
+          # The previous signed APK is also non-debuggable. The root shell below
+          # is available exclusively on this CI emulator, never in the app.
+          adb root
+          adb wait-for-device
+          test "$(adb shell id -u | tr -d '\r')" = 0 || {
+            echo "::error::CI emulator does not support read-only upgrade inspection"
+            exit 1
+          }
+          DATA="/data/user/0/$PACKAGE"
+          APP_UID="$(adb shell stat -c '%u' "$DATA" | tr -d '\r')"
+          test "$APP_UID" -gt 10000
+          adb shell mkdir -p "$DATA/files" "$DATA/shared_prefs"
+          adb shell chown "$APP_UID:$APP_UID" "$DATA/files" "$DATA/shared_prefs"
           mkdir -p upgrade-fixtures
           printf '%s' 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED' > upgrade-fixtures/upgrade-sentinel.txt
           printf '%s' '<map><string name="model">GB_UPGRADE_PREVIOUS</string><boolean name="dark" value="true" /></map>' > upgrade-fixtures/settings.xml
@@ -350,24 +362,18 @@ jobs:
           printf '%s' '<map><string name="records">[]</string></map>' > upgrade-fixtures/gallery_bridge_history.xml
           printf '%s' '<map><string name="snapshot">{"id":32033,"model":"GB_UPGRADE_PREVIOUS","title":"Очередь 0.32","date":"2026-11-16","target":"Mail WebDAV","root":"Models","account":"","entries":[]}</string></map>' > upgrade-fixtures/gallery_bridge_queue.xml
           adb push upgrade-fixtures/upgrade-sentinel.txt /data/local/tmp/upgrade-sentinel.txt
-          adb shell run-as "$PACKAGE" cp /data/local/tmp/upgrade-sentinel.txt files/upgrade-sentinel.txt
+          adb shell cp /data/local/tmp/upgrade-sentinel.txt "$DATA/files/upgrade-sentinel.txt"
+          adb shell chown "$APP_UID:$APP_UID" "$DATA/files/upgrade-sentinel.txt"
           for name in settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml; do
             adb push "upgrade-fixtures/$name" "/data/local/tmp/$name"
-            adb shell run-as "$PACKAGE" cp "/data/local/tmp/$name" "shared_prefs/$name"
+            adb shell cp "/data/local/tmp/$name" "$DATA/shared_prefs/$name"
+            adb shell chown "$APP_UID:$APP_UID" "$DATA/shared_prefs/$name"
           done
-          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
+          adb shell cat "$DATA/files/upgrade-sentinel.txt" | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
           adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
-          # Release APK is deliberately non-debuggable: run-as must no longer work.
-          # Default Android emulator is a development image with root adbd; only CI
-          # uses that to inspect private data. Production never requests root.
-          adb root
-          adb wait-for-device
-          test "$(adb shell id -u | tr -d '\r')" = 0 || {
-            echo "::error::Emulator root access unavailable for release data-retention test"
-            exit 1
-          }
-          DATA="/data/user/0/$PACKAGE"
+          # Root ADB is used only by CI to inspect persisted files after upgrade.
+          test "$(adb shell id -u | tr -d '\r')" = 0
           adb shell cat "$DATA/files/upgrade-sentinel.txt" | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
           adb shell cat "$DATA/shared_prefs/settings.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
           adb shell cat "$DATA/shared_prefs/gallery_bridge_catalog_v1.xml" | grep -F 'galleries'
