@@ -70,4 +70,32 @@ class QualitySelectorTest {
         val input = listOf(photo("0002-01_1200.jpg"))
         assertTrue(QualitySelector.recommended(input).all { target -> input.any { it.url == target } })
     }
+    @Test fun dimensionSuffixesAreVariantsNotSeparatePhotos() {
+        val small = photo("portrait-640x480.jpg", "Изображение (качество не подтверждено)")
+        val large = photo("portrait-1600x1200.jpg", "Ссылка")
+        assertEquals(QualitySelector.groupKey(small), QualitySelector.groupKey(large))
+        assertEquals(setOf(large.url), QualitySelector.recommended(listOf(small, large)))
+    }
+
+    @Test fun namedThumbnailNeverReplacesExplicitFullSizePhoto() {
+        val thumb = photo("portrait_thumbnail.jpg")
+        val original = photo("portrait.jpg")
+        assertEquals(QualitySelector.groupKey(thumb), QualitySelector.groupKey(original))
+        assertEquals(setOf(original.url), QualitySelector.recommended(listOf(thumb, original)))
+    }
+
+    @Test fun distinctDirectoriesAndFilenamesStayIndependent() {
+        val a = photo("alpha_1600.jpg")
+        val b = photo("beta_1600.jpg")
+        val c = a.copy(url = "https://cdn.example.org/another/alpha_1600.jpg")
+        assertEquals(3, QualitySelector.recommended(listOf(a, b, c)).size)
+    }
+
+    @Test fun cannotFabricateLargeVariantsFromSmallOnlyLink() {
+        val small = photo("only_w400.jpg")
+        val recommended = QualitySelector.recommended(listOf(small))
+        assertEquals(setOf(small.url), recommended)
+        assertTrue(recommended.all { it == small.url })
+    }
+
 }

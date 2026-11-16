@@ -45,4 +45,60 @@ class PhotoGallerySourcesTest {
         assertEquals(3, media.size)
         assertTrue(media.all { it.url.contains("/content/201231/") })
     }
+    @Test fun ignoresLargerSidebarGalleryAndPrioritizesMainArticle() {
+        val doc = Jsoup.parse("""
+            <main><article class="post-content">
+              <a data-fancybox="gallery-main" href="https://cdn.elitebabes.com/main/01_1800.jpg">full</a>
+              <a data-fancybox="gallery-main" href="https://cdn.elitebabes.com/main/02_1800.jpg">full</a>
+            </article></main>
+            <aside class="related widget">
+              <a data-fancybox="gallery-other" href="https://cdn.elitebabes.com/aside/01.jpg">related</a>
+              <a data-fancybox="gallery-other" href="https://cdn.elitebabes.com/aside/02.jpg">related</a>
+              <a data-fancybox="gallery-other" href="https://cdn.elitebabes.com/aside/03.jpg">related</a>
+              <a data-fancybox="gallery-other" href="https://cdn.elitebabes.com/aside/04.jpg">related</a>
+            </aside>
+        """, page)
+        val result = PhotoGallerySources.extract(doc, page)!!
+        assertEquals(2, result.size)
+        assertTrue(result.all { it.url.contains("/main/") })
+    }
+
+    @Test fun supportsFancyboxWithoutFancyClassAndDeduplicatesLinks() {
+        val doc = Jsoup.parse("""
+            <article>
+              <a data-fancybox="gallery" href="/media/one_1800.jpg"><img src="/media/one_w400.jpg"></a>
+              <a data-fancybox="gallery" href="/media/one_1800.jpg">duplicate</a>
+              <a data-fancybox="gallery" href="/media/two_1800.jpg?token=opaque">full</a>
+            </article>
+        """, page)
+        val results = PhotoGallerySources.extract(doc, page)!!
+        assertEquals(2, results.size)
+        assertEquals(listOf("one_1800.jpg", "two_1800.jpg"), results.map { it.name })
+        assertTrue(results[1].url.endsWith("?token=opaque"))
+    }
+
+    @Test fun relatedOnlyContentFallsBackWithoutSelectingAnAdGallery() {
+        val doc = Jsoup.parse("""
+            <nav><a data-fancybox="gallery-nav" href="/unrelated.jpg">nav</a></nav>
+            <div class="sponsored-content">
+              <a data-fancybox="gallery-related" href="/advert.jpg">ad</a>
+            </div>
+            <footer><a data-fancybox="gallery-bottom" href="/banner.jpg">footer</a></footer>
+        """, page)
+        assertNull(PhotoGallerySources.extract(doc, page))
+    }
+
+    @Test fun mainArticleGroupWinsWhenSidebarIsNotAsideTag() {
+        val doc = Jsoup.parse("""
+            <div class="sidebar-widget">
+              <a data-fancybox="gallery-large" href="/ad-1.jpg"></a>
+              <a data-fancybox="gallery-large" href="/ad-2.jpg"></a>
+              <a data-fancybox="gallery-large" href="/ad-3.jpg"></a>
+            </div>
+            <article><a data-fancybox="gallery-01" href="/real.jpg"></a></article>
+        """, page)
+        assertEquals(listOf("real.jpg"),
+            PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
+
 }
