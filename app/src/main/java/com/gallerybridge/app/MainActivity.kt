@@ -314,7 +314,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
     }
 
-    private fun setGalleryPreviewMode(value: GalleryPreviewMode) {
+    private fun chooseGalleryPreviewMode(value: GalleryPreviewMode) {
         galleryPreviewMode = value
         getSharedPreferences("settings", MODE_PRIVATE).edit()
             .putString("galleryPreviewMode", value.name).apply()
@@ -1018,17 +1018,17 @@ class MainActivity : ComponentActivity() {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = previewMode == GalleryPreviewMode.MOSAIC,
-                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.MOSAIC) },
+                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.MOSAIC) },
                             label = { Text("Мозаика") }
                         )
                         FilterChip(
                             selected = previewMode == GalleryPreviewMode.TILES,
-                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.TILES) },
+                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.TILES) },
                             label = { Text("Плитка") }
                         )
                         FilterChip(
                             selected = previewMode == GalleryPreviewMode.LIST,
-                            onClick = { setGalleryPreviewMode(GalleryPreviewMode.LIST) },
+                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.LIST) },
                             label = { Text("Список без фото") }
                         )
                     }
