@@ -13,6 +13,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.core.CatalogGallery
 import com.gallerybridge.app.core.GalleryCatalogFilter
+import com.gallerybridge.app.core.GalleryCatalogProgress
+import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.core.GalleryFields
 import com.gallerybridge.app.core.GalleryKeys
 
@@ -24,6 +26,8 @@ import com.gallerybridge.app.core.GalleryKeys
 @Composable
 internal fun GalleryCatalog(
     entries: List<CatalogGallery>,
+    queue: QueueStore.Snapshot?,
+    onQueue: () -> Unit,
     onOpen: (CatalogGallery) -> Unit,
     onRemove: (CatalogGallery) -> Unit,
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
@@ -35,10 +39,18 @@ internal fun GalleryCatalog(
     var query by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
     var onlyTransferred by rememberSaveable { mutableStateOf(false) }
+    var onlyQueued by rememberSaveable { mutableStateOf(false) }
+    var onlyAttention by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<CatalogGallery?>(null) }
     var pendingEdit by remember { mutableStateOf<CatalogGallery?>(null) }
-    val filtered = remember(entries, query, alphabetic, onlyTransferred) {
-        GalleryCatalogFilter.apply(entries, query, alphabetic, onlyTransferred)
+    val filtered = remember(entries, queue, query, alphabetic, onlyTransferred, onlyQueued, onlyAttention) {
+        GalleryCatalogProgress.filter(
+            GalleryCatalogFilter.apply(entries, query, alphabetic, onlyTransferred),
+            queue, onlyQueued, onlyAttention
+        )
+    }
+    val attentionCount = remember(entries, queue) {
+        entries.count { GalleryCatalogProgress.resolve(it, queue).needsAttention }
     }
 
     Column(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -61,6 +73,16 @@ internal fun GalleryCatalog(
                 label = { Text("По модели А-Я") })
             FilterChip(selected = onlyTransferred, onClick = { onlyTransferred = !onlyTransferred },
                 label = { Text("С передачами") })
+            FilterChip(selected = onlyQueued,
+                onClick = {
+                    onlyQueued = !onlyQueued
+                    if (onlyQueued) onlyAttention = false
+                }, label = { Text("В очереди") })
+            FilterChip(selected = onlyAttention,
+                onClick = {
+                    onlyAttention = !onlyAttention
+                    if (onlyAttention) onlyQueued = false
+                }, label = { Text("Требуют внимания") })
         }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
@@ -85,6 +107,12 @@ internal fun GalleryCatalog(
                 color = MaterialTheme.colorScheme.secondary)
         }
         Text(
+            "Требуют внимания: " + attentionCount +
+                ". Статусы отражают обработку файлов приложением, не синхронизацию облака.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
             "Показано: " + filtered.size + " из " + entries.size,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -101,7 +129,12 @@ internal fun GalleryCatalog(
         } else if (filtered.isEmpty()) {
             Column(Modifier.padding(top = 16.dp)) {
                 Text("По текущему поиску и фильтрам ничего не найдено.")
-                TextButton(onClick = { query = ""; onlyTransferred = false }) {
+                TextButton(onClick = {
+                    query = ""
+                    onlyTransferred = false
+                    onlyQueued = false
+                    onlyAttention = false
+                }) {
                     Text("Сбросить фильтры")
                 }
             }
@@ -112,6 +145,7 @@ internal fun GalleryCatalog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(filtered, key = { it.url }) { item ->
+                    val status = GalleryCatalogProgress.resolve(item, queue)
                     OutlinedCard(
                         onClick = { onOpen(item) },
                         modifier = Modifier.fillMaxWidth(),
@@ -138,12 +172,19 @@ internal fun GalleryCatalog(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text(
+                                status.title,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (status.needsAttention) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.secondary
+                            )
+                            Text(
+                                status.detail, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             if (item.target.isNotBlank()) {
-                                Text(
-                                    item.target + " · " + item.outcome +
-                                        " · " + item.completed + "/" + item.total,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
+                                Text(item.target + " · " + item.outcome,
+                                    style = MaterialTheme.typography.bodySmall)
                             }
                             FlowRow(
                                 modifier = Modifier.fillMaxWidth(),
@@ -152,6 +193,9 @@ internal fun GalleryCatalog(
                             ) {
                                 TextButton(onClick = { pendingRemoval = item }) { Text("Убрать") }
                                 TextButton(onClick = { pendingEdit = item }) { Text("Изменить") }
+                                if (status.linkedQueue) {
+                                    TextButton(onClick = onQueue) { Text("К очереди") }
+                                }
                                 TextButton(onClick = { onOpen(item) }) { Text("Открыть") }
                             }
                         }

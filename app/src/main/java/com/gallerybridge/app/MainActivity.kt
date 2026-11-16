@@ -810,6 +810,8 @@ class MainActivity : ComponentActivity() {
                 ) }
                 GalleryPage.CATALOG -> GalleryCatalog(
                     entries = catalog,
+                    queue = savedQueue,
+                    onQueue = { screen = GalleryPage.QUEUE },
                     onOpen = { gallery ->
                         setGalleryUrl(gallery.url)
                         model = gallery.model
