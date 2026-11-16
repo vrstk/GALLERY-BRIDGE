@@ -10,15 +10,14 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 30
-        versionName = "0.30.0"
+        versionCode = 31
+        versionName = "0.31.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    // The old .preview.next APK was signed with an ephemeral GitHub runner key.
-    // Android cannot upgrade it with another key, even when both APKs are valid.
-    // This recovery package coexists with the previous app instead of replacing
-    // or deleting its private catalog, queue and settings.
+    // A persistent, user-owned keystore signs published .preview.signed APKs.
+    // Older .preview.next/.preview.recovery packages were signed by rotating
+    // CI debug keys. Their data must be migrated by explicit JSON backup/restore.
     val previewKeyFile = System.getenv("GB_PREVIEW_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
     signingConfigs {
         if (previewKeyFile != null) {
@@ -35,8 +34,10 @@ android {
     buildTypes {
         debug {
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
-                applicationIdSuffix = ".preview.recovery"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Preview 0.30"
+                // A new application ID is necessary: existing Recovery APKs use
+                // different ephemeral debug keys and cannot be updated in-place.
+                applicationIdSuffix = ".preview.signed"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.31"
                 if (previewKeyFile != null) {
                     signingConfig = signingConfigs.getByName("previewPersistent")
                 }

@@ -35,8 +35,8 @@ jobs:
           gradle-version: '8.13'
       - name: Build and test
         run: gradle --no-daemon testDebugUnitTest assembleDebug
-      - name: Configure optional persistent preview signing
-        if: github.ref != 'refs/heads/main'
+      - name: Require persistent signing key for published preview
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           KEYSTORE_B64: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEYSTORE_B64 }}
           STORE_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_STORE_PASSWORD }}
@@ -44,32 +44,40 @@ jobs:
           KEY_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "::warning::Preview uses a temporary debug signing key. Future in-place upgrades need the repository signing secrets."
-            exit 0
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Persistent preview signing is not configured. Set all four GALLERY_BRIDGE_PREVIEW_* repository secrets before publishing an APK. See docs/SIGNING.md."
+            exit 1
           fi
-          test -n "$STORE_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD"
+          umask 077
           printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/gallerybridge-preview.jks"
           test -s "$RUNNER_TEMP/gallerybridge-preview.jks"
+          keytool -list -keystore "$RUNNER_TEMP/gallerybridge-preview.jks" -storepass:env STORE_PASSWORD -alias "$KEY_ALIAS" >/dev/null
           echo "GB_PREVIEW_KEYSTORE_FILE=$RUNNER_TEMP/gallerybridge-preview.jks" >> "$GITHUB_ENV"
           echo "GB_PREVIEW_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
           echo "GB_PREVIEW_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
           echo "GB_PREVIEW_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
-      - name: Build standalone recovery APK
-        if: github.ref != 'refs/heads/main'
+      - name: Build signed standalone APK
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: gradle --no-daemon clean -PgalleryBridgePreview=true assembleDebug
-      - name: Verify archive, APK signature and recovery package ID
-        if: github.ref != 'refs/heads/main'
+      - name: Verify archive, signature fingerprint and signed package ID
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
           set -euo pipefail
           APK="app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
           unzip -tq "$APK" | tail -n 1
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -F "name='com.gallerybridge.app.preview.recovery'"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -F "name='com.gallerybridge.app.preview.signed'"
+          EXPECTED="06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
+          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1)"
+          if [ "${ACTUAL,,}" != "$EXPECTED" ]; then
+            echo "::error::APK signer certificate mismatch. Publishing blocked: the key changed."
+            exit 1
+          fi
+          echo "Verified signing certificate SHA-256: $ACTUAL"
           sha256sum "$APK"
       - uses: actions/upload-artifact@v4
-        if: github.ref != 'refs/heads/main'
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         with:
           name: GalleryBridge-preview-apk
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -163,7 +171,7 @@ jobs:
           fi
 
   install-smoke:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -205,8 +213,8 @@ jobs:
           adb shell input keyevent KEYCODE_WAKEUP
           adb shell wm dismiss-keyguard
           adb install -r app-debug.apk
-          adb shell pm path com.gallerybridge.app.preview.recovery | grep -F "package:"
-          adb shell monkey -p com.gallerybridge.app.preview.recovery -c android.intent.category.LAUNCHER 1
+          adb shell pm path com.gallerybridge.app.preview.signed | grep -F "package:"
+          adb shell monkey -p com.gallerybridge.app.preview.signed -c android.intent.category.LAUNCHER 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -214,7 +222,7 @@ jobs:
           path: ${{ runner.temp }}/gallery-install-emulator.log
 
   publish-preview:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
     needs: [build, install-smoke]
     runs-on: ubuntu-latest
     permissions:
@@ -230,8 +238,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="preview-recovery"
-          FILE="GalleryBridge-preview-recovery.apk"
+          TAG="preview-signed"
+          FILE="GalleryBridge-preview-signed.apk"
           test -s app-debug.apk
           mv app-debug.apk "$FILE"
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -239,6 +247,6 @@ jobs:
           else
             gh release create "$TAG" "$FILE" --prerelease \
               --target "$GITHUB_SHA" \
-              --title "Gallery Bridge Preview Recovery 0.28" \
-              --notes "Separate recovery package (com.gallerybridge.app.preview.recovery). Installs alongside older preview. Existing preview catalog, queue and settings remain in the old app, and are not transferred automatically. Verified APK signature and Android emulator installation. For future upgrades, configure a persistent signing key via GitHub Actions secrets."
+              --title "Gallery Bridge Signed Preview" \
+              --notes "Signed preview package com.gallerybridge.app.preview.signed. Signing fingerprint is verified in GitHub Actions. This package installs alongside old Recovery builds; copy catalog/history/theme by exporting JSON from the older app and importing into this one. Never delete your original app before confirming restoration."
           fi
