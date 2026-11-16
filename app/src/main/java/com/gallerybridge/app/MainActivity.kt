@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
     private var catalog by mutableStateOf<List<CatalogGallery>>(emptyList())
     private var catalogBackupStatus by mutableStateOf("")
-    private var pendingCatalogImport by mutableStateOf<List<CatalogGallery>?>(null)
+    private var pendingCatalogImport by mutableStateOf<GalleryPortableBackup.Payload?>(null)
     private var screen by mutableStateOf(GalleryPage.HOME)
     private var settingsOrigin = GalleryPage.HOME
     private var settingsDestination by mutableStateOf("Mail WebDAV")
@@ -179,12 +179,13 @@ class MainActivity : ComponentActivity() {
         if (uri != null) {
             catalogBackupStatus = try {
                 val current = GalleryCatalogStore.load(this)
-                val body = GalleryCatalogBackup.export(current)
+                val previousHistory = HistoryStore.load(this)
+                val body = GalleryPortableBackup.export(current, previousHistory, dark)
                 contentResolver.openOutputStream(uri, "w")?.bufferedWriter(Charsets.UTF_8)?.use {
                     it.write(body)
                     it.flush()
                 } ?: throw IOException("Не удалось открыть файл для записи")
-                "Экспортировано галерей: ${current.size}"
+                "Сохранено галерей: ${current.size}; записей истории: ${previousHistory.size}."
             } catch (e: Exception) {
                 "Не удалось экспортировать каталог: ${e.message}"
             }
@@ -198,15 +199,21 @@ class MainActivity : ComponentActivity() {
             catalogBackupStatus = try {
                 val stream = contentResolver.openInputStream(uri)
                     ?: throw IOException("Не удалось прочитать файл")
-                val restored = stream.use { GalleryCatalogBackup.parse(GalleryCatalogBackup.readLimited(it)) }
-                val preview = GalleryCatalogBackup.plan(GalleryCatalogStore.load(this), restored)
-                if (preview.added == 0) {
-                    "Новых галерей нет. Совпадений: ${preview.alreadyPresent}, не поместилось: ${preview.noSpace}."
+                val restored = stream.use {
+                    GalleryPortableBackup.parse(GalleryCatalogBackup.readLimited(it))
+                }
+                val galleries = GalleryCatalogBackup.plan(GalleryCatalogStore.load(this), restored.galleries)
+                val transfers = PortableHistoryBackup.plan(HistoryStore.load(this), restored.history)
+                if (galleries.added == 0 && transfers.added == 0 &&
+                    (restored.darkTheme == null || restored.darkTheme == dark)) {
+                    "Новых данных нет. Галерей уже есть: ${galleries.alreadyPresent}; " +
+                        "записей истории: ${transfers.alreadyPresent}."
                 } else {
                     pendingCatalogImport = restored
-                    "Готово к импорту: ${preview.added} новых галерей."
+                    "Новых галерей: ${galleries.added}; записей истории: ${transfers.added}."
                 }
             } catch (e: Exception) {
+                pendingCatalogImport = null
                 "Ошибка импорта: ${e.message}"
             }
         }
@@ -812,12 +819,13 @@ class MainActivity : ComponentActivity() {
                         } catch (_: Exception) { false }
                     },
                     onExport = {
-                        val filename = "GalleryBridge-galleries-" +
+                        val filename = "GalleryBridge-backup-" +
                             SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) + ".json"
                         catalogExportPicker.launch(filename)
                     },
                     onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
-                    backupStatus = catalogBackupStatus
+                    backupStatus = catalogBackupStatus,
+                    historyCount = history.size
                 )
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
@@ -826,31 +834,47 @@ class MainActivity : ComponentActivity() {
             }
         }
         pendingCatalogImport?.let { staged ->
-            val planned = remember(staged, catalog) {
-                GalleryCatalogBackup.plan(catalog, staged)
+            val galleriesPlan = remember(staged, catalog) {
+                GalleryCatalogBackup.plan(catalog, staged.galleries)
+            }
+            val historyPlan = remember(staged, history) {
+                PortableHistoryBackup.plan(history, staged.history)
             }
             AlertDialog(
                 onDismissRequest = { pendingCatalogImport = null },
-                title = { Text("Импортировать галереи?") },
+                title = { Text("Восстановить данные?") },
                 text = {
                     Text(
-                        "Новых: ${planned.added}. Уже есть: ${planned.alreadyPresent}. " +
-                            "Не поместилось: ${planned.noSpace}. " +
-                            "Существующие названия, история и очередь не будут перезаписаны."
+                        "Галерей: ${galleriesPlan.added} новых, ${galleriesPlan.alreadyPresent} совпадений. " +
+                            "История: ${historyPlan.added} новых записей, ${historyPlan.alreadyPresent} совпадений. " +
+                            "Не поместилось: ${galleriesPlan.noSpace + historyPlan.noSpace}. " +
+                            "Тема: " + when (staged.darkTheme) {
+                                true -> "тёмная"
+                                false -> "светлая"
+                                null -> "не меняется"
+                            } + ". Существующие записи не перезаписываются. " +
+                            "Очереди, пароли и разрешения папок не импортируются."
                     )
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         catalogBackupStatus = try {
-                            val result = GalleryCatalogStore.importMissing(this@MainActivity, staged)
+                            val importedHistory = HistoryStore.importMissing(this@MainActivity, staged.history)
+                            history = HistoryStore.load(this@MainActivity)
+                            val importedGalleries = GalleryCatalogStore.importMissing(this@MainActivity, staged.galleries)
                             catalog = GalleryCatalogStore.load(this@MainActivity)
-                            "Импортировано: ${result.added}. Уже было: ${result.alreadyPresent}. " +
-                                "Не поместилось: ${result.noSpace}."
+                            staged.darkTheme?.let(::setDarkTheme)
+                            "Восстановлено галерей: ${importedGalleries.added}; " +
+                                "записей истории: ${importedHistory.added}. " +
+                                "Не поместилось: ${importedGalleries.noSpace + importedHistory.noSpace}."
                         } catch (e: Exception) {
-                            "Не удалось сохранить импорт: ${e.message}"
+                            history = HistoryStore.load(this@MainActivity)
+                            catalog = GalleryCatalogStore.load(this@MainActivity)
+                            "Импорт завершился с ошибкой: ${e.message}. " +
+                                "Проверьте каталог и историю: часть записей могла сохраниться."
                         }
                         pendingCatalogImport = null
-                    }) { Text("Импортировать") }
+                    }) { Text("Восстановить") }
                 },
                 dismissButton = {
                     TextButton(onClick = { pendingCatalogImport = null }) {

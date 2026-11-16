@@ -29,7 +29,8 @@ internal fun GalleryCatalog(
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
     onExport: () -> Unit,
     onImport: () -> Unit,
-    backupStatus: String
+    backupStatus: String,
+    historyCount: Int
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
@@ -65,16 +66,17 @@ internal fun GalleryCatalog(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedButton(onClick = onExport, enabled = entries.isNotEmpty()) {
-                Text("Экспорт JSON")
+            OutlinedButton(onClick = onExport, enabled = entries.isNotEmpty() || historyCount > 0) {
+                Text("Сохранить копию")
             }
             OutlinedButton(onClick = onImport) {
-                Text("Импорт JSON")
+                Text("Восстановить")
             }
         }
         Text(
-            "Копия содержит ссылки и названия галерей, но не фотографии или пароли. " +
-                "Храните её в личном защищённом месте.",
+            "Копия включает каталог, историю загрузок и тему (" + historyCount +
+                " записей истории). Не включает пароли, очередь и фотографии. " +
+                "Храните JSON в личном защищённом месте.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

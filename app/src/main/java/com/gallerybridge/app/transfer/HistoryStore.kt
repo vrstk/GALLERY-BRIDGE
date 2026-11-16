@@ -53,6 +53,19 @@ object HistoryStore {
         }
     }
 
+    /** Import only absent history rows. Preserve original records and their outcomes. */
+    @Synchronized fun importMissing(
+        context: Context, imported: List<Record>
+    ): PortableHistoryBackup.Plan {
+        val planned = PortableHistoryBackup.plan(load(context), imported)
+        if (planned.added > 0) {
+            val saved = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .putString(KEY, PortableHistoryBackup.encode(planned.records).toString()).commit()
+            check(saved) { "Не удалось сохранить историю" }
+        }
+        return planned
+    }
+
     @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String): Boolean {
         val now = System.currentTimeMillis()
         val list = listOf(
