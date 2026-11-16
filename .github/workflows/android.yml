@@ -312,15 +312,7 @@ jobs:
             NAME="GalleryBridge-v${VERSION}-signed.apk"
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir previous
             gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir previous
-            python3 - <<'PY'
-            import hashlib, json, pathlib
-            d = json.load(open("previous/update.json"))
-            f = pathlib.Path("previous/GalleryBridge-v%s-signed.apk" % d["versionName"])
-            assert d["packageName"] == "com.gallerybridge.app.preview.signed"
-            assert d["certificateSha256"] == "06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
-            assert f.stat().st_size == d["size"]
-            assert hashlib.sha256(f.read_bytes()).hexdigest() == d["sha256"]
-            PY
+            python3 -c 'import hashlib,json,pathlib; d=json.load(open("previous/update.json")); f=pathlib.Path("previous/GalleryBridge-v%s-signed.apk" % d["versionName"]); assert d["packageName"] == "com.gallerybridge.app.preview.signed"; assert d["certificateSha256"] == "06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"; assert f.stat().st_size == d["size"]; assert hashlib.sha256(f.read_bytes()).hexdigest() == d["sha256"]'
             mv "previous/$NAME" previous/app-debug.apk
           fi
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs previous/app-debug.apk | \
