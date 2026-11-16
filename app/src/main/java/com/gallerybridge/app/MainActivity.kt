@@ -46,6 +46,7 @@ import com.gallerybridge.app.network.ImageQualityProbe
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
+import com.gallerybridge.app.transfer.PortableHistoryBackup
 import com.gallerybridge.app.security.SecureMailCredentials
 import com.gallerybridge.app.ui.*
 import androidx.compose.ui.Alignment
