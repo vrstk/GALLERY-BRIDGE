@@ -51,7 +51,7 @@ internal class UpdateManager(
     var state by mutableStateOf(State(lastCheck = preferences.getLong("lastCheck", 0L)))
         private set
 
-    fun setAutomatic(enabled: Boolean) {
+    fun setAutoCheck(enabled: Boolean) {
         automatic = enabled
         preferences.edit().putBoolean("automatic", enabled).apply()
     }
@@ -180,6 +180,16 @@ internal class UpdateManager(
     @Suppress("DEPRECATION")
     private fun verifyArchive(apk: File, release: UpdatePolicy.Release) {
         require(apk.isFile && apk.length() == release.bytes) { "Неверный размер APK" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        apk.inputStream().use { input ->
+            val buffer = ByteArray(65536)
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+            }
+        }
+        require(digest.digest().hex() == release.hash) { "SHA-256 APK не совпадает" }
         val pm = context.packageManager
         val info = if (Build.VERSION.SDK_INT >= 33)
             pm.getPackageArchiveInfo(apk.absolutePath,

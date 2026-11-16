@@ -17,7 +17,7 @@ internal fun UpdateSettings(manager: UpdateManager) {
     Text("Обновления приложения", style = MaterialTheme.typography.titleMedium)
     Text("Установлена: ${manager.installedVersion()}")
     Row {
-        Checkbox(checked = manager.automatic, onCheckedChange = manager::setAutomatic)
+        Checkbox(checked = manager.automatic, onCheckedChange = manager::setAutoCheck)
         Text("Автоматически проверять не чаще раза в сутки", Modifier.padding(top = 12.dp))
     }
     if (s.lastCheck > 0) Text("Последняя проверка: ${DateFormat.getDateTimeInstance().format(Date(s.lastCheck))}")
