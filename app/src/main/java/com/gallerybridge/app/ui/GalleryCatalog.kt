@@ -26,7 +26,10 @@ internal fun GalleryCatalog(
     entries: List<CatalogGallery>,
     onOpen: (CatalogGallery) -> Unit,
     onRemove: (CatalogGallery) -> Unit,
-    onEdit: (CatalogGallery, GalleryFields) -> Boolean
+    onEdit: (CatalogGallery, GalleryFields) -> Boolean,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    backupStatus: String
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
@@ -57,6 +60,27 @@ internal fun GalleryCatalog(
                 label = { Text("По модели А-Я") })
             FilterChip(selected = onlyTransferred, onClick = { onlyTransferred = !onlyTransferred },
                 label = { Text("С передачами") })
+        }
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(onClick = onExport, enabled = entries.isNotEmpty()) {
+                Text("Экспорт JSON")
+            }
+            OutlinedButton(onClick = onImport) {
+                Text("Импорт JSON")
+            }
+        }
+        Text(
+            "Копия содержит ссылки и названия галерей, но не фотографии или пароли. " +
+                "Храните её в личном защищённом месте.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (backupStatus.isNotBlank()) {
+            Text(backupStatus, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.secondary)
         }
         Text(
             "Показано: " + filtered.size + " из " + entries.size,

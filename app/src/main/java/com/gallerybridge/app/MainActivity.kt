@@ -49,6 +49,7 @@ import com.gallerybridge.app.transfer.HistoryStore
 import com.gallerybridge.app.security.SecureMailCredentials
 import com.gallerybridge.app.ui.*
 import androidx.compose.ui.Alignment
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -98,6 +99,8 @@ class MainActivity : ComponentActivity() {
     private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
     private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
     private var catalog by mutableStateOf<List<CatalogGallery>>(emptyList())
+    private var catalogBackupStatus by mutableStateOf("")
+    private var pendingCatalogImport by mutableStateOf<List<CatalogGallery>?>(null)
     private var screen by mutableStateOf(GalleryPage.HOME)
     private var settingsOrigin = GalleryPage.HOME
     private var settingsDestination by mutableStateOf("Mail WebDAV")
@@ -166,6 +169,45 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 refreshFolderAccess()
                 settingsStatus = "Не удалось выбрать новую папку: ${e.message}"
+            }
+        }
+    }
+
+    private val catalogExportPicker = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            catalogBackupStatus = try {
+                val current = GalleryCatalogStore.load(this)
+                val body = GalleryCatalogBackup.export(current)
+                contentResolver.openOutputStream(uri, "w")?.bufferedWriter(Charsets.UTF_8)?.use {
+                    it.write(body)
+                    it.flush()
+                } ?: throw IOException("Не удалось открыть файл для записи")
+                "Экспортировано галерей: ${current.size}"
+            } catch (e: Exception) {
+                "Не удалось экспортировать каталог: ${e.message}"
+            }
+        }
+    }
+
+    private val catalogImportPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            catalogBackupStatus = try {
+                val stream = contentResolver.openInputStream(uri)
+                    ?: throw IOException("Не удалось прочитать файл")
+                val restored = stream.use { GalleryCatalogBackup.parse(GalleryCatalogBackup.readLimited(it)) }
+                val preview = GalleryCatalogBackup.plan(GalleryCatalogStore.load(this), restored)
+                if (preview.added == 0) {
+                    "Новых галерей нет. Совпадений: ${preview.alreadyPresent}, не поместилось: ${preview.noSpace}."
+                } else {
+                    pendingCatalogImport = restored
+                    "Готово к импорту: ${preview.added} новых галерей."
+                }
+            } catch (e: Exception) {
+                "Ошибка импорта: ${e.message}"
             }
         }
     }
@@ -384,6 +426,14 @@ class MainActivity : ComponentActivity() {
             title = cached.title
             date = cached.date
             metadataReport = "Восстановлены сохранённые данные для этой галереи."
+        } else {
+            // Imported galleries are portable without copying private app preferences.
+            catalog.firstOrNull { GalleryKeys.same(it.url, newUrl) }?.let { entry ->
+                model = entry.model
+                title = entry.title
+                date = entry.date
+                metadataReport = "Данные восстановлены из каталога галерей."
+            }
         }
         status = if (newUrl.isBlank()) "Вставьте HTTPS-ссылку на фотогалерею." else "Запустите поиск по ссылке."
     }
@@ -760,13 +810,54 @@ class MainActivity : ComponentActivity() {
                             }
                             true
                         } catch (_: Exception) { false }
-                    }
+                    },
+                    onExport = {
+                        val filename = "GalleryBridge-galleries-" +
+                            SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) + ".json"
+                        catalogExportPicker.launch(filename)
+                    },
+                    onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
+                    backupStatus = catalogBackupStatus
                 )
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }
                 GalleryPage.SETTINGS -> GalleryPageColumn { SettingsPage() }
             }
+        }
+        pendingCatalogImport?.let { staged ->
+            val planned = remember(staged, catalog) {
+                GalleryCatalogBackup.plan(catalog, staged)
+            }
+            AlertDialog(
+                onDismissRequest = { pendingCatalogImport = null },
+                title = { Text("Импортировать галереи?") },
+                text = {
+                    Text(
+                        "Новых: ${planned.added}. Уже есть: ${planned.alreadyPresent}. " +
+                            "Не поместилось: ${planned.noSpace}. " +
+                            "Существующие названия, история и очередь не будут перезаписаны."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        catalogBackupStatus = try {
+                            val result = GalleryCatalogStore.importMissing(this@MainActivity, staged)
+                            catalog = GalleryCatalogStore.load(this@MainActivity)
+                            "Импортировано: ${result.added}. Уже было: ${result.alreadyPresent}. " +
+                                "Не поместилось: ${result.noSpace}."
+                        } catch (e: Exception) {
+                            "Не удалось сохранить импорт: ${e.message}"
+                        }
+                        pendingCatalogImport = null
+                    }) { Text("Импортировать") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingCatalogImport = null }) {
+                        Text("Отмена")
+                    }
+                }
+            )
         }
     }
 

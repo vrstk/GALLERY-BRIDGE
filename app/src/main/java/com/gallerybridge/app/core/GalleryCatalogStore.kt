@@ -134,6 +134,17 @@ object GalleryCatalogStore {
         )))
     }
 
+    /** Merge only missing backup entries and commit the new catalog synchronously. */
+    @Synchronized fun importMissing(
+        context: Context, imported: List<CatalogGallery>
+    ): GalleryCatalogBackup.Plan {
+        val planned = GalleryCatalogBackup.plan(load(context), imported)
+        if (planned.added > 0) {
+            check(write(context, planned.records)) { "Не удалось сохранить каталог" }
+        }
+        return planned
+    }
+
     /** Does not delete local gallery metadata, queue, history or remote files. */
     @Synchronized fun remove(context: Context, url: String): Boolean {
         val canonical = GalleryKeys.canonical(url) ?: return false
