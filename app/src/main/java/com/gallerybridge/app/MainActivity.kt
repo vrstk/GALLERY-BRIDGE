@@ -49,6 +49,8 @@ import com.gallerybridge.app.transfer.HistoryStore
 import com.gallerybridge.app.transfer.PortableHistoryBackup
 import com.gallerybridge.app.security.SecureMailCredentials
 import com.gallerybridge.app.ui.*
+import com.gallerybridge.app.update.UpdateManager
+import com.gallerybridge.app.update.UpdateSettings
 import androidx.compose.ui.Alignment
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -112,6 +114,10 @@ class MainActivity : ComponentActivity() {
     private var auditing by mutableStateOf(false)
     private var auditProgress by mutableStateOf("")
     private var auditReport by mutableStateOf("")
+    private val updater by lazy { UpdateManager(this, scope) {
+        transferRunning || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+            .getBoolean(TransferService.KEY_RUNNING, false)
+    } }
 
     private val mediaPicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -260,6 +266,7 @@ class MainActivity : ComponentActivity() {
             date = savedInstanceState?.getString("galleryDate") ?: date
         }
         setContent { GalleryTheme(dark) { Ui() } }
+        if (packageName == "com.gallerybridge.app.preview.signed") updater.check(auto = true)
     }
 
     override fun onResume() {
@@ -1346,6 +1353,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (settingsStatus.isNotBlank()) Text(settingsStatus, style = MaterialTheme.typography.bodyMedium)
+        if (packageName == "com.gallerybridge.app.preview.signed") UpdateSettings(updater)
     }
 
     private fun changeMailAccount(newEmail: String) {
