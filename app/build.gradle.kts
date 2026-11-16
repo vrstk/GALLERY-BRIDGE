@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "0.35.0"
+        versionCode = 36
+        versionName = "0.36.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -33,11 +33,16 @@ android {
     }
     buildTypes {
         debug {
+            // Debug APK is for CI instrumentation only and must never be published.
+        }
+        release {
+            // Play Protect flagged the former distributable APK, built with assembleDebug.
+            // Only a non-debuggable release variant can enter the signed preview channel.
+            isDebuggable = false
+            isMinifyEnabled = false
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
-                // A new application ID is necessary: existing Recovery APKs use
-                // different ephemeral debug keys and cannot be updated in-place.
                 applicationIdSuffix = ".preview.signed"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.35"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.36"
                 if (previewKeyFile != null) {
                     signingConfig = signingConfigs.getByName("previewPersistent")
                 }

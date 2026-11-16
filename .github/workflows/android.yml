@@ -58,14 +58,19 @@ jobs:
           echo "GB_PREVIEW_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
       - name: Build signed standalone APK
         if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        run: gradle --no-daemon clean -PgalleryBridgePreview=true assembleDebug
+        run: gradle --no-daemon clean -PgalleryBridgePreview=true testReleaseUnitTest assembleRelease
       - name: Verify archive, signature fingerprint and signed package ID
         if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APK="app/build/outputs/apk/release/app-release.apk"
           test -s "$APK"
           unzip -tq "$APK" | tail -n 1
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "application-debuggable"; then
+            echo "::error::Debuggable APK is forbidden in signed preview releases."
+            exit 1
+          fi
+          echo "Verified non-debuggable release variant"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -F "name='com.gallerybridge.app.preview.signed'"
           EXPECTED="06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
@@ -83,7 +88,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import hashlib, json, os, pathlib, re, shutil, subprocess
-          apk = pathlib.Path("app/build/outputs/apk/debug/app-debug.apk")
+          apk = pathlib.Path("app/build/outputs/apk/release/app-release.apk")
           gradle = pathlib.Path("app/build.gradle.kts").read_text()
           aapt = subprocess.check_output([os.environ["ANDROID_HOME"] + "/build-tools/36.0.0/aapt",
               "dump", "badging", str(apk)], text=True)
@@ -107,7 +112,7 @@ jobs:
               apkUrl=url, size=apk.stat().st_size,
               sha256=hashlib.sha256(apk.read_bytes()).hexdigest(),
               certificateSha256=cert,
-              changes="Безопасная проверка обновлений, загрузка с SHA-256 и установка через Android.")
+              changes="Подписанная пользовательская сборка без отладки; усилена проверка существующих фотографий.")
           (dist / "update.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
           print("Signed release candidate:", version_name, version_code, data["sha256"])
           PY
@@ -121,13 +126,13 @@ jobs:
         if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         with:
           name: GalleryBridge-preview-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: github.ref == 'refs/heads/main'
         with:
           name: GalleryBridge-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
   android-ui:
@@ -253,7 +258,7 @@ jobs:
           fi
           adb shell input keyevent KEYCODE_WAKEUP
           adb shell wm dismiss-keyguard
-          adb install -r app-debug.apk
+          adb install -r app-release.apk
           adb shell pm path com.gallerybridge.app.preview.signed | grep -F "package:"
           adb shell monkey -p com.gallerybridge.app.preview.signed -c android.intent.category.LAUNCHER 1
       - uses: actions/upload-artifact@v4
@@ -353,14 +358,24 @@ jobs:
           adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
           adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
-          adb shell run-as "$PACKAGE" cat files/upgrade-sentinel.txt | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
-          adb shell run-as "$PACKAGE" cat shared_prefs/settings.xml | grep -F 'GB_UPGRADE_PREVIOUS'
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_catalog_v1.xml | grep -F 'galleries'
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_history.xml | grep -F 'records'
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_PREVIOUS'
+          # Release APK is deliberately non-debuggable: run-as must no longer work.
+          # Default Android emulator is a development image with root adbd; only CI
+          # uses that to inspect private data. Production never requests root.
+          adb root
+          adb wait-for-device
+          test "$(adb shell id -u | tr -d '\r')" = 0 || {
+            echo "::error::Emulator root access unavailable for release data-retention test"
+            exit 1
+          }
+          DATA="/data/user/0/$PACKAGE"
+          adb shell cat "$DATA/files/upgrade-sentinel.txt" | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
+          adb shell cat "$DATA/shared_prefs/settings.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
+          adb shell cat "$DATA/shared_prefs/gallery_bridge_catalog_v1.xml" | grep -F 'galleries'
+          adb shell cat "$DATA/shared_prefs/gallery_bridge_history.xml" | grep -F 'records'
+          adb shell cat "$DATA/shared_prefs/gallery_bridge_queue.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
           adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
           sleep 3
-          adb shell run-as "$PACKAGE" cat shared_prefs/gallery_bridge_queue.xml | grep -F 'GB_UPGRADE_PREVIOUS'
+          adb shell cat "$DATA/shared_prefs/gallery_bridge_queue.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

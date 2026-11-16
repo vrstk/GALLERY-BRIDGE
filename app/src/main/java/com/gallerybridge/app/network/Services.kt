@@ -228,6 +228,7 @@ object Services {
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()
             var destinationWriteStarted = false
+            var existingNeedsVerification = false
             attempted++
             progress("${index + 1}/${media.size}: ${item.name}")
             try {
@@ -241,12 +242,33 @@ object Services {
                     }
                     val destination = mailUrl(cloudPath + Paths.clean(item.name))
                     // Пропускаем ранее сохранённый файл до повторного скачивания.
-                    if (mailLookup(destination, mailAuth, directory = false)
-                        is WebDavResourcePolicy.Lookup.Existing) {
-                        coroutineContext.ensureActive()
-                        skipped++
-                        onItemResult(index, item, "SKIPPED", "")
-                        consecutiveNetworkFailures = 0
+                    val existingMail = mailLookup(destination, mailAuth, directory = false)
+                    if (existingMail is WebDavResourcePolicy.Lookup.Existing) {
+                        // Presence alone is not evidence that the remote bytes match.
+                        // Never overwrite an existing file on a mismatch.
+                        existingNeedsVerification = true
+                        val (local, _) = download(context, item)
+                        try {
+                            mailCall(Request.Builder().url(destination)
+                                .header("Authorization", mailAuth).get().build()).use { response ->
+                                ExistingFileVerifier.requireSafeWebDavGet(
+                                    response.code,
+                                    response.request.url.scheme,
+                                    response.request.url.host,
+                                    response.header("Content-Type").orEmpty()
+                                )
+                                val body = response.body ?: throw ExistingFileVerifier.Unverified(
+                                    "Mail WebDAV вернул пустое содержимое фотографии."
+                                )
+                                ExistingFileVerifier.verify(local, body.byteStream(), existingMail.bytes)
+                            }
+                            coroutineContext.ensureActive()
+                            skipped++
+                            onItemResult(index, item, "SKIPPED", "")
+                            consecutiveNetworkFailures = 0
+                        } finally {
+                            local.delete()
+                        }
                         continue
                     }
                     val (local, mime) = download(context, item)
@@ -282,9 +304,22 @@ object Services {
                     }
                     // Check before source download; previously every resume fetched
                     // already existing files again, wasting time and traffic.
-                    if (SafDestination.fileExists(context, destFolder, item.name)) {
-                        skipped++
-                        onItemResult(index, item, "SKIPPED", "")
+                    val existingUri = SafDestination.fileForRead(context, destFolder, item.name)
+                    if (existingUri != null) {
+                        existingNeedsVerification = true
+                        val (local, _) = download(context, item)
+                        try {
+                            val existing = context.contentResolver.openInputStream(existingUri)
+                                ?: throw ExistingFileVerifier.Unverified(
+                                    "Провайдер Android не разрешил чтение существующего файла."
+                                )
+                            ExistingFileVerifier.verify(local, existing)
+                            coroutineContext.ensureActive()
+                            skipped++
+                            onItemResult(index, item, "SKIPPED", "")
+                        } finally {
+                            local.delete()
+                        }
                     } else {
                         val (local, mime) = download(context, item)
                         try {
@@ -309,7 +344,8 @@ object Services {
                 val folderConflict = target == "Папка Android" && listOf(
                     "дубликат", "одноимённые", "Создание заблокировано", "Новые папки не создавались"
                 ).any { e.message.orEmpty().contains(it, ignoreCase = true) }
-                val unsafe = destinationWriteStarted ||
+                val unsafe = destinationWriteStarted || existingNeedsVerification ||
+                    e is ExistingFileVerifier.Unverified ||
                     e is SafWritePolicy.UncertainWrite ||
                     e is WebDavResourcePolicy.UnsafeResource || folderConflict
                 // Only generic reasons are persisted, never raw URLs or credentials.
@@ -319,6 +355,10 @@ object Services {
                     e is WebDavResourcePolicy.UnsafeResource ->
                         "WebDAV не подтвердил состояние файла; проверьте облако."
                     folderConflict -> "Неоднозначное состояние папки; возможны одноимённые файлы."
+                    e is ExistingFileVerifier.Unverified ->
+                        "Существующий файл не прошёл проверку SHA-256 или недоступен для чтения."
+                    existingNeedsVerification ->
+                        "Не удалось проверить байты существующего файла; ручная проверка обязательна."
                     destinationWriteStarted ->
                         "Результат начатой передачи не подтверждён; проверьте файл в назначении."
                     e is SourceDownloadFailure.HttpError ->
@@ -385,7 +425,7 @@ object Services {
                 append("\nПричины ошибок:")
                 failures.forEach { append("\n• ").append(it) }
             }
-            append("\nУже существующие файлы пропускаются по имени. Целостность старых файлов ещё не проверяется.")
+            append("\nСуществующие фотографии пропускаются только после SHA-256 сравнения с источником; это не гарантия синхронизации облака.")
         }
     }
 }

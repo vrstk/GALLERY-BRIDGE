@@ -167,6 +167,32 @@ object SafDestination {
      * cloud file must be investigated, not silently skipped as complete.
      * Unknown size (null) is explicitly not a content-integrity guarantee.
      */
+    /** Read-only lookup; never create or silently select one of multiple same-name files. */
+    fun fileForRead(ctx: Context, folder: Uri, filename: String): Uri? = try {
+        val name = Paths.clean(filename)
+        val parentId = DocumentsContract.getDocumentId(folder)
+        val found = children(ctx, folder, parentId).filter { it.name == name }
+        if (found.size > 1) throw ExistingFileVerifier.Unverified(
+            "Неоднозначное имя файла в Android-папке; повтор заблокирован."
+        )
+        if (found.isEmpty()) null
+        else {
+            val entry = found.single()
+            if (entry.mime == DIRECTORY || entry.size == 0L) {
+                throw ExistingFileVerifier.Unverified(
+                    "Вместо фотографии обнаружена папка либо пустой файл."
+                )
+            }
+            documentUri(folder, entry.id)
+        }
+    } catch (e: ExistingFileVerifier.Unverified) {
+        throw e
+    } catch (e: Exception) {
+        throw ExistingFileVerifier.Unverified(
+            "Не удалось однозначно проверить содержимое папки Android.", e
+        )
+    }
+
     fun fileExists(ctx: Context, folder: Uri, filename: String): Boolean {
         val name = Paths.clean(filename)
         val parentId = DocumentsContract.getDocumentId(folder)
