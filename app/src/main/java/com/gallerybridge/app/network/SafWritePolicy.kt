@@ -19,7 +19,7 @@ object SafWritePolicy {
         }
         if (actualName != expectedName) {
             throw UncertainWrite(
-                "Провайдер изменил имя файла: ожидалось $expectedName, получено \${actualName ?: "нет данных"}."
+                "Провайдер изменил имя файла: ожидалось $expectedName, получено ${actualName ?: "нет данных"}."
             )
         }
         if (reportedBytes != null && reportedBytes != expectedBytes) {
