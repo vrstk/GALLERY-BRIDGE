@@ -9,7 +9,7 @@ import java.time.LocalDate
  * Numbered pages and the in-page infinite loader are separate mechanisms.
  */
 object ModelListingSources {
-    const val MAX_PAGES = 10
+    const val MAX_PAGES = 100
     const val MAX_CARDS_PER_PAGE = 750
 
     data class Address(val slug: String, val number: Int)
@@ -26,7 +26,7 @@ object ModelListingSources {
     )
 
     private val route = Regex(
-        """^/model/([a-z0-9-]+)/sort/oldest(?:/mpage/([1-9][0-9]*))?/?$"""
+        """^/model/([a-z0-9-]+)(?:/sort/oldest(?:/mpage/([1-9][0-9]*))?)?/?$"""
     )
     private val count = Regex("""\(([0-9]{1,5})\s+Galleries\)""", RegexOption.IGNORE_CASE)
 
@@ -60,7 +60,7 @@ object ModelListingSources {
         val gallery = doc.selectFirst("main#content > ul.list-gallery.has-mobile-menu")
         if (model.isBlank() || gallery == null) return null
         val pages = linkedMapOf(source.number to pageUrl)
-        for (link in doc.select("#pagination_infinite a[href]")) {
+        for (link in doc.select("#pagination_infinite a[href], a[rel=next][href], link[rel=next][href], .pagination a[href]")) {
             val href = link.absUrl("href")
             val page = address(href) ?: continue
             if (page.slug == source.slug) pages.putIfAbsent(page.number, href)

@@ -9,6 +9,8 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
+import androidx.lifecycle.viewModelScope
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
@@ -60,68 +62,180 @@ import java.util.Locale
 import kotlinx.coroutines.*
 
 class MainActivity : ComponentActivity() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var url by mutableStateOf("")
-    private var model by mutableStateOf("")
-    private var title by mutableStateOf("")
-    private var date by mutableStateOf("")
-    private var email by mutableStateOf("")
-    private var password by mutableStateOf("")
-    private var treeUri by mutableStateOf("")
-    private var treeName by mutableStateOf("Папка не выбрана")
-    private var folderPermissionReady by mutableStateOf(false)
-    private var folderPermissionMessage by mutableStateOf("")
-    private var mailRoot by mutableStateOf("Models")
-    private var target by mutableStateOf("Папка Android")
-    private var dark by mutableStateOf(true)
-    private var galleryPreviewMode by mutableStateOf(GalleryPreviewMode.MOSAIC)
-    private var working by mutableStateOf(false)
-    private var scanning by mutableStateOf(false)
-    private var scanJob: Job? = null
-    private var modelListing by mutableStateOf<ModelListingSources.Result?>(null)
-    private var modelListingSelected by mutableStateOf<Set<String>>(emptySet())
-    private var modelListingSnapshots by mutableStateOf<List<ModelListingSources.Page>>(emptyList())
-    private var snapshotImportJob: Job? = null
-    private var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
-    private var items by mutableStateOf<List<Media>>(emptyList())
-    private var selected by mutableStateOf<Set<String>>(emptySet())
-    private var reveal by mutableStateOf(false)
-    private var rememberMailPassword by mutableStateOf(false)
-    private var showOtherMedia by mutableStateOf(false)
-    private var mediaFilter by mutableStateOf<Kind?>(null)
-    private var showDestination by mutableStateOf(false)
-    private var uploadStatus by mutableStateOf("")
-    private var recommendedUrls by mutableStateOf<Set<String>>(emptySet())
-    private var imageProbeRunning by mutableStateOf(false)
-    private var imageProbeProgress by mutableStateOf("")
-    private var imageProbeStatus by mutableStateOf("")
-    private var imageProbeResults by mutableStateOf<Map<String, ImageQualityProbe.Result>>(emptyMap())
-    private var comparisonReport by mutableStateOf("")
-    private var metadataReport by mutableStateOf("")
-    private var suggestedPublicationDate by mutableStateOf("")
-    private var suggestedPublicationDateSource by mutableStateOf("")
+    private val session: GallerySessionState by viewModels()
+    private val scope get() = session.viewModelScope
+    private var url
+        get() = session.url
+        set(value) { session.url = value }
+    private var model
+        get() = session.model
+        set(value) { session.model = value }
+    private var title
+        get() = session.title
+        set(value) { session.title = value }
+    private var date
+        get() = session.date
+        set(value) { session.date = value }
+    private var email
+        get() = session.email
+        set(value) { session.email = value }
+    private var password
+        get() = session.password
+        set(value) { session.password = value }
+    private var treeUri
+        get() = session.treeUri
+        set(value) { session.treeUri = value }
+    private var treeName
+        get() = session.treeName
+        set(value) { session.treeName = value }
+    private var folderPermissionReady
+        get() = session.folderPermissionReady
+        set(value) { session.folderPermissionReady = value }
+    private var folderPermissionMessage
+        get() = session.folderPermissionMessage
+        set(value) { session.folderPermissionMessage = value }
+    private var mailRoot
+        get() = session.mailRoot
+        set(value) { session.mailRoot = value }
+    private var target
+        get() = session.target
+        set(value) { session.target = value }
+    private var dark
+        get() = session.dark
+        set(value) { session.dark = value }
 
-    private var imageProbeJob: Job? = null
-    private var reportDetails by mutableStateOf("")
-    private var showReportDetails by mutableStateOf(false)
-    private var transferRunning by mutableStateOf(false)
-    private var resumeRequest = false
-    private var savedQueue by mutableStateOf<QueueStore.Snapshot?>(null)
-    private var history by mutableStateOf<List<HistoryStore.Record>>(emptyList())
-    private var catalog by mutableStateOf<List<CatalogGallery>>(emptyList())
-    private var catalogBackupStatus by mutableStateOf("")
+    private var working
+        get() = session.working
+        set(value) { session.working = value }
+    private var scanning
+        get() = session.scanning
+        set(value) { session.scanning = value }
+    private var scanJob: Job?
+        get() = session.scanJob
+        set(value) { session.scanJob = value }
+    private var modelListing
+        get() = session.modelListing
+        set(value) { session.modelListing = value }
+    private var modelListingSelected
+        get() = session.modelListingSelected
+        set(value) { session.modelListingSelected = value }
+
+    private var status
+        get() = session.status
+        set(value) { session.status = value }
+    private var items
+        get() = session.items
+        set(value) { session.items = value }
+    private var selected
+        get() = session.selected
+        set(value) { session.selected = value }
+    private var reveal
+        get() = session.reveal
+        set(value) { session.reveal = value }
+    private var rememberMailPassword
+        get() = session.rememberMailPassword
+        set(value) { session.rememberMailPassword = value }
+    private var showOtherMedia
+        get() = session.showOtherMedia
+        set(value) { session.showOtherMedia = value }
+    private var mediaFilter
+        get() = session.mediaFilter
+        set(value) { session.mediaFilter = value }
+    private var showDestination
+        get() = session.showDestination
+        set(value) { session.showDestination = value }
+    private var uploadStatus
+        get() = session.uploadStatus
+        set(value) { session.uploadStatus = value }
+    private var recommendedUrls
+        get() = session.recommendedUrls
+        set(value) { session.recommendedUrls = value }
+    private var imageProbeRunning
+        get() = session.imageProbeRunning
+        set(value) { session.imageProbeRunning = value }
+    private var imageProbeProgress
+        get() = session.imageProbeProgress
+        set(value) { session.imageProbeProgress = value }
+    private var imageProbeStatus
+        get() = session.imageProbeStatus
+        set(value) { session.imageProbeStatus = value }
+    private var imageProbeResults
+        get() = session.imageProbeResults
+        set(value) { session.imageProbeResults = value }
+    private var comparisonReport
+        get() = session.comparisonReport
+        set(value) { session.comparisonReport = value }
+    private var metadataReport
+        get() = session.metadataReport
+        set(value) { session.metadataReport = value }
+    private var suggestedPublicationDate
+        get() = session.suggestedPublicationDate
+        set(value) { session.suggestedPublicationDate = value }
+    private var suggestedPublicationDateSource
+        get() = session.suggestedPublicationDateSource
+        set(value) { session.suggestedPublicationDateSource = value }
+
+    private var imageProbeJob: Job?
+        get() = session.imageProbeJob
+        set(value) { session.imageProbeJob = value }
+    private var reportDetails
+        get() = session.reportDetails
+        set(value) { session.reportDetails = value }
+    private var showReportDetails
+        get() = session.showReportDetails
+        set(value) { session.showReportDetails = value }
+    private var transferRunning
+        get() = session.transferRunning
+        set(value) { session.transferRunning = value }
+    private var resumeRequest
+        get() = session.resumeRequest
+        set(value) { session.resumeRequest = value }
+    private var savedQueue
+        get() = session.savedQueue
+        set(value) { session.savedQueue = value }
+    private var history
+        get() = session.history
+        set(value) { session.history = value }
+    private var catalog
+        get() = session.catalog
+        set(value) { session.catalog = value }
+    private var catalogBackupStatus
+        get() = session.catalogBackupStatus
+        set(value) { session.catalogBackupStatus = value }
     // Ephemeral batch-review navigation; never writes into the durable transfer queue.
-    private var batchReviewUrls by mutableStateOf<List<String>>(emptyList())
-    private var batchReviewIndex by mutableIntStateOf(0)
-    private var pendingCatalogImport by mutableStateOf<GalleryPortableBackup.Payload?>(null)
-    private var screen by mutableStateOf(GalleryPage.HOME)
-    private var settingsOrigin = GalleryPage.HOME
-    private var settingsDestination by mutableStateOf("Mail WebDAV")
-    private var settingsStatus by mutableStateOf("")
-    private var transferStatus by mutableStateOf("")
-    private var queueFilter by mutableStateOf("ALL")
-    private var showCloseQueueConfirmation by mutableStateOf(false)
-    private var showRepeatConfirmation by mutableStateOf(false)
+    private var batchReviewUrls
+        get() = session.batchReviewUrls
+        set(value) { session.batchReviewUrls = value }
+    private var batchReviewIndex
+        get() = session.batchReviewIndex
+        set(value) { session.batchReviewIndex = value }
+    private var pendingCatalogImport
+        get() = session.pendingCatalogImport
+        set(value) { session.pendingCatalogImport = value }
+    private var screen
+        get() = session.screen
+        set(value) { session.screen = value }
+    private var settingsOrigin
+        get() = session.settingsOrigin
+        set(value) { session.settingsOrigin = value }
+    private var settingsDestination
+        get() = session.settingsDestination
+        set(value) { session.settingsDestination = value }
+    private var settingsStatus
+        get() = session.settingsStatus
+        set(value) { session.settingsStatus = value }
+    private var transferStatus
+        get() = session.transferStatus
+        set(value) { session.transferStatus = value }
+    private var queueFilter
+        get() = session.queueFilter
+        set(value) { session.queueFilter = value }
+    private var showCloseQueueConfirmation
+        get() = session.showCloseQueueConfirmation
+        set(value) { session.showCloseQueueConfirmation = value }
+    private var showRepeatConfirmation
+        get() = session.showRepeatConfirmation
+        set(value) { session.showRepeatConfirmation = value }
     // Consent is scoped to the exact gallery, destination and selected photo URLs.
     private data class RepeatReviewKey(
         val source: String, val target: String, val destination: String,
@@ -135,14 +249,19 @@ class MainActivity : ComponentActivity() {
         if (target == "Mail WebDAV") email.trim() else "",
         selected.sorted()
     )
-    private var pendingUnblock by mutableStateOf<Pair<Long, Int>?>(null)
-    private var auditing by mutableStateOf(false)
-    private var auditProgress by mutableStateOf("")
-    private var auditReport by mutableStateOf("")
-    private val updater by lazy { UpdateManager(this, scope) {
-        transferRunning || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
-            .getBoolean(TransferService.KEY_RUNNING, false)
-    } }
+    private var pendingUnblock
+        get() = session.pendingUnblock
+        set(value) { session.pendingUnblock = value }
+    private var auditing
+        get() = session.auditing
+        set(value) { session.auditing = value }
+    private var auditProgress
+        get() = session.auditProgress
+        set(value) { session.auditProgress = value }
+    private var auditReport
+        get() = session.auditReport
+        set(value) { session.auditReport = value }
+    private val updater get() = session.updater
 
     private val mediaPicker = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -251,69 +370,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private val snapshotPicker = registerForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isEmpty()) return@registerForActivityResult
-        if (working || scanning || transferRunning || imageProbeRunning ||
-            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
-                .getBoolean(TransferService.KEY_RUNNING, false)
-        ) {
-            catalogBackupStatus = "Нельзя импортировать снимки во время другой операции."
-            return@registerForActivityResult
-        }
-        if (uris.size > 10) {
-            catalogBackupStatus = "Выберите не более 10 страниц MHT за один раз."
-            return@registerForActivityResult
-        }
-        snapshotImportJob?.cancel()
-        snapshotImportJob = scope.launch {
-            working = true
-            catalogBackupStatus = "Читаем сохранённые HTML-страницы без изображений..."
-            try {
-                // Parse off the main thread. No filesystem writes and no web requests.
-                val incoming = withContext(Dispatchers.IO) {
-                    uris.mapIndexed { index, uri ->
-                        ensureActive()
-                        val parsed = contentResolver.openInputStream(uri)?.use {
-                            ModelListingSnapshotReader.parse(it)
-                        } ?: error("Не удалось открыть выбранный файл MHT.")
-                        withContext(Dispatchers.Main) {
-                            catalogBackupStatus = "Проверено снимков: ${index + 1} из ${uris.size}."
-                        }
-                        parsed
-                    }
-                }
-                ensureActive()
-                val oldPages = modelListingSnapshots.takeIf {
-                    it.firstOrNull()?.address?.slug == incoming.first().address.slug
-                }.orEmpty()
-                val merged = ModelListingSnapshotPlan.merge(oldPages, incoming)
-                // Replace only after ALL selected sources parsed and validated.
-                setGalleryUrl(
-                    "https://www.elitebabes.com/model/${incoming.first().address.slug}/sort/oldest/mpage/1"
-                )
-                modelListingSnapshots = merged.pages
-                modelListing = merged.result
-                modelListingSelected = emptySet()
-                catalog = GalleryCatalogStore.load(this@MainActivity)
-                status = "Из MHT получено фотопубликаций: ${merged.result.photos.size}; " +
-                    "прочитано страниц: ${merged.pages.size}. " +
-                    if (merged.result.incomplete) "Каталог может быть неполным."
-                    else "Доступные снимки объединены."
-                catalogBackupStatus = ""
-                screen = GalleryPage.DOWNLOADS
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                catalogBackupStatus = "Импорт MHT отменён без сохранения: ${e.message}"
-            } finally {
-                working = false
-                snapshotImportJob = null
-            }
-        }
-    }
-
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Notification permission is optional for running a dataSync foreground service.
         if (resumeRequest) beginResumeTransfer() else beginServiceTransfer()
@@ -322,6 +378,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!session.initialized) {
         val p = getSharedPreferences("settings", MODE_PRIVATE)
         model = p.getString("model", "") ?: ""
         email = p.getString("email", "") ?: ""
@@ -333,7 +390,6 @@ class MainActivity : ComponentActivity() {
         refreshFolderAccess()
         mailRoot = p.getString("mailRoot", "Models") ?: "Models"
         dark = p.getBoolean("dark", true)
-        galleryPreviewMode = GalleryPreviewMode.restore(p.getString("galleryPreviewMode", null))
         applySystemBars()
         // Legacy Google Drive API was removed. Never turn an old API queue into a SAF task.
         target = TransferTargets.restore(savedInstanceState?.getString("transferTarget")
@@ -360,6 +416,9 @@ class MainActivity : ComponentActivity() {
             title = savedInstanceState?.getString("galleryTitle") ?: title
             date = savedInstanceState?.getString("galleryDate") ?: date
         }
+        session.initialized = true
+        }
+        applySystemBars()
         setContent { GalleryTheme(dark) { Ui() } }
         if (packageName == "com.gallerybridge.app.preview.signed") updater.check(auto = true)
     }
@@ -406,12 +465,6 @@ class MainActivity : ComponentActivity() {
         val style = if (dark) SystemBarStyle.dark(Color.TRANSPARENT)
             else SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
-    }
-
-    private fun chooseGalleryPreviewMode(value: GalleryPreviewMode) {
-        galleryPreviewMode = value
-        getSharedPreferences("settings", MODE_PRIVATE).edit()
-            .putString("galleryPreviewMode", value.name).apply()
     }
 
     private fun setDarkTheme(enabled: Boolean) {
@@ -574,7 +627,6 @@ class MainActivity : ComponentActivity() {
         selected = emptySet()
         modelListing = null
         modelListingSelected = emptySet()
-        modelListingSnapshots = emptyList()
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
@@ -1068,11 +1120,6 @@ class MainActivity : ComponentActivity() {
                         catalogExportPicker.launch(filename)
                     },
                     onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
-                    onImportSnapshots = {
-                        if (!working && !scanning && !transferRunning) {
-                            snapshotPicker.launch(arrayOf("*/*"))
-                        } else catalogBackupStatus = "Дождитесь завершения операции."
-                    },
                     backupStatus = catalogBackupStatus,
                     historyCount = history.size
                 )
@@ -1224,9 +1271,8 @@ class MainActivity : ComponentActivity() {
         }
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
-        val previewMode = galleryPreviewMode
-        val justified = previewMode == GalleryPreviewMode.MOSAIC
-        var openedPhoto by remember { mutableStateOf<String?>(null) }
+        val justified = true
+        var openedPhoto by rememberSaveable(url) { mutableStateOf<String?>(null) }
         val aspectRatios = remember(url) { mutableStateMapOf<String, Float>() }
 
         BoxWithConstraints(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize()) {
@@ -1275,31 +1321,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = previewMode == GalleryPreviewMode.MOSAIC,
-                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.MOSAIC) },
-                            label = { Text("Мозаика") }
-                        )
-                        FilterChip(
-                            selected = previewMode == GalleryPreviewMode.TILES,
-                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.TILES) },
-                            label = { Text("Плитка") }
-                        )
-                        FilterChip(
-                            selected = previewMode == GalleryPreviewMode.LIST,
-                            onClick = { chooseGalleryPreviewMode(GalleryPreviewMode.LIST) },
-                            label = { Text("Список без фото") }
-                        )
-                    }
-                    if (previewMode == GalleryPreviewMode.LIST) {
-                        Text(
-                            "Экономия трафика: миниатюры не загружаются. " +
-                                "Для просмотра отдельной фотографии нажмите «Открыть».",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = {
                                 selected = selected + visibleItems.map(Media::url)
@@ -1346,21 +1367,6 @@ class MainActivity : ComponentActivity() {
                     if (checksExpanded) DownloadQualityControls(searchAllowed)
                 }
             }
-            if (previewMode == GalleryPreviewMode.LIST) {
-                items(visibleItems, span = { GridItemSpan(maxLineSpan) },
-                    key = { media -> "text:" + media.url }) { media ->
-                    MediaListRow(
-                        media = media,
-                        checked = media.url in selected,
-                        enabled = searchAllowed,
-                        detail = imageProbeResults[media.url]?.display(),
-                        onOpen = { openedPhoto = media.url },
-                        onCheckedChange = { checked ->
-                            selected = if (checked) selected + media.url else selected - media.url
-                        }
-                    )
-                }
-            } else if (justified) {
                 items(justifiedRows, span = { GridItemSpan(maxLineSpan) },
                     key = { row -> "justified:${row.photos.first().url}" }) { row ->
                     JustifiedPhotoRow(
@@ -1377,19 +1383,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-            } else {
-                items(visibleItems, key = { "media:${it.url}" }) { media ->
-                    MediaTile(
-                        media,
-                        media.url in selected,
-                        searchAllowed,
-                        imageProbeResults[media.url]?.display(),
-                        onOpen = { openedPhoto = media.url }
-                    ) { checked ->
-                        selected = if (checked) selected + media.url else selected - media.url
-                    }
-                }
-            }
             if (showOtherMedia && remainingInList > 0) {
                 item(span = { GridItemSpan(maxLineSpan) }, key = "load-more-photo-variants") {
                     OutlinedButton(
@@ -1948,5 +1941,4 @@ class MainActivity : ComponentActivity() {
         Text("$first: $uploaded · Уже были: $skipped", style = MaterialTheme.typography.bodySmall)
         Text("Ошибки: $failed · Осталось: $remaining", style = MaterialTheme.typography.bodySmall)
     }
-    override fun onDestroy() { scope.cancel(); super.onDestroy() }
 }

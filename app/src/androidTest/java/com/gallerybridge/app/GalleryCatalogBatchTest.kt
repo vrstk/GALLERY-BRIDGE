@@ -34,6 +34,7 @@ class GalleryCatalogBatchTest {
                 )
             }
         }
+        compose.onNodeWithText("Пакетный просмотр").performClick()
         compose.onNodeWithText("Выбрать новые").performClick()
         compose.onNodeWithText("Просмотреть (2)").performClick()
         compose.onNodeWithText("Начать просмотр публикаций?").assertIsDisplayed()

@@ -1,16 +1,12 @@
 package com.gallerybridge.app.ui
 
-/**
- * Display-only preference. Switching modes must not modify selected photos,
- * uploaded files or transfer queues. LIST never creates preview image requests.
- */
+/** The gallery always uses the justified photo mosaic, including legacy installs. */
 enum class GalleryPreviewMode {
-    MOSAIC, TILES, LIST;
+    MOSAIC;
 
-    val preloadsImages: Boolean get() = this != LIST
+    val preloadsImages: Boolean get() = true
 
     companion object {
-        fun restore(value: String?): GalleryPreviewMode =
-            entries.firstOrNull { it.name == value } ?: MOSAIC
+        fun restore(value: String?): GalleryPreviewMode = MOSAIC
     }
 }

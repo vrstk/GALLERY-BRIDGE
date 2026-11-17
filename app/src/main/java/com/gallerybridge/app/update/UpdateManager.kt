@@ -158,7 +158,7 @@ internal class UpdateManager(
             verifyArchive(complete, release)
             if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
                 context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:${context.packageName}")))
+                    Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 state = state.copy(message = "Разрешите установку для GALLERY BRIDGE и нажмите «Установить» снова.")
                 return
             }

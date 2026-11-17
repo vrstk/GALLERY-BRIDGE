@@ -98,7 +98,27 @@ class ModelListingSourcesTest {
         assertFalse(ModelListingSources.accepts("http://www.elitebabes.com/model/example-model/sort/oldest/mpage/1"))
         assertFalse(ModelListingSources.accepts(first+"?token=secret"))
         assertFalse(ModelListingSources.accepts("https://www.elitebabes.com/model/example-model/sort/oldest/mpage/9999"))
-        assertFalse(ModelListingSources.accepts("https://www.elitebabes.com/model/example-model/"))
+        assertTrue(ModelListingSources.accepts("https://www.elitebabes.com/model/example-model/"))
+    }
+
+
+    @Test fun modelLandingPageAndExplicitNextLinksAreDiscovered() {
+        val landing = "https://www.elitebabes.com/model/example-model/"
+        val next = """<a rel="next" href="/model/example-model/sort/oldest/mpage/45/">Next</a>"""
+        val result = ModelListingSources.parse(
+            Jsoup.parse(html(card("https://www.elitebabes.com/example-gallery/", "Gallery", "2026-01-01"), next), landing),
+            landing
+        )!!
+        assertEquals(1, result.photos.size)
+        assertEquals(1, result.address.number)
+        assertEquals(setOf(1, 45), result.pages.keys)
+        assertEquals(100, ModelListingSources.MAX_PAGES)
+    }
+
+    @Test fun foreignNextLinkCannotEscapeModelIndex() {
+        val foreign = """<a rel="next" href="https://foreign.example/model/example-model/sort/oldest/mpage/2/">Next</a>"""
+        val result = ModelListingSources.parse(Jsoup.parse(html("", foreign), first), first)!!
+        assertEquals(setOf(1), result.pages.keys)
     }
 
     @Test fun missingPageDoesNotLookLikeCompleteResult() {

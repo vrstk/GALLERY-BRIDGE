@@ -20,8 +20,8 @@ import com.gallerybridge.app.core.GalleryFields
 import com.gallerybridge.app.core.GalleryKeys
 
 /**
- * Gallery catalog is a source-page index, not a second copy of media files.
- * Users must explicitly open a record before a network scan can begin.
+ * One scroll container for controls AND entries. Bulk tools are collapsed by
+ * default so catalog cards appear immediately instead of below a tall header.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -35,7 +35,6 @@ internal fun GalleryCatalog(
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
     onExport: () -> Unit,
     onImport: () -> Unit,
-    onImportSnapshots: () -> Unit = {},
     backupStatus: String,
     historyCount: Int
 ) {
@@ -44,6 +43,9 @@ internal fun GalleryCatalog(
     var onlyTransferred by rememberSaveable { mutableStateOf(false) }
     var onlyQueued by rememberSaveable { mutableStateOf(false) }
     var onlyAttention by rememberSaveable { mutableStateOf(false) }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
+    var showBatchTools by rememberSaveable { mutableStateOf(false) }
+    var showBackupTools by rememberSaveable { mutableStateOf(false) }
     var batchSelection by rememberSaveable { mutableStateOf(listOf<String>()) }
     var showBatchConfirmation by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<CatalogGallery?>(null) }
@@ -64,210 +66,170 @@ internal fun GalleryCatalog(
         entries.count { GalleryCatalogProgress.resolve(it, queue).needsAttention }
     }
 
-    Column(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        OutlinedTextField(
-            value = query, onValueChange = { query = it },
-            label = { Text("Поиск по каталогу") },
-            placeholder = { Text("Модель, название или ссылка") },
-            singleLine = true, modifier = Modifier.fillMaxWidth(),
-            trailingIcon = if (query.isNotEmpty()) {
-                { TextButton(onClick = { query = "" }) { Text("Сброс") } }
-            } else null
-        )
-        FlowRow(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FilterChip(selected = !alphabetic, onClick = { alphabetic = false },
-                label = { Text("Новые") })
-            FilterChip(selected = alphabetic, onClick = { alphabetic = true },
-                label = { Text("По модели А-Я") })
-            FilterChip(selected = onlyTransferred, onClick = { onlyTransferred = !onlyTransferred },
-                label = { Text("С передачами") })
-            FilterChip(selected = onlyQueued,
-                onClick = {
-                    onlyQueued = !onlyQueued
-                    if (onlyQueued) onlyAttention = false
-                }, label = { Text("В очереди") })
-            FilterChip(selected = onlyAttention,
-                onClick = {
-                    onlyAttention = !onlyAttention
-                    if (onlyAttention) onlyQueued = false
-                }, label = { Text("Требуют внимания") })
+    LazyColumn(
+        modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item(key = "search") {
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                label = { Text("Поиск по каталогу") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                trailingIcon = if (query.isNotEmpty()) {
+                    { TextButton(onClick = { query = "" }) { Text("Сброс") } }
+                } else null
+            )
         }
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(onClick = onExport, enabled = entries.isNotEmpty() || historyCount > 0) {
-                Text("Сохранить копию")
-            }
-            OutlinedButton(onClick = onImport) {
-                Text("Восстановить")
-            }
-            OutlinedButton(onClick = onImportSnapshots) {
-                Text("Импорт MHT")
+        item(key = "sorting") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !alphabetic, onClick = { alphabetic = false },
+                    label = { Text("Новые") })
+                FilterChip(selected = alphabetic, onClick = { alphabetic = true },
+                    label = { Text("По модели А–Я") })
             }
         }
-        Text(
-            "Импорт MHT: выберите до 10 сохранённых страниц каталога модели. " +
-                "Обрабатывается только HTML, без фотографий, видео и запуска загрузок. " +
-                "После проверки публикации можно выбрать для каталога.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "Копия включает каталог, историю загрузок и тему (" + historyCount +
-                " записей истории). Не включает пароли, очередь и фотографии. " +
-                "Храните JSON в личном защищённом месте.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (backupStatus.isNotBlank()) {
-            Text(backupStatus, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.secondary)
-        }
-        if (entries.isNotEmpty()) {
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            Text("Пакетный просмотр", style = MaterialTheme.typography.titleMedium)
+        item(key = "status") {
             Text(
-                "Можно выбрать до ${GalleryBatchSelection.LIMIT} новых публикаций. " +
-                    "Каждая открывается вручную по очереди. " +
-                    "Передачи фотографий не запускаются автоматически.",
+                "Показано: ${filtered.size} из ${entries.size}" +
+                    if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    enabled = batchCandidates.isNotEmpty(),
-                    onClick = {
-                        batchSelection = batchCandidates.take(GalleryBatchSelection.LIMIT)
-                            .map { it.url }
+        }
+        item(key = "tools") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { showFilters = !showFilters }) {
+                    Text(if (showFilters) "Скрыть фильтры" else "Фильтры")
+                }
+                if (entries.isNotEmpty()) {
+                    TextButton(onClick = { showBatchTools = !showBatchTools }) {
+                        Text("Пакетный просмотр")
                     }
-                ) { Text("Выбрать новые") }
-                TextButton(
-                    enabled = batchSelection.isNotEmpty(),
-                    onClick = { batchSelection = emptyList() }
-                ) { Text("Снять выбор") }
-                Button(
-                    enabled = selectedBatch.isNotEmpty(),
-                    onClick = { showBatchConfirmation = true }
-                ) { Text("Просмотреть (${selectedBatch.size})") }
-            }
-            if (batchSelection.isNotEmpty()) {
-                Text(
-                    "Подходят для просмотра: ${selectedBatch.size} из ${batchSelection.size} выбранных.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                }
+                TextButton(onClick = { showBackupTools = !showBackupTools }) {
+                    Text("Резервная копия")
+                }
             }
         }
-        Text(
-            "Требуют внимания: " + attentionCount +
-                ". Статусы отражают обработку файлов приложением, не синхронизацию облака.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "Показано: " + filtered.size + " из " + entries.size,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        if (showFilters) item(key = "filters") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = onlyTransferred, onClick = { onlyTransferred = !onlyTransferred },
+                    label = { Text("С передачами") })
+                FilterChip(selected = onlyQueued, onClick = {
+                    onlyQueued = !onlyQueued
+                    if (onlyQueued) onlyAttention = false
+                }, label = { Text("В очереди") })
+                FilterChip(selected = onlyAttention, onClick = {
+                    onlyAttention = !onlyAttention
+                    if (onlyAttention) onlyQueued = false
+                }, label = { Text("Требуют внимания") })
+            }
+        }
+        if (showBackupTools || backupStatus.isNotBlank()) item(key = "backup") {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (showBackupTools) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onExport, enabled = entries.isNotEmpty() || historyCount > 0) {
+                            Text("Сохранить копию")
+                        }
+                        OutlinedButton(onClick = onImport) { Text("Восстановить") }
+                    }
+                    Text(
+                        "Копия: каталог, до 40 записей истории и тема. " +
+                            "Без паролей, очередей и фотографий. Храните JSON в защищённом месте.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (backupStatus.isNotBlank()) {
+                    Text(backupStatus, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary)
+                }
+            }
+        }
+        if (showBatchTools && entries.isNotEmpty()) item(key = "batch") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("До ${GalleryBatchSelection.LIMIT} публикаций. Каждая открывается вручную; передачи не запускаются.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = batchCandidates.isNotEmpty(),
+                        onClick = {
+                            batchSelection = batchCandidates.take(GalleryBatchSelection.LIMIT)
+                                .map { it.url }
+                        }
+                    ) { Text("Выбрать новые") }
+                    TextButton(enabled = batchSelection.isNotEmpty(),
+                        onClick = { batchSelection = emptyList() }) { Text("Снять выбор") }
+                    Button(enabled = selectedBatch.isNotEmpty(),
+                        onClick = { showBatchConfirmation = true }) {
+                        Text("Просмотреть (${selectedBatch.size})")
+                    }
+                }
+            }
+        }
         if (entries.isEmpty()) {
-            Text(
-                "Каталог пока пуст. Сохраните имя модели и название галереи на экране загрузки. " +
-                    "Новые передачи по HTTPS-ссылкам также появятся здесь.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 20.dp)
-            )
+            item(key = "empty") {
+                Text("Каталог пока пуст. Найдите фотогалерею по HTTPS-ссылке и сохраните её данные.",
+                    style = MaterialTheme.typography.bodyMedium)
+            }
         } else if (filtered.isEmpty()) {
-            Column(Modifier.padding(top = 16.dp)) {
-                Text("По текущему поиску и фильтрам ничего не найдено.")
-                TextButton(onClick = {
-                    query = ""
-                    onlyTransferred = false
-                    onlyQueued = false
-                    onlyAttention = false
-                }) {
-                    Text("Сбросить фильтры")
+            item(key = "none") {
+                Column {
+                    Text("По текущим фильтрам ничего не найдено.")
+                    TextButton(onClick = {
+                        query = ""; alphabetic = false; onlyTransferred = false
+                        onlyQueued = false; onlyAttention = false
+                    }) { Text("Сбросить фильтры") }
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(filtered, key = { it.url }) { item ->
-                    val status = GalleryCatalogProgress.resolve(item, queue)
-                    OutlinedCard(
-                        onClick = { onOpen(item) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.outlinedCardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                        )
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                            if (GalleryBatchSelection.eligible(item, queue)) {
-                                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = item.url in batchSelection,
-                                        onCheckedChange = { checked ->
-                                            batchSelection = if (checked) {
-                                                (batchSelection + item.url)
-                                                    .distinct().take(GalleryBatchSelection.LIMIT)
-                                            } else batchSelection - item.url
-                                        },
-                                        enabled = item.url in batchSelection ||
-                                            batchSelection.size < GalleryBatchSelection.LIMIT
-                                    )
-                                    Text("В пакетный просмотр")
-                                }
+            items(filtered, key = { it.url }) { entry ->
+                val progress = GalleryCatalogProgress.resolve(entry, queue)
+                OutlinedCard(
+                    onClick = { onOpen(entry) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    )
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            if (showBatchTools && GalleryBatchSelection.eligible(entry, queue)) {
+                                Checkbox(
+                                    checked = entry.url in batchSelection,
+                                    onCheckedChange = { checked ->
+                                        batchSelection = if (checked) {
+                                            (batchSelection + entry.url).distinct()
+                                                .take(GalleryBatchSelection.LIMIT)
+                                        } else batchSelection - entry.url
+                                    },
+                                    enabled = entry.url in batchSelection ||
+                                        batchSelection.size < GalleryBatchSelection.LIMIT
+                                )
                             }
-                            Text(
-                                item.model.ifBlank { "Без имени" },
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                item.title.ifBlank { "Без названия" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 2, overflow = TextOverflow.Ellipsis
-                            )
-                            if (item.date.isNotBlank()) {
-                                Text(item.date, style = MaterialTheme.typography.bodySmall)
+                            Column(Modifier.weight(1f)) {
+                                Text(entry.model.ifBlank { "Без имени" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(entry.title.ifBlank { "Без названия" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
-                            Text(
-                                item.url, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                status.title,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (status.needsAttention) MaterialTheme.colorScheme.error
-                                    else MaterialTheme.colorScheme.secondary
-                            )
-                            Text(
-                                status.detail, style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (item.target.isNotBlank()) {
-                                Text(item.target + " · " + item.outcome,
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
-                                maxItemsInEachRow = 3
-                            ) {
-                                TextButton(onClick = { pendingRemoval = item }) { Text("Убрать") }
-                                TextButton(onClick = { pendingEdit = item }) { Text("Изменить") }
-                                if (status.linkedQueue) {
-                                    TextButton(onClick = onQueue) { Text("К очереди") }
-                                }
-                                TextButton(onClick = { onOpen(item) }) { Text("Открыть") }
+                        }
+                        Text(progress.title + if (entry.date.isNotBlank()) " · ${entry.date}" else "",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (progress.needsAttention) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.secondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(onClick = { onOpen(entry) }) { Text("Открыть") }
+                            TextButton(onClick = { pendingEdit = entry }) { Text("Изменить") }
+                            TextButton(onClick = { pendingRemoval = entry }) { Text("Убрать") }
+                            if (progress.linkedQueue) {
+                                TextButton(onClick = onQueue) { Text("Очередь") }
                             }
                         }
                     }
