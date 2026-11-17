@@ -69,6 +69,7 @@ import kotlinx.coroutines.*
 class MainActivity : ComponentActivity() {
     private val session: GallerySessionState by viewModels()
     private val scope get() = session.viewModelScope
+    private var recoverableSession by mutableStateOf<GallerySearchSessionStore.Snapshot?>(null)
     private var url
         get() = session.url
         set(value) { session.url = value }
@@ -416,23 +417,15 @@ class MainActivity : ComponentActivity() {
         val previousLink = savedInstanceState?.getString("galleryUrl")
         val sharedLink = intent?.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.startsWith("https://") }
         val previousSession = GallerySearchSessionStore.load(this)
-        (previousLink ?: sharedLink ?: previousSession?.url)?.let(::setGalleryUrl)
-        if (sharedLink == null && previousSession != null &&
+        (previousLink ?: sharedLink)?.let(::setGalleryUrl)
+        if (savedInstanceState != null && sharedLink == null && previousSession != null &&
             (url == previousSession.url || GalleryKeys.same(url, previousSession.url))) {
-            model = previousSession.model
-            title = previousSession.title
-            date = previousSession.date
-            items = previousSession.items
-            selected = previousSession.selected
-            recommendedUrls = previousSession.recommended
-            if (savedInstanceState == null) {
-                screen = GalleryPage.entries.firstOrNull { it.name == previousSession.screen }
-                    ?: GalleryPage.HOME
-            }
-            if (ModelListingSources.accepts(url)) {
-                ModelListingCheckpointStore.read(this)?.takeIf { it.source == url && it.finished }
-                    ?.let { modelListing = it.result() }
-            }
+            applyRecoveredSession(previousSession, restoreScreen = false)
+        } else if (savedInstanceState == null && sharedLink == null &&
+            previousSession != null && (previousSession.items.isNotEmpty() ||
+                ModelListingSources.accepts(previousSession.url))) {
+            // Fresh launch always opens Home; recovery is explicit and non-destructive.
+            recoverableSession = previousSession
         }
         if (previousLink != null) {
             model = savedInstanceState.getString("galleryModel") ?: model
@@ -461,14 +454,37 @@ class MainActivity : ComponentActivity() {
 
     /** On backgrounding, preserve viewing results without mutating the transfer queue. */
     override fun onStop() {
-        if (session.initialized) saveViewingSession()
+        if (session.initialized && recoverableSession == null) saveViewingSession()
         super.onStop()
     }
 
     private fun saveViewingSession() {
+        if (recoverableSession != null) return
         runCatching {
             GallerySearchSessionStore.save(this, GallerySearchSessionStore.Snapshot(
                 url, model, title, date, screen.name, items, selected, recommendedUrls))
+        }
+    }
+
+    private fun applyRecoveredSession(
+        snapshot: GallerySearchSessionStore.Snapshot, restoreScreen: Boolean
+    ) {
+        recoverableSession = null
+        setGalleryUrl(snapshot.url)
+        model = snapshot.model
+        title = snapshot.title
+        date = snapshot.date
+        items = snapshot.items
+        selected = snapshot.selected
+        recommendedUrls = snapshot.recommended
+        if (ModelListingSources.accepts(snapshot.url)) {
+            ModelListingCheckpointStore.read(this)?.takeIf {
+                it.source == snapshot.url && it.finished
+            }?.let { modelListing = it.result() }
+        }
+        if (restoreScreen) {
+            screen = GalleryPage.entries.firstOrNull { it.name == snapshot.screen }
+                ?: GalleryPage.HOME
         }
     }
 
@@ -727,6 +743,7 @@ class MainActivity : ComponentActivity() {
             (newUrl.isBlank() && url.isNotBlank())
         url = newUrl
         if (!changed) return
+        recoverableSession = null
         cancelImageSizes()
         items = emptyList()
         selected = emptySet()
@@ -1177,6 +1194,12 @@ class MainActivity : ComponentActivity() {
             when (screen) {
                 GalleryPage.HOME -> GalleryPageColumn {
                     BatchReviewControls()
+                    recoverableSession?.let { snapshot ->
+                        OutlinedButton(onClick = { applyRecoveredSession(snapshot, restoreScreen = true) },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text("Восстановить предыдущий просмотр")
+                        }
+                    }
                     GalleryHome(
                     url = url,
                     onUrlChange = ::setGalleryUrl,
