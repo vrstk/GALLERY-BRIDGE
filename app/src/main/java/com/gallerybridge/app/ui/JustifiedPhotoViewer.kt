@@ -3,7 +3,8 @@ package com.gallerybridge.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
@@ -187,19 +188,21 @@ internal fun FullscreenPhotoViewer(
         Box(
             Modifier.fillMaxSize().background(Color.Black)
                 .onSizeChanged { viewerSize = it }
-                .combinedClickable(
-                    onClick = { controlsVisible = !controlsVisible },
-                    onDoubleClick = {
-                        zoom = if (zoom > 1.01f) 1f
-                            else PhotoZoomMath.doubleTapScale(
-                                viewerSize.width.toFloat(),
-                                viewerSize.height.toFloat(),
-                                activeAspectRatio
-                            )
-                        panX = 0f
-                        panY = 0f
-                    }
-                )
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { controlsVisible = !controlsVisible },
+                        onDoubleTap = {
+                            zoom = if (zoom > 1.01f) 1f
+                                else PhotoZoomMath.doubleTapScale(
+                                    viewerSize.width.toFloat(),
+                                    viewerSize.height.toFloat(),
+                                    activeAspectRatio
+                                )
+                            panX = 0f
+                            panY = 0f
+                        }
+                    )
+                }
                 .testTag("fullscreen-photo-viewer")
         ) {
             HorizontalPager(
