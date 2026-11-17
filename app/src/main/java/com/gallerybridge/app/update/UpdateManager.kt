@@ -49,8 +49,27 @@ internal class UpdateManager(
     private var downloadJob: Job? = null
     var automatic by mutableStateOf(preferences.getBoolean("automatic", true))
         private set
-    var state by mutableStateOf(State(lastCheck = preferences.getLong("lastSuccess", preferences.getLong("lastCheck", 0L))))
+    private val storedRelease = preferences.getString("validatedManifest", null)
+        ?.let { raw -> runCatching { UpdatePolicy.parse(raw) }.getOrNull() }
+        ?.takeIf { UpdatePolicy.isNewer(it.code, installedCode()) }
+    var state by mutableStateOf(State(
+        lastCheck = preferences.getLong("lastSuccess", preferences.getLong("lastCheck", 0L)),
+        release = storedRelease))
         private set
+
+    init {
+        // The previous APK can be reused only after re-verification on each process start.
+        val release = storedRelease
+        if (release != null && complete.isFile) scope.launch {
+            val valid = withContext(Dispatchers.IO) {
+                runCatching { verifyArchive(complete, release); true }.getOrDefault(false)
+            }
+            if (valid && state.release == release && !state.downloading) {
+                state = state.copy(ready = true, progress = 100,
+                    message = "Ранее скачанная APK повторно проверена.")
+            }
+        }
+    }
     private var lastAttempt = preferences.getLong("lastAttempt", state.lastCheck)
 
     fun setAutoCheck(enabled: Boolean) {
@@ -67,7 +86,7 @@ internal class UpdateManager(
         checkJob = scope.launch {
             state = state.copy(checking = true, message = "Проверяем обновления…")
             try {
-                val release = withContext(Dispatchers.IO) {
+                val (manifest, release) = withContext(Dispatchers.IO) {
                     val response = JSONObject(readText(UpdatePolicy.API, 200_000))
                     val assets = response.getJSONArray("assets")
                     var found = false
@@ -78,14 +97,19 @@ internal class UpdateManager(
                             a.getLong("size") in 1L..50_000L) found = true
                     }
                     require(found) { "В preview-signed ещё нет update.json" }
-                    UpdatePolicy.parse(readText(UpdatePolicy.MANIFEST, 50_000))
+                    val json = readText(UpdatePolicy.MANIFEST, 50_000)
+                    json to UpdatePolicy.parse(json)
                 }
                 val newer = UpdatePolicy.isNewer(release.code, installedCode())
                 removeTemp()
                 val checked = System.currentTimeMillis()
                 state = state.copy(release = release.takeIf { newer }, ready = false, lastCheck = checked,
                     message = if (newer) "Доступна версия ${release.version}" else "Установлена актуальная версия")
-                preferences.edit().putLong("lastSuccess", checked).apply()
+                preferences.edit().putLong("lastSuccess", checked)
+                    .apply {
+                        if (newer) putString("validatedManifest", manifest)
+                        else remove("validatedManifest")
+                    }.apply()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 state = state.copy(message = "Проверка не удалась: ${e.message ?: "нет соединения"}")

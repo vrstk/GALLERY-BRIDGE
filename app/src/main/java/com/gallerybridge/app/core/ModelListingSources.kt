@@ -42,7 +42,7 @@ object ModelListingSources {
 
     fun accepts(raw: String): Boolean = address(raw) != null
 
-    private fun publicationUrl(raw: String): String? {
+    internal fun publicationUrl(raw: String): String? {
         val u = raw.toHttpUrlOrNull() ?: return null
         if (u.scheme != "https" || u.port != 443 ||
             u.host !in setOf("elitebabes.com", "www.elitebabes.com") ||
@@ -93,6 +93,30 @@ object ModelListingSources {
             doc.select("#load-more, #loader").isNotEmpty(),
             count.find(doc.title())?.groupValues?.get(1)?.toIntOrNull()
         )
+    }
+
+
+    /**
+     * Continue only after the server itself exposed numbered oldest-page links.
+     * Never probe guessed hosts, arbitrary routes or out-of-range page numbers.
+     * Stop at the cap; a blank/repeated page will be handled by the scanner.
+     */
+    fun nextNumberedPage(
+        pages: List<Page>, attempted: Set<Int>
+    ): Pair<Int, String>? {
+        if (pages.isEmpty() || attempted.isEmpty()) return null
+        val candidate = pages.asSequence().flatMap { it.pages.values.asSequence() }
+            .firstOrNull { link ->
+                val address = address(link)
+                address != null && address.number > 1 &&
+                    link.contains("/sort/oldest/mpage/")
+            } ?: return null
+        val expected = pages.first().address.slug
+        val pattern = Regex("""/mpage/[1-9][0-9]*(?=/|$)""")
+        val number = (attempted.maxOrNull() ?: return null) + 1
+        if (number !in 2..MAX_PAGES) return null
+        val next = candidate.replace(pattern, "/mpage/$number")
+        return if (address(next) == Address(expected, number)) number to next else null
     }
 
     fun combine(

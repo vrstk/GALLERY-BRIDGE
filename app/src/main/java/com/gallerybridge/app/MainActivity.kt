@@ -10,6 +10,11 @@ import androidx.documentfile.provider.DocumentFile
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.gallerybridge.app.network.ModelListingScanWorker
+import kotlinx.coroutines.flow.collect
 import androidx.lifecycle.viewModelScope
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -410,11 +415,29 @@ class MainActivity : ComponentActivity() {
             .getBoolean(TransferService.KEY_RUNNING, false)
         val previousLink = savedInstanceState?.getString("galleryUrl")
         val sharedLink = intent?.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.startsWith("https://") }
-        (previousLink ?: sharedLink)?.let(::setGalleryUrl)
+        val previousSession = GallerySearchSessionStore.load(this)
+        (previousLink ?: sharedLink ?: previousSession?.url)?.let(::setGalleryUrl)
+        if (sharedLink == null && previousSession != null &&
+            (url == previousSession.url || GalleryKeys.same(url, previousSession.url))) {
+            model = previousSession.model
+            title = previousSession.title
+            date = previousSession.date
+            items = previousSession.items
+            selected = previousSession.selected
+            recommendedUrls = previousSession.recommended
+            if (savedInstanceState == null) {
+                screen = GalleryPage.entries.firstOrNull { it.name == previousSession.screen }
+                    ?: GalleryPage.HOME
+            }
+            if (ModelListingSources.accepts(url)) {
+                ModelListingCheckpointStore.read(this)?.takeIf { it.source == url && it.finished }
+                    ?.let { modelListing = it.result() }
+            }
+        }
         if (previousLink != null) {
-            model = savedInstanceState?.getString("galleryModel") ?: model
-            title = savedInstanceState?.getString("galleryTitle") ?: title
-            date = savedInstanceState?.getString("galleryDate") ?: date
+            model = savedInstanceState.getString("galleryModel") ?: model
+            title = savedInstanceState.getString("galleryTitle") ?: title
+            date = savedInstanceState.getString("galleryDate") ?: date
         }
         session.initialized = true
         }
@@ -427,12 +450,87 @@ class MainActivity : ComponentActivity() {
             .getBoolean(TransferService.KEY_RUNNING, false)
         applySystemBars()
         setContent { GalleryTheme(dark) { Ui() } }
+        observeModelScan()
         if (packageName == "com.gallerybridge.app.preview.signed") updater.check(auto = true)
     }
 
     override fun onResume() {
         super.onResume()
         refreshFolderAccess()
+    }
+
+    /** On backgrounding, preserve viewing results without mutating the transfer queue. */
+    override fun onStop() {
+        if (session.initialized) saveViewingSession()
+        super.onStop()
+    }
+
+    private fun saveViewingSession() {
+        runCatching {
+            GallerySearchSessionStore.save(this, GallerySearchSessionStore.Snapshot(
+                url, model, title, date, screen.name, items, selected, recommendedUrls))
+        }
+    }
+
+    /** WorkManager owns the network task; UI observes it after Activity recreation. */
+    private fun observeModelScan() {
+        lifecycleScope.launch {
+            WorkManager.getInstance(applicationContext)
+                .getWorkInfosForUniqueWorkFlow(ModelListingScanWorker.UNIQUE)
+                .collect { infos ->
+                    val checkpoint = ModelListingCheckpointStore.read(this@MainActivity)
+                        ?: return@collect
+                    if (url != checkpoint.source) return@collect
+                    val info = infos.firstOrNull { it.id.toString() == checkpoint.requestId }
+                        ?: return@collect
+                    when (info.state) {
+                        WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
+                            scanning = true
+                            working = true
+                            val n = info.progress.getInt(ModelListingScanWorker.LOADED,
+                                checkpoint.pages.size)
+                            val total = info.progress.getInt(ModelListingScanWorker.TOTAL, 0)
+                            status = if (total > 0) "Чтение страниц каталога: $n из $total."
+                                else "Поиск публикаций продолжается в фоне. Страниц: $n."
+                        }
+                        WorkInfo.State.SUCCEEDED -> {
+                            scanning = false
+                            working = false
+                            if (checkpoint.finished) {
+                                modelListing = checkpoint.result()
+                                status = "Найдено фотопубликаций: ${modelListing?.photos?.size ?: 0}. " +
+                                    if (modelListing?.incomplete == true)
+                                        "Список может быть неполным, проверьте сообщение ниже."
+                                    else "Обработаны доступные страницы."
+                            } else status = "Не удалось сохранить результат поиска."
+                        }
+                        WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                            scanning = false
+                            working = false
+                            if (checkpoint.pages.isNotEmpty()) {
+                                modelListing = checkpoint.result()
+                                status = "Поиск остановлен. Показаны только подтверждённые " +
+                                    "страницы (${checkpoint.pages.size}); список неполный."
+                            } else {
+                                status = if (info.state == WorkInfo.State.FAILED)
+                                    "Поиск не выполнен. Проверьте сеть и повторите."
+                                    else "Поиск отменён."
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun stopSearch() {
+        if (ModelListingSources.accepts(url) && scanning) {
+            WorkManager.getInstance(applicationContext)
+                .cancelUniqueWork(ModelListingScanWorker.UNIQUE)
+            status = "Поиск остановлен. Ранее найденные публикации сохраняются."
+        } else {
+            scanJob?.cancel()
+            status = "Поиск прерывается; передача не запускалась."
+        }
     }
 
     private fun refreshFolderAccess() {
@@ -731,21 +829,21 @@ class MainActivity : ComponentActivity() {
         showDestination = false
         uploadStatus = ""
         scanJob?.cancel()
+        if (ModelListingSources.accepts(requestedUrl)) {
+            try {
+                ModelListingScanWorker.enqueue(applicationContext, requestedUrl)
+                modelListing = null
+                modelListingSelected = emptySet()
+                status = "Поиск фотопубликаций запущен. Можно свернуть приложение."
+            } catch (e: Exception) {
+                scanning = false
+                working = false
+                status = "Не удалось запустить поиск: ${e.message ?: "ошибка"}"
+            }
+            return
+        }
         scanJob = scope.launch {
             try {
-                if (ModelListingSources.accepts(requestedUrl)) {
-                    val found = Services.scanModelIndex(requestedUrl) { loaded, total ->
-                        if (url == requestedUrl) status = "Чтение страниц каталога: $loaded из $total."
-                    }
-                    ensureActive()
-                    if (requestedUrl != url) return@launch
-                    modelListing = found
-                    modelListingSelected = emptySet()
-                    status = "Обнаружено ${found.photos.size} фотопубликаций. " +
-                        if (found.incomplete) "Список неполный: есть подгрузка при прокрутке."
-                        else "Обработаны доступные страницы."
-                    return@launch
-                }
                 val scan = Services.scan(requestedUrl)
                 val photos = scan.media.filter { it.kind == Kind.PHOTO }
                 val recommended = withContext(Dispatchers.Default) {
@@ -772,6 +870,7 @@ class MainActivity : ComponentActivity() {
                 recommendedUrls = recommended
                 selected = recommended
                 items = photos
+                saveViewingSession()
                 status = if (items.isEmpty()) "Фотографии по этой ссылке не найдены."
                     else "Найдено фотографий: ${items.size}"
             } catch (e: CancellationException) {
@@ -1240,10 +1339,7 @@ class MainActivity : ComponentActivity() {
                 Text(status, style = MaterialTheme.typography.bodyMedium)
                 if (scanning) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    TextButton(onClick = {
-                        scanJob?.cancel()
-                        status = "Поиск прерывается; передача не запускалась."
-                    }) { Text("Остановить поиск") }
+                    TextButton(onClick = ::stopSearch) { Text("Остановить поиск") }
                 }
                 QueueShortcut()
                 BatchReviewControls()

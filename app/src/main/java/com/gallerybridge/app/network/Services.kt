@@ -159,12 +159,18 @@ object Services {
      * the HTML snapshots: never claim that the first visible 20 are complete.
      * No gallery images or videos are downloaded here.
      */
+    /**
+     * Bounded HTML discovery with resumable checked pages. HTML checkpoints
+     * are metadata only: neither photos nor videos are downloaded.
+     */
     suspend fun scanModelIndex(
         raw: String,
-        progress: suspend (Int, Int) -> Unit
+        progress: suspend (Int, Int) -> Unit,
+        recovered: List<ModelListingSources.Page> = emptyList(),
+        onPage: suspend (ModelListingSources.Page) -> Unit = {}
     ): ModelListingSources.Result = withContext(Dispatchers.IO) {
         val expected = ModelListingSources.address(raw)
-            ?: error("Нужна HTTPS-ссылка Elite Babes на раздел oldest/mpage.")
+            ?: error("Нужна HTTPS-ссылка на страницу поддерживаемой модели.")
         val listingClient = http.newBuilder()
             .followRedirects(false).followSslRedirects(false)
             .callTimeout(25L, TimeUnit.SECONDS).build()
@@ -177,7 +183,7 @@ object Services {
             val response = listingClient.newCall(request(link)).execute()
             return response.use { r ->
                 require(r.code == 200) { "Каталог вернул HTTP ${r.code}." }
-                require(ModelListingSources.address(r.request.url.toString()) != null) {
+                require(ModelListingSources.address(r.request.url.toString())?.slug == expected.slug) {
                     "Адрес страницы изменился."
                 }
                 val mime = r.header("Content-Type").orEmpty().lowercase()
@@ -205,40 +211,75 @@ object Services {
             }
         }
 
-        val pages = mutableListOf<ModelListingSources.Page>()
+        val pages = recovered.filter { it.address.slug == expected.slug }
+            .distinctBy { it.address.number }.toMutableList()
         val errors = mutableListOf<String>()
+        val attempted = pages.mapTo(mutableSetOf()) { it.address.number }
         val found = sortedMapOf<Int, String>()
-        val first = readPage(raw)
-        pages.add(first)
-        found.putAll(first.pages)
-        found.remove(first.address.number)
-        val attempted = mutableSetOf(first.address.number)
+        if (pages.isEmpty()) {
+            val first = readPage(raw)
+            pages.add(first)
+            attempted.add(first.address.number)
+            onPage(first)
+        }
+        pages.forEach { page ->
+            page.pages.forEach { (number, link) ->
+                if (number !in attempted && ModelListingSources.address(link)?.slug == expected.slug)
+                    found.putIfAbsent(number, link)
+            }
+        }
         var capped = false
-        withContext(Dispatchers.Main) { progress(1, found.size + 1) }
-        while (found.isNotEmpty()) {
+        var fallbackActive = false
+        progress(pages.size, pages.size + found.size)
+        while (true) {
             coroutineContext.ensureActive()
             if (pages.size >= ModelListingSources.MAX_PAGES) {
-                capped = true
+                capped = found.isNotEmpty() || ModelListingSources.nextNumberedPage(pages, attempted) != null
                 break
             }
-            val (number, url) = found.entries.first().let { it.key to it.value }
+            if (found.isEmpty()) {
+                val next = ModelListingSources.nextNumberedPage(pages, attempted)
+                    ?: break
+                // Only follow an HTML page-number pattern demonstrated by the server.
+                found[next.first] = next.second
+                fallbackActive = true
+            }
+            val (number, link) = found.entries.first().let { it.key to it.value }
             found.remove(number)
             if (!attempted.add(number)) continue
             try {
-                val page = readPage(url)
+                val page = readPage(link)
                 if (page.address.slug != expected.slug || page.address.number != number) {
                     error("Номер страницы не совпадает с ожидаемым.")
                 }
-                pages.add(page)
-                page.pages.forEach { (pageNum, link) ->
-                    if (pageNum !in attempted && pageNum !in found) found[pageNum] = link
+                // Sites sometimes return the last page again for out-of-range numbers.
+                if (page.cardCount == 0 ||
+                    pages.any { it.cardCount > 0 && it.photos.map { p -> p.url } ==
+                        page.photos.map { p -> p.url } && it.videos == page.videos }
+                ) {
+                    if (page.cardCount == 0 && page.photos.isEmpty()) break
+                    errors.add("Сайт повторил уже прочитанную страницу №$number.")
+                    break
                 }
+                pages.add(page)
+                onPage(page)
+                page.pages.forEach { (num, next) ->
+                    if (num !in attempted && num !in found &&
+                        ModelListingSources.address(next)?.slug == expected.slug)
+                        found[num] = next
+                }
+                // A strictly increasing numbered scan is deliberately bounded.
+                if (fallbackActive && pages.sumOf { it.cardCount } >=
+                    (pages.mapNotNull { it.advertisedCount }.maxOrNull() ?: Int.MAX_VALUE)
+                ) break
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                errors.add("Не удалось прочитать страницу №$number.")
+            } catch (e: Exception) {
+                errors.add("Не удалось прочитать страницу №$number: ${e.message ?: "сеть недоступна"}.")
+                // Do not infer farther page numbers after a failed request.
+                if (fallbackActive) break
             }
-            withContext(Dispatchers.Main) { progress(pages.size, pages.size + found.size) }
+            progress(pages.size, (pages.size + found.size).coerceAtMost(ModelListingSources.MAX_PAGES))
         }
         ModelListingSources.combine(pages, errors, capped)
     }
