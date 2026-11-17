@@ -44,7 +44,7 @@ class FullscreenPhotoViewerTest {
         compose.onNodeWithTag("fullscreen-photo-selection").performClick()
         compose.runOnIdle { assertEquals(1, selections) }
 
-        compose.onNodeWithTag("fullscreen-photo-image").performClick()
+        compose.onNodeWithTag("fullscreen-photo-viewer").performClick()
         // Combined clicks wait for the Android double-tap timeout before
         // committing a *single* tap. waitForIdle alone can return too early.
         compose.waitUntil(timeoutMillis = 5_000) {
@@ -54,7 +54,7 @@ class FullscreenPhotoViewerTest {
         compose.onNodeWithTag("fullscreen-photo-controls-top").assertDoesNotExist()
         compose.onNodeWithTag("fullscreen-photo-controls-bottom").assertDoesNotExist()
 
-        compose.onNodeWithTag("fullscreen-photo-image").performClick()
+        compose.onNodeWithTag("fullscreen-photo-viewer").performClick()
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithTag("fullscreen-photo-controls-top")
                 .fetchSemanticsNodes().isNotEmpty()

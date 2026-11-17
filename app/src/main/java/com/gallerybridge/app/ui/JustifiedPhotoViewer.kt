@@ -22,8 +22,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -138,6 +139,8 @@ internal fun FullscreenPhotoViewer(
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     var panX by rememberSaveable { mutableFloatStateOf(0f) }
     var panY by rememberSaveable { mutableFloatStateOf(0f) }
+    var activeAspectRatio by remember { mutableFloatStateOf(0f) }
+    var viewerSize by remember { mutableStateOf(IntSize.Zero) }
 
     // Switching pictures resets the transform, but rotation restores it for the
     // current picture. A stored transform must never disable swiping on a new one.
@@ -148,6 +151,7 @@ internal fun FullscreenPhotoViewer(
             zoom = 1f
             panX = 0f
             panY = 0f
+            activeAspectRatio = 0f
         }
     }
     BackHandler(onBack = onClose)
@@ -180,7 +184,24 @@ internal fun FullscreenPhotoViewer(
             }
         }
 
-        Box(Modifier.fillMaxSize().background(Color.Black).testTag("fullscreen-photo-viewer")) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black)
+                .onSizeChanged { viewerSize = it }
+                .combinedClickable(
+                    onClick = { controlsVisible = !controlsVisible },
+                    onDoubleClick = {
+                        zoom = if (zoom > 1.01f) 1f
+                            else PhotoZoomMath.doubleTapScale(
+                                viewerSize.width.toFloat(),
+                                viewerSize.height.toFloat(),
+                                activeAspectRatio
+                            )
+                        panX = 0f
+                        panY = 0f
+                    }
+                )
+                .testTag("fullscreen-photo-viewer")
+        ) {
             HorizontalPager(
                 state = pager,
                 key = { photos[it].url },
@@ -223,18 +244,6 @@ internal fun FullscreenPhotoViewer(
                             .transformable(
                                 state = transform,
                                 canPan = { isCurrent && zoom > 1.01f }
-                            )
-                            .combinedClickable(
-                                enabled = isCurrent,
-                                onClick = { controlsVisible = !controlsVisible },
-                                onDoubleClick = {
-                                    zoom = if (zoom > 1.01f) 1f
-                                        else PhotoZoomMath.doubleTapScale(
-                                            boundsWidth, boundsHeight, ratio
-                                        )
-                                    panX = 0f
-                                    panY = 0f
-                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
@@ -251,6 +260,7 @@ internal fun FullscreenPhotoViewer(
                             onAspectRatio = { measured ->
                                 if (measured > 0f && measured.isFinite() && ratio != measured) {
                                     ratio = measured
+                                    if (isCurrent) activeAspectRatio = measured
                                 }
                             }
                         )
