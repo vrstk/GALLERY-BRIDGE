@@ -59,6 +59,13 @@ class GalleryTransferGuardTest {
                 queue("BLOCKED", "https://example.org/another")))
     }
 
+    @Test fun recordedPhotoMatchesRequireReviewEvenWithoutCatalogTransfer() {
+        assertEquals(GalleryTransferGuard.Decision.REVIEW,
+            GalleryTransferGuard.assess(url, emptyList(), null, hasRecordedMatches = true))
+        assertEquals(GalleryTransferGuard.Decision.CLEAR,
+            GalleryTransferGuard.assess(url, emptyList(), null, hasRecordedMatches = false))
+    }
+
     @Test fun sourceLessLegacyAndManualImportsDoNotGuessPriorTransfers() {
         assertEquals(GalleryTransferGuard.Decision.CLEAR,
             GalleryTransferGuard.assess("", listOf(saved), queue("DONE")))

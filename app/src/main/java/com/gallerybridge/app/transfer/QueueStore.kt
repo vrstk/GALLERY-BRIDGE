@@ -120,6 +120,16 @@ object QueueStore {
             throw CheckpointFailure("Элемент очереди изменился; повторная запись результата заблокирована.")
         }
         save(context, after)
+        if (state == "DONE" || state == "SKIPPED") {
+            try {
+                PhotoOutcomeLedger.remember(context, after)
+            } catch (_: Exception) {
+                // The queue checkpoint already succeeded, so retrying the file is unsafe.
+                throw CheckpointFailure(
+                    "Файл обработан, но журнал фотографий не сохранён. Передача остановлена; очередь сохранена."
+                )
+            }
+        }
     }
 
     /** Only explicit user confirmation can re-enable a file whose write outcome was uncertain. */
@@ -144,6 +154,8 @@ object QueueStore {
     @Synchronized fun clearIfId(context: Context, id: Long): Boolean {
         val current = load(context) ?: return false
         if (current.id != id) return false
+        // Preserve confirmed per-photo outcomes before discarding the only detailed queue.
+        PhotoOutcomeLedger.remember(context, current)
         return storage(context).edit().remove(KEY).commit()
     }
 

@@ -47,6 +47,7 @@ import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.transfer.HistoryStore
 import com.gallerybridge.app.transfer.PortableHistoryBackup
+import com.gallerybridge.app.transfer.PhotoOutcomeLedger
 import com.gallerybridge.app.security.SecureMailCredentials
 import com.gallerybridge.app.ui.*
 import com.gallerybridge.app.update.UpdateManager
@@ -811,8 +812,19 @@ class MainActivity : ComponentActivity() {
             uploadStatus = setupError
             return
         }
+        val selectedPhotos = items.filter { it.kind == Kind.PHOTO && it.url in selected }
+        val matched = try {
+            PhotoOutcomeLedger.matchedUrls(
+                this, url, target, if (target == "Папка Android") treeUri else mailRoot,
+                if (target == "Mail WebDAV") email.trim() else "",
+                selectedPhotos, QueueStore.load(this)
+            )
+        } catch (e: Exception) {
+            uploadStatus = "Журнал фотографий недоступен: ${e.message}. Новая передача заблокирована."
+            return
+        }
         when (GalleryTransferGuard.assess(
-            url, GalleryCatalogStore.load(this), QueueStore.load(this)
+            url, GalleryCatalogStore.load(this), QueueStore.load(this), matched.isNotEmpty()
         )) {
             GalleryTransferGuard.Decision.BLOCKED -> {
                 uploadStatus = "У этой публикации осталась незавершённая очередь. Откройте её и проверьте файлы перед повтором."
@@ -1371,6 +1383,19 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun DestinationDialog() {
         if (showRepeatConfirmation) {
+            val selectedPhotos = items.filter { it.kind == Kind.PHOTO && it.url in selected }
+            val matched = runCatching {
+                PhotoOutcomeLedger.matchedUrls(
+                    this@MainActivity, url, target,
+                    if (target == "Папка Android") treeUri else mailRoot,
+                    if (target == "Mail WebDAV") email.trim() else "",
+                    selectedPhotos, QueueStore.load(this@MainActivity)
+                )
+            }.getOrElse {
+                showRepeatConfirmation = false
+                uploadStatus = "Не удалось проверить журнал фотографий: ${it.message}"
+                return
+            }
             GalleryRepeatReviewDialog(
                 onConfirm = {
                     repeatConsent = repeatReviewKey()
@@ -1380,7 +1405,17 @@ class MainActivity : ComponentActivity() {
                 onCancel = {
                     showRepeatConfirmation = false
                     repeatConsent = null
-                }
+                },
+                matchedCount = matched.size,
+                totalCount = selectedPhotos.size,
+                onOnlyUnmarked = if (matched.isNotEmpty() && matched.size < selectedPhotos.size) {
+                    {
+                        selected = selected - matched
+                        repeatConsent = repeatReviewKey()
+                        showRepeatConfirmation = false
+                        beginUpload()
+                    }
+                } else null
             )
             return
         }

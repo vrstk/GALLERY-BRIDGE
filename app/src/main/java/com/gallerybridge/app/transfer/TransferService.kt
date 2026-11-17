@@ -72,6 +72,9 @@ class TransferService : Service() {
             allowRepeatedGallery: Boolean = false
         ) {
             require(TransferTargets.isSupported(target)) { "Устаревший способ передачи: $target" }
+            require(PhotoOutcomeLedger.duplicateNames(files).isEmpty()) {
+                "Среди выбранных фотографий есть одинаковые имена файлов. Проверьте варианты перед передачей."
+            }
             if (target == TransferTargets.FOLDER) {
                 require(SafFolderAccess.inspect(context, root).ready) {
                     "Нет доступа к выбранной папке Android. Выберите её снова в настройках."
@@ -93,9 +96,15 @@ class TransferService : Service() {
                 .putExtra(EXTRA_EMAIL, email)
                 .putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_ROOT, root)
-            // Check durable state again immediately before replacing the queue.
+            // Check durable queue and photo outcomes before any replacement.
             val currentQueue = QueueStore.load(context)
-            when (GalleryTransferGuard.assess(sourceUrl, GalleryCatalogStore.load(context), currentQueue)) {
+            val accountScope = if (target == "Mail WebDAV") email.trim() else ""
+            val matched = PhotoOutcomeLedger.matchedUrls(
+                context, sourceUrl, target, root, accountScope, files, currentQueue
+            )
+            when (GalleryTransferGuard.assess(
+                sourceUrl, GalleryCatalogStore.load(context), currentQueue, matched.isNotEmpty()
+            )) {
                 GalleryTransferGuard.Decision.BLOCKED ->
                     error("У этой публикации есть незавершённая очередь. Проверьте её перед повтором.")
                 GalleryTransferGuard.Decision.REVIEW ->
@@ -109,6 +118,7 @@ class TransferService : Service() {
                 require(previous.remaining == 0) {
                     "Сначала закончи сохранённую очередь из ${previous.remaining} файлов"
                 }
+                PhotoOutcomeLedger.remember(context, previous)
                 HistoryStore.record(context, previous, "Завершено")
             }
             QueueStore.save(context, QueueStore.newSnapshot(
