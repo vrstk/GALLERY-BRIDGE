@@ -6,10 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -262,14 +258,10 @@ internal fun FullscreenPhotoViewer(
                 }
             }
 
-            AnimatedVisibility(
-                visible = controlsVisible,
-                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
-                enter = fadeIn(animationSpec = tween(140)),
-                exit = fadeOut(animationSpec = tween(140))
-            ) {
+            if (controlsVisible) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().testTag("fullscreen-photo-controls-top")
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .testTag("fullscreen-photo-controls-top")
                         .background(
                             Brush.verticalGradient(
                                 listOf(Color.Black.copy(alpha = 0.52f), Color.Transparent)
@@ -304,14 +296,10 @@ internal fun FullscreenPhotoViewer(
                 }
             }
 
-            AnimatedVisibility(
-                visible = controlsVisible,
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
-                enter = fadeIn(animationSpec = tween(140)),
-                exit = fadeOut(animationSpec = tween(140))
-            ) {
+            if (controlsVisible) {
                 Box(
-                    Modifier.fillMaxWidth().testTag("fullscreen-photo-controls-bottom")
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                        .testTag("fullscreen-photo-controls-bottom")
                         .background(
                             Brush.verticalGradient(
                                 listOf(Color.Transparent, Color.Black.copy(alpha = 0.52f))
