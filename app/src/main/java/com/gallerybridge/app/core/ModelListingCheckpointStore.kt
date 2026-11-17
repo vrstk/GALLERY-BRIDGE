@@ -144,9 +144,8 @@ internal object ModelListingCheckpointStore {
         write(context, current.copy(
             finished = true,
             errors = result.errors.take(100),
-            capped = result.incomplete && result.errors.isEmpty() &&
-                !current.pages.any { it.infiniteLoader || it.cardCount >= ModelListingSources.MAX_CARDS_PER_PAGE } &&
-                result.cards >= (result.advertisedCount ?: Int.MAX_VALUE)
+            // Preserve every incomplete condition, including the hard page cap.
+            capped = result.incomplete
         ))
     }
 }

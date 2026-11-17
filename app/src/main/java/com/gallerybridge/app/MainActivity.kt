@@ -1128,6 +1128,16 @@ class MainActivity : ComponentActivity() {
         }
         val searchAllowed = !working && !transferRunning && !imageProbeRunning
         BackHandler(enabled = screen != GalleryPage.HOME, onBack = ::backFromPage)
+        // Persist edits and photo selection before Android may reclaim the process.
+        // No password, authentication token, cloud queue or user file body is persisted.
+        LaunchedEffect(url, model, title, date, screen, items, selected, recommendedUrls) {
+            if (url.isBlank() || GalleryKeys.canonical(url) != null) {
+                delay(350)
+                withContext(Dispatchers.IO) {
+                    saveViewingSession()
+                }
+            }
+        }
         LaunchedEffect(Unit) {
             var lastRevision = -1L
             while (isActive) {

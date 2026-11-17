@@ -234,7 +234,8 @@ object Services {
         while (true) {
             coroutineContext.ensureActive()
             if (pages.size >= ModelListingSources.MAX_PAGES) {
-                capped = found.isNotEmpty() || ModelListingSources.nextNumberedPage(pages, attempted) != null
+                // Reaching the hard limit never proves the server has no more pages.
+                capped = true
                 break
             }
             if (found.isEmpty()) {
