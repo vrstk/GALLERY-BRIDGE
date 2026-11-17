@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -44,12 +45,20 @@ class FullscreenPhotoViewerTest {
         compose.runOnIdle { assertEquals(1, selections) }
 
         compose.onNodeWithTag("fullscreen-photo-image").performClick()
-        compose.waitForIdle()
+        // Combined clicks wait for the Android double-tap timeout before
+        // committing a *single* tap. waitForIdle alone can return too early.
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithTag("fullscreen-photo-controls-top")
+                .fetchSemanticsNodes().isEmpty()
+        }
         compose.onNodeWithTag("fullscreen-photo-controls-top").assertDoesNotExist()
         compose.onNodeWithTag("fullscreen-photo-controls-bottom").assertDoesNotExist()
 
         compose.onNodeWithTag("fullscreen-photo-image").performClick()
-        compose.waitForIdle()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithTag("fullscreen-photo-controls-top")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("fullscreen-photo-controls-top").assertIsDisplayed()
         compose.onNodeWithTag("fullscreen-photo-controls-bottom").assertIsDisplayed()
     }

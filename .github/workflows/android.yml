@@ -140,7 +140,8 @@ jobs:
           if-no-files-found: error
 
   android-ui:
-    if: github.event_name == 'pull_request'
+    # Never publish a signed APK unless the Android UI suite passes on this SHA.
+    if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home')
     runs-on: ubuntu-latest
     timeout-minutes: 16
     steps:
@@ -394,7 +395,7 @@ jobs:
 
   publish-preview:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
-    needs: [build, install-smoke, upgrade-smoke]
+    needs: [build, android-ui, install-smoke, upgrade-smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
