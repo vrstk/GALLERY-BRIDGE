@@ -35,6 +35,7 @@ internal fun GalleryCatalog(
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
     onExport: () -> Unit,
     onImport: () -> Unit,
+    onImportSnapshots: () -> Unit = {},
     backupStatus: String,
     historyCount: Int
 ) {
@@ -104,7 +105,17 @@ internal fun GalleryCatalog(
             OutlinedButton(onClick = onImport) {
                 Text("Восстановить")
             }
+            OutlinedButton(onClick = onImportSnapshots) {
+                Text("Импорт MHT")
+            }
         }
+        Text(
+            "Импорт MHT: выберите до 10 сохранённых страниц каталога модели. " +
+                "Обрабатывается только HTML, без фотографий, видео и запуска загрузок. " +
+                "После проверки публикации можно выбрать для каталога.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Text(
             "Копия включает каталог, историю загрузок и тему (" + historyCount +
                 " записей истории). Не включает пароли, очередь и фотографии. " +

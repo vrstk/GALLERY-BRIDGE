@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
     private var scanJob: Job? = null
     private var modelListing by mutableStateOf<ModelListingSources.Result?>(null)
     private var modelListingSelected by mutableStateOf<Set<String>>(emptySet())
+    private var modelListingSnapshots by mutableStateOf<List<ModelListingSources.Page>>(emptyList())
+    private var snapshotImportJob: Job? = null
     private var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
@@ -245,6 +247,69 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 pendingCatalogImport = null
                 "Ошибка импорта: ${e.message}"
+            }
+        }
+    }
+
+    private val snapshotPicker = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        if (working || scanning || transferRunning || imageProbeRunning ||
+            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false)
+        ) {
+            catalogBackupStatus = "Нельзя импортировать снимки во время другой операции."
+            return@registerForActivityResult
+        }
+        if (uris.size > 10) {
+            catalogBackupStatus = "Выберите не более 10 страниц MHT за один раз."
+            return@registerForActivityResult
+        }
+        snapshotImportJob?.cancel()
+        snapshotImportJob = scope.launch {
+            working = true
+            catalogBackupStatus = "Читаем сохранённые HTML-страницы без изображений..."
+            try {
+                // Parse off the main thread. No filesystem writes and no web requests.
+                val incoming = withContext(Dispatchers.IO) {
+                    uris.mapIndexed { index, uri ->
+                        ensureActive()
+                        val parsed = contentResolver.openInputStream(uri)?.use {
+                            ModelListingSnapshotReader.parse(it)
+                        } ?: error("Не удалось открыть выбранный файл MHT.")
+                        withContext(Dispatchers.Main) {
+                            catalogBackupStatus = "Проверено снимков: ${index + 1} из ${uris.size}."
+                        }
+                        parsed
+                    }
+                }
+                ensureActive()
+                val oldPages = modelListingSnapshots.takeIf {
+                    it.firstOrNull()?.address?.slug == incoming.first().address.slug
+                }.orEmpty()
+                val merged = ModelListingSnapshotPlan.merge(oldPages, incoming)
+                // Replace only after ALL selected sources parsed and validated.
+                setGalleryUrl(
+                    "https://www.elitebabes.com/model/${incoming.first().address.slug}/sort/oldest/mpage/1"
+                )
+                modelListingSnapshots = merged.pages
+                modelListing = merged.result
+                modelListingSelected = emptySet()
+                catalog = GalleryCatalogStore.load(this@MainActivity)
+                status = "Из MHT получено фотопубликаций: ${merged.result.photos.size}; " +
+                    "прочитано страниц: ${merged.pages.size}. " +
+                    if (merged.result.incomplete) "Каталог может быть неполным."
+                    else "Доступные снимки объединены."
+                catalogBackupStatus = ""
+                screen = GalleryPage.DOWNLOADS
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                catalogBackupStatus = "Импорт MHT отменён без сохранения: ${e.message}"
+            } finally {
+                working = false
+                snapshotImportJob = null
             }
         }
     }
@@ -509,6 +574,7 @@ class MainActivity : ComponentActivity() {
         selected = emptySet()
         modelListing = null
         modelListingSelected = emptySet()
+        modelListingSnapshots = emptyList()
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
@@ -1002,6 +1068,11 @@ class MainActivity : ComponentActivity() {
                         catalogExportPicker.launch(filename)
                     },
                     onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
+                    onImportSnapshots = {
+                        if (!working && !scanning && !transferRunning) {
+                            snapshotPicker.launch(arrayOf("*/*"))
+                        } else catalogBackupStatus = "Дождитесь завершения операции."
+                    },
                     backupStatus = catalogBackupStatus,
                     historyCount = history.size
                 )
