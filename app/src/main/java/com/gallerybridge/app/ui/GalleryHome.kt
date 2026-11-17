@@ -157,7 +157,7 @@ internal fun GalleryLinkField(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("Ссылка на галерею или каталог модели", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label = { Text("Ссылка на фотогалерею", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         placeholder = { Text("https://") },
         leadingIcon = { Icon(painterResource(R.drawable.ic_link), null) },
         trailingIcon = if (enabled && url.isNotEmpty()) {
