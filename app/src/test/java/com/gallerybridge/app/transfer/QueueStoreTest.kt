@@ -20,6 +20,30 @@ class QueueStoreTest {
         entries = media.map { QueueStore.Entry(it, "PENDING") }
     )
 
+    @Test fun successfulPhotoCheckpointRetainsVerifiedSourceDigest() {
+        val hash = "a".repeat(64)
+        val done = QueueStore.applyItemResult(queue(photo), 0, photo, "DONE", contentSha256 = hash)
+        assertEquals("DONE", done.entries.single().state)
+        assertEquals(hash, done.entries.single().contentSha256)
+        assertEquals(0, done.remaining)
+    }
+
+    @Test fun oldCheckpointWithoutDigestRemainsReadable() {
+        val done = QueueStore.applyItemResult(queue(photo), 0, photo, "DONE")
+        assertEquals("", done.entries.single().contentSha256)
+    }
+
+    @Test fun failuresCannotRetainOrInventSourceHash() {
+        val hash = "b".repeat(64)
+        val failed = QueueStore.applyItemResult(queue(photo), 0, photo, "FAILED", contentSha256 = hash)
+        assertEquals("", failed.entries.single().contentSha256)
+        val restored = QueueStore.applyItemResult(failed, 0, photo, "SKIPPED", contentSha256 = hash)
+        assertEquals(hash, restored.entries.single().contentSha256)
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            QueueStore.applyItemResult(queue(photo), 0, photo, "DONE", contentSha256 = "bad-hash")
+        }
+    }
+
     @Test fun sameSourceUrlWithDifferentNamesDoesNotCompleteOtherFiles() {
         val renamed = photo.copy(name = "second.jpg")
         val initial = queue(photo, renamed)

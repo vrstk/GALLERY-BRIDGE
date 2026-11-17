@@ -204,7 +204,7 @@ object Services {
         password: String,
         root: String,
         progress: suspend (String) -> Unit,
-        onItemResult: suspend (Int, Media, String, String) -> Unit = { _, _, _, _ -> }
+        onItemResult: suspend (Int, Media, String, String, String) -> Unit = { _, _, _, _, _ -> }
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -260,11 +260,13 @@ object Services {
                                 val body = response.body ?: throw ExistingFileVerifier.Unverified(
                                     "Mail WebDAV вернул пустое содержимое фотографии."
                                 )
-                                ExistingFileVerifier.verify(local, body.byteStream(), existingMail.bytes)
+                                val digest = ExistingFileVerifier.verify(
+                                    local, body.byteStream(), existingMail.bytes
+                                )
+                                coroutineContext.ensureActive()
+                                skipped++
+                                onItemResult(index, item, "SKIPPED", "", digest.sha256)
                             }
-                            coroutineContext.ensureActive()
-                            skipped++
-                            onItemResult(index, item, "SKIPPED", "")
                             consecutiveNetworkFailures = 0
                         } finally {
                             local.delete()
@@ -273,6 +275,7 @@ object Services {
                     }
                     val (local, mime) = download(context, item)
                     try {
+                        val sourceDigest = PhotoContentDigest.sha256(local)
                         coroutineContext.ensureActive()
                         destinationWriteStarted = true
                         mailCall(Request.Builder().url(destination)
@@ -293,7 +296,7 @@ object Services {
                         )
                         coroutineContext.ensureActive()
                         uploaded++
-                        onItemResult(index, item, "DONE", "")
+                        onItemResult(index, item, "DONE", "", sourceDigest)
                         consecutiveNetworkFailures = 0
                     } finally {
                         local.delete()
@@ -313,25 +316,28 @@ object Services {
                                 ?: throw ExistingFileVerifier.Unverified(
                                     "Провайдер Android не разрешил чтение существующего файла."
                                 )
-                            ExistingFileVerifier.verify(local, existing)
+                            val digest = ExistingFileVerifier.verify(local, existing)
                             coroutineContext.ensureActive()
                             skipped++
-                            onItemResult(index, item, "SKIPPED", "")
+                            onItemResult(index, item, "SKIPPED", "", digest.sha256)
                         } finally {
                             local.delete()
                         }
                     } else {
                         val (local, mime) = download(context, item)
                         try {
+                            val sourceDigest = PhotoContentDigest.sha256(local)
                             coroutineContext.ensureActive()
                             destinationWriteStarted = true
                             if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {
                                 coroutineContext.ensureActive()
                                 uploaded++
-                                onItemResult(index, item, "DONE", "")
+                                onItemResult(index, item, "DONE", "", sourceDigest)
                             } else {
-                                skipped++
-                                onItemResult(index, item, "SKIPPED", "")
+                                // The file appeared after preflight; never equate presence with identical bytes.
+                                throw ExistingFileVerifier.Unverified(
+                                    "Файл появился во время передачи. Проверьте его SHA-256 вручную."
+                                )
                             }
                         } finally {
                             local.delete()
@@ -368,7 +374,7 @@ object Services {
                     else -> "Ошибка до записи в назначение: " + e.javaClass.simpleName
                 }
                 failed++
-                onItemResult(index, item, if (unsafe) "BLOCKED" else "FAILED", reason)
+                onItemResult(index, item, if (unsafe) "BLOCKED" else "FAILED", reason, "")
                 if (e is SourceDownloadFailure.HttpError &&
                     SourceDownloadFailure.shouldPauseQueue(e.statusCode)
                 ) {

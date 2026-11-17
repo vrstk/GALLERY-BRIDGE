@@ -229,9 +229,12 @@ class TransferService : Service() {
                         val overall = (queue.completed + withinRun).coerceAtMost(queue.entries.size)
                         showProgress(overall, queue.entries.size)
                     },
-                    onItemResult = { index, item, state, reason ->
+                    onItemResult = { index, item, state, reason, digest ->
                         if (mySession == session && !cancelRequested) {
-                            QueueStore.checkpoint(applicationContext, queue.id, pending[index].index, item, state, reason)
+                            QueueStore.checkpoint(
+                                applicationContext, queue.id, pending[index].index, item, state,
+                                reason, digest
+                            )
                             QueueStore.load(applicationContext)?.let { updated ->
                                 if (updated.id == queue.id) {
                                     val successes = updated.entries.count { it.state == "DONE" }

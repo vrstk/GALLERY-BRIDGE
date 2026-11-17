@@ -17,7 +17,14 @@ class ExistingFileVerifierTest {
     }
 
     @Test fun identicalBytesMayBeSkipped() = withSource(byteArrayOf(1, 2, 3, 4)) { source ->
-        ExistingFileVerifier.verify(source, ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)), 4)
+        val verified = ExistingFileVerifier.verify(
+            source, ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)), 4
+        )
+        org.junit.Assert.assertEquals(4L, verified.bytes)
+        org.junit.Assert.assertEquals(
+            "9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a",
+            verified.sha256
+        )
     }
 
     @Test fun sameLengthDifferentBytesAreBlocked() = withSource(byteArrayOf(1, 2, 3, 4)) { source ->

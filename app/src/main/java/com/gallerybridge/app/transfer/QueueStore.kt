@@ -31,7 +31,16 @@ object QueueStore {
         val retryable: Int get() = entries.count { it.state == "PENDING" || it.state == "FAILED" }
         val blocked: Int get() = entries.count { it.state == "BLOCKED" }
     }
-    data class Entry(val media: Media, val state: String, val failureReason: String = "")
+    data class Entry(
+        val media: Media,
+        val state: String,
+        val failureReason: String = "",
+        val contentSha256: String = ""
+    )
+
+    /** A digest is evidence of downloaded source bytes, not proof of remote synchronization. */
+    internal fun validContentHash(value: String): Boolean =
+        value.matches(Regex("[0-9a-f]{64}"))
 
     /** Legacy FAILED items have no outcome classification and must be reviewed. */
     internal fun restoreState(state: String, classified: Boolean): String =
@@ -55,7 +64,8 @@ object QueueStore {
                         restoreState(x.optString("state", "PENDING"), x.has("failureReason")),
                         if (x.optString("state") == "FAILED" && !x.has("failureReason"))
                             "Сбой из предыдущей версии. Проверьте назначение перед повтором."
-                        else x.optString("failureReason").take(240)))
+                        else x.optString("failureReason").take(240),
+                        x.optString("contentSha256").takeIf(::validContentHash).orEmpty()))
                 }
             }
             Snapshot(data.getLong("id"), data.getString("model"), data.getString("title"),
@@ -81,7 +91,8 @@ object QueueStore {
                 .put("url", entry.media.url).put("name", entry.media.name)
                 .put("kind", entry.media.kind.name)
                 .put("source", entry.media.source).put("referrer", entry.media.referrer)
-                .put("state", entry.state).put("failureReason", entry.failureReason.take(240)))
+                .put("state", entry.state).put("failureReason", entry.failureReason.take(240))
+                .put("contentSha256", entry.contentSha256.takeIf(::validContentHash).orEmpty()))
         }
         json.put("entries", entries)
         // Synchronous commit is necessary: .apply() or an unchecked false
@@ -96,26 +107,34 @@ object QueueStore {
      * URLs can repeat across entries with different names, and even identical
      * media can appear more than once in an imported queue.
      */
-    fun applyItemResult(snapshot: Snapshot, entryIndex: Int, media: Media, state: String, reason: String = ""): Snapshot {
+    fun applyItemResult(
+        snapshot: Snapshot, entryIndex: Int, media: Media, state: String,
+        reason: String = "", contentSha256: String = ""
+    ): Snapshot {
         require(state in setOf("DONE", "SKIPPED", "FAILED", "BLOCKED")) { "Invalid queue state: $state" }
         val old = snapshot.entries.getOrNull(entryIndex) ?: return snapshot
         if (old.media != media || old.state in setOf("DONE", "SKIPPED", "BLOCKED")) return snapshot
+        require(contentSha256.isBlank() || validContentHash(contentSha256)) {
+            "Неверный SHA-256 содержимого фотографии."
+        }
         val entries = snapshot.entries.toMutableList()
         entries[entryIndex] = old.copy(state = state,
             failureReason = if (state == "FAILED" || state == "BLOCKED")
-                reason.replace("\n", " ").take(240) else "")
+                reason.replace("\n", " ").take(240) else "",
+            contentSha256 = if (state in setOf("DONE", "SKIPPED")) contentSha256 else "")
         return snapshot.copy(entries = entries)
     }
 
     @Synchronized fun checkpoint(
-        context: Context, id: Long, entryIndex: Int, media: Media, state: String, reason: String = ""
+        context: Context, id: Long, entryIndex: Int, media: Media, state: String,
+        reason: String = "", contentSha256: String = ""
     ) {
         val before = load(context)
             ?: throw CheckpointFailure("Сохранённая очередь недоступна; передача остановлена.")
         if (before.id != id) {
             throw CheckpointFailure("Очередь изменилась во время передачи; результат не записан.")
         }
-        val after = applyItemResult(before, entryIndex, media, state, reason)
+        val after = applyItemResult(before, entryIndex, media, state, reason, contentSha256)
         if (after == before) {
             throw CheckpointFailure("Элемент очереди изменился; повторная запись результата заблокирована.")
         }

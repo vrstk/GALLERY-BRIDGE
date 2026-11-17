@@ -72,6 +72,53 @@ class PhotoOutcomeLedgerTest {
         ).isEmpty())
     }
 
+    @Test fun contentHashesArePersistedWithoutDroppingLegacyRecords() {
+        val hash = "c".repeat(64)
+        val completed = queue().copy(entries = listOf(
+            QueueStore.Entry(media, "DONE", contentSha256 = hash)
+        ))
+        val records = PhotoOutcomeLedger.fromQueue(completed, 7L)
+        assertEquals(hash, records.single().contentSha256)
+        val parsed = PhotoOutcomeLedger.decode(PhotoOutcomeLedger.encode(records))
+        assertEquals(records, parsed)
+
+        val legacy = PhotoOutcomeLedger.decode(
+            """[{"token":"${records.single().token}","state":"DONE","at":1}]"""
+        )
+        assertEquals("", legacy.single().contentSha256)
+    }
+
+    @Test fun missingHashFromLegacySnapshotCannotEraseKnownHash() {
+        val hash = "d".repeat(64)
+        val completed = queue().copy(entries = listOf(
+            QueueStore.Entry(media, "DONE", contentSha256 = hash)
+        ))
+        val first = PhotoOutcomeLedger.fromQueue(completed, 10L)
+        val remerged = PhotoOutcomeLedger.merge(first, queue("DONE"), 20L)
+        assertEquals(hash, remerged.single().contentSha256)
+        assertEquals(10L, remerged.single().at)
+    }
+
+    @Test fun newContentHashReplacesOldHashOfSameNamedPhoto() {
+        val first = queue().copy(entries = listOf(
+            QueueStore.Entry(media, "DONE", contentSha256 = "a".repeat(64))
+        ))
+        val second = queue().copy(entries = listOf(
+            QueueStore.Entry(media, "DONE", contentSha256 = "b".repeat(64))
+        ))
+        val merged = PhotoOutcomeLedger.merge(PhotoOutcomeLedger.fromQueue(first, 1L), second, 2L)
+        assertEquals("b".repeat(64), merged.single().contentSha256)
+    }
+
+    @Test fun invalidHashInLedgerFailsClosed() {
+        val token = PhotoOutcomeLedger.fromQueue(queue(), 1L).single().token
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            PhotoOutcomeLedger.decode(
+                """[{"token":"$token","state":"DONE","at":1,"contentSha256":"garbage"}]"""
+            )
+        }
+    }
+
     @Test fun duplicateRecordsMergeByTokenAndPreserveLatestOutcome() {
         val original = PhotoOutcomeLedger.fromQueue(queue("DONE"), 10L)
         val next = PhotoOutcomeLedger.merge(original, queue("SKIPPED"), 20L)

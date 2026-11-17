@@ -39,7 +39,7 @@ internal object ExistingFileVerifier {
         })
     }
 
-    fun verify(source: File, existing: InputStream, reportedSize: Long? = null) {
+    fun verify(source: File, existing: InputStream, reportedSize: Long? = null): Digest {
         try {
             if (!source.isFile || source.length() !in 1L..MAX_BYTES) {
                 existing.close()
@@ -53,6 +53,7 @@ internal object ExistingFileVerifier {
             if (sourceHash.bytes != destinationHash.bytes ||
                 sourceHash.sha256 != destinationHash.sha256
             ) throw Unverified("SHA-256 существующей фотографии не совпадает с источником.")
+            return sourceHash
         } catch (e: Unverified) {
             throw e
         } catch (e: Exception) {

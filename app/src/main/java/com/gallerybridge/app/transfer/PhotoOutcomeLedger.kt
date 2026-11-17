@@ -22,7 +22,9 @@ internal object PhotoOutcomeLedger {
     private const val KEY = "records"
     const val LIMIT = 10000
 
-    data class Record(val token: String, val state: String, val at: Long)
+    data class Record(
+        val token: String, val state: String, val at: Long, val contentSha256: String = ""
+    )
 
     internal fun fingerprint(
         sourceUrl: String, target: String, root: String, account: String, media: Media
@@ -59,10 +61,12 @@ internal object PhotoOutcomeLedger {
                 val token = item.getString("token")
                 val state = item.getString("state")
                 val at = item.getLong("at")
+                val digest = item.optString("contentSha256")
                 require(token.matches(Regex("[0-9a-f]{64}")) &&
-                    state in setOf("DONE", "SKIPPED") && at >= 0
+                    state in setOf("DONE", "SKIPPED") && at >= 0 &&
+                    (digest.isEmpty() || QueueStore.validContentHash(digest))
                 ) { "Журнал фотографий содержит неверную запись." }
-                add(Record(token, state, at))
+                add(Record(token, state, at, digest))
             }
         }.distinctBy { it.token }.take(LIMIT)
     }
@@ -70,7 +74,8 @@ internal object PhotoOutcomeLedger {
     internal fun encode(records: List<Record>): String {
         val json = JSONArray()
         records.take(LIMIT).forEach {
-            json.put(JSONObject().put("token", it.token).put("state", it.state).put("at", it.at))
+            json.put(JSONObject().put("token", it.token).put("state", it.state)
+                .put("at", it.at).put("contentSha256", it.contentSha256))
         }
         return json.toString()
     }
@@ -80,7 +85,8 @@ internal object PhotoOutcomeLedger {
         return queue.entries.mapNotNull { entry ->
             if (entry.state !in setOf("DONE", "SKIPPED")) return@mapNotNull null
             fingerprint(queue.sourceUrl, queue.target, queue.root, queue.account, entry.media)
-                ?.let { Record(it, entry.state, at) }
+                ?.let { Record(it, entry.state, at,
+                    entry.contentSha256.takeIf(QueueStore::validContentHash).orEmpty()) }
         }.distinctBy { it.token }
     }
 
@@ -89,7 +95,16 @@ internal object PhotoOutcomeLedger {
     ): List<Record> {
         val additions = fromQueue(queue, at)
         if (additions.isEmpty()) return previous
-        return (additions + previous)
+        val previousByToken = previous.associateBy { it.token }
+        val enriched = additions.map { record ->
+            val known = previousByToken[record.token]
+            // No new byte-level evidence: preserve the timestamp of the old digest.
+            // Otherwise a later legacy queue could pretend to have reverified its bytes.
+            if (record.contentSha256.isEmpty() && known?.contentSha256?.isNotEmpty() == true)
+                known
+            else record
+        }
+        return (enriched + previous)
             .distinctBy { it.token }
             .sortedWith(compareByDescending<Record> { it.at }.thenBy { it.token })
             .take(LIMIT)
