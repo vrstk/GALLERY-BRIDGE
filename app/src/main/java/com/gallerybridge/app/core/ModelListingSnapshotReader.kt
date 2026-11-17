@@ -107,8 +107,9 @@ internal object ModelListingSnapshotReader {
         }
         val url = part["content-location"] ?: envelope["snapshot-content-location"]
             ?: error("Отсутствует адрес исходного каталога.")
-        val address = ModelListingSources.address(url)
-            ?: error("MHT не принадлежит поддерживаемому HTTPS-каталогу модели.")
+        val address = requireNotNull(ModelListingSources.address(url)) {
+            "MHT не принадлежит поддерживаемому HTTPS-каталогу модели."
+        }
         envelope["snapshot-content-location"]?.let { origin ->
             require(ModelListingSources.address(origin) == address) {
                 "Адреса HTML и сохранённой страницы не совпадают."
