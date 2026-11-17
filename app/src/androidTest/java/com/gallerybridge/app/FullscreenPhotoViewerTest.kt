@@ -1,15 +1,12 @@
 package com.gallerybridge.app
 
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.click
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import com.gallerybridge.app.ui.FullscreenPhotoViewer
@@ -46,16 +43,12 @@ class FullscreenPhotoViewerTest {
         compose.onNodeWithTag("fullscreen-photo-selection").performClick()
         compose.runOnIdle { assertEquals(1, selections) }
 
-        compose.onNodeWithTag("fullscreen-photo-image").performTouchInput {
-            click(Offset(36f, 200f))
-        }
+        compose.onNodeWithTag("fullscreen-photo-image").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("fullscreen-photo-controls-top").assertDoesNotExist()
         compose.onNodeWithTag("fullscreen-photo-controls-bottom").assertDoesNotExist()
 
-        compose.onNodeWithTag("fullscreen-photo-image").performTouchInput {
-            click(Offset(36f, 200f))
-        }
+        compose.onNodeWithTag("fullscreen-photo-image").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("fullscreen-photo-controls-top").assertIsDisplayed()
         compose.onNodeWithTag("fullscreen-photo-controls-bottom").assertIsDisplayed()

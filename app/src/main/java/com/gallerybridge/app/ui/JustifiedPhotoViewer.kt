@@ -3,7 +3,7 @@ package com.gallerybridge.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.animation.AnimatedVisibility
@@ -224,26 +224,21 @@ internal fun FullscreenPhotoViewer(
                         modifier = Modifier.fillMaxSize().clipToBounds()
                             .testTag(if (isCurrent) "fullscreen-photo-image"
                                 else "fullscreen-photo-image-other")
-                            .pointerInput(media.url, isCurrent, boundsWidth, boundsHeight, ratio) {
-                                detectTapGestures(
-                                    onTap = {
-                                        if (isCurrent) controlsVisible = !controlsVisible
-                                    },
-                                    onDoubleTap = {
-                                        if (isCurrent) {
-                                            zoom = if (zoom > 1.01f) 1f
-                                                else PhotoZoomMath.doubleTapScale(
-                                                    boundsWidth, boundsHeight, ratio
-                                                )
-                                            panX = 0f
-                                            panY = 0f
-                                        }
-                                    }
-                                )
-                            }
                             .transformable(
                                 state = transform,
                                 canPan = { isCurrent && zoom > 1.01f }
+                            )
+                            .combinedClickable(
+                                enabled = isCurrent,
+                                onClick = { controlsVisible = !controlsVisible },
+                                onDoubleClick = {
+                                    zoom = if (zoom > 1.01f) 1f
+                                        else PhotoZoomMath.doubleTapScale(
+                                            boundsWidth, boundsHeight, ratio
+                                        )
+                                    panX = 0f
+                                    panY = 0f
+                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
