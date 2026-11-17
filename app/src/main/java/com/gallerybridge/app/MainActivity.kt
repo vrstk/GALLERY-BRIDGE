@@ -418,6 +418,13 @@ class MainActivity : ComponentActivity() {
         }
         session.initialized = true
         }
+        // Refresh durable state even when ViewModel survives Activity recreation.
+        // A foreground transfer or Android component may have changed these stores.
+        savedQueue = QueueStore.load(this)
+        history = HistoryStore.load(this)
+        catalog = GalleryCatalogStore.load(this)
+        transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+            .getBoolean(TransferService.KEY_RUNNING, false)
         applySystemBars()
         setContent { GalleryTheme(dark) { Ui() } }
         if (packageName == "com.gallerybridge.app.preview.signed") updater.check(auto = true)

@@ -45,13 +45,14 @@ class GalleryCatalogStatusTest {
             }
         }
 
+        compose.onNodeWithText("Фильтры").performClick()
         compose.onNodeWithText("Требуют внимания").performClick()
-        compose.onNodeWithText("Показано: 1 из 2").assertIsDisplayed()
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Требует проверки").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("К очереди").performScrollTo().performClick()
+        compose.onNodeWithText("Очередь").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(openedQueue) }
         compose.onNodeWithText("В очереди").performClick()
-        compose.onNodeWithText("Показано: 1 из 2").assertIsDisplayed()
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Требует проверки").performScrollTo().assertIsDisplayed()
     }
 }
