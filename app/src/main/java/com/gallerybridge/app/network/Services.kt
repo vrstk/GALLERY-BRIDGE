@@ -21,6 +21,8 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.UUID
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 
 object Services {
     private val http = OkHttpClient.Builder().followRedirects(true).build()
@@ -70,6 +72,11 @@ object Services {
     suspend fun scan(raw: String): Scan = withContext(Dispatchers.IO) {
         val url = raw.trim().toHttpUrlOrNull() ?: error("Неверный URL")
         require(url.scheme == "https") { "Нужна HTTPS-ссылка" }
+        if (url.host in setOf("elitebabes.com", "www.elitebabes.com") &&
+            url.encodedPath.startsWith("/model/")
+        ) {
+            error("Это каталог модели, а не отдельная фотогалерея. Откройте раздел «Публикации модели» через поиск.")
+        }
         if (ext.containsMatchIn(url.encodedPath)) return@withContext Scan("Прямая ссылка", "", listOf(Media(url.toString(), Paths.clean(url.pathSegments.last()), kind(url.encodedPath), "Прямой URL")))
         http.newCall(request(url.toString())).execute().use { response ->
             if (!response.isSuccessful) error("Сайт вернул HTTP ${response.code}")
@@ -144,6 +151,96 @@ object Services {
                 metadata.suggestedDateSource
             )
         }
+    }
+
+    /**
+     * Bounded discovery of server-rendered model publication cards.
+     * The website's separate infinite-scroll endpoint is not documented by
+     * the HTML snapshots: never claim that the first visible 20 are complete.
+     * No gallery images or videos are downloaded here.
+     */
+    suspend fun scanModelIndex(
+        raw: String,
+        progress: suspend (Int, Int) -> Unit
+    ): ModelListingSources.Result = withContext(Dispatchers.IO) {
+        val expected = ModelListingSources.address(raw)
+            ?: error("Нужна HTTPS-ссылка Elite Babes на раздел oldest/mpage.")
+        val listingClient = http.newBuilder()
+            .followRedirects(false).followSslRedirects(false)
+            .callTimeout(25L, TimeUnit.SECONDS).build()
+
+        suspend fun readPage(link: String): ModelListingSources.Page {
+            coroutineContext.ensureActive()
+            require(ModelListingSources.address(link)?.slug == expected.slug) {
+                "Ссылка страницы ведёт в другой каталог."
+            }
+            val response = listingClient.newCall(request(link)).execute()
+            return response.use { r ->
+                require(r.code == 200) { "Каталог вернул HTTP ${r.code}." }
+                require(ModelListingSources.address(r.request.url.toString()) != null) {
+                    "Адрес страницы изменился."
+                }
+                val mime = r.header("Content-Type").orEmpty().lowercase()
+                require(mime.isBlank() || mime.contains("html")) {
+                    "Вместо каталога получен другой тип содержимого."
+                }
+                val stream = r.body?.byteStream() ?: error("Пустой ответ каталога.")
+                val data = ByteArrayOutputStream()
+                stream.use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        coroutineContext.ensureActive()
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (n == 0) continue
+                        require(data.size() + n <= 2_000_000) {
+                            "Страница каталога превышает безопасный лимит 2 МБ."
+                        }
+                        data.write(buffer, 0, n)
+                    }
+                }
+                val doc = Jsoup.parse(data.toString(Charsets.UTF_8.name()), link)
+                ModelListingSources.parse(doc, link)
+                    ?: error("На странице не найдена ожидаемая структура фотопубликаций.")
+            }
+        }
+
+        val pages = mutableListOf<ModelListingSources.Page>()
+        val errors = mutableListOf<String>()
+        val found = sortedMapOf<Int, String>()
+        val first = readPage(raw)
+        pages.add(first)
+        found.putAll(first.pages)
+        found.remove(first.address.number)
+        val attempted = mutableSetOf(first.address.number)
+        var capped = false
+        withContext(Dispatchers.Main) { progress(1, found.size + 1) }
+        while (found.isNotEmpty()) {
+            coroutineContext.ensureActive()
+            if (pages.size >= ModelListingSources.MAX_PAGES) {
+                capped = true
+                break
+            }
+            val (number, url) = found.entries.first().let { it.key to it.value }
+            found.remove(number)
+            if (!attempted.add(number)) continue
+            try {
+                val page = readPage(url)
+                if (page.address.slug != expected.slug || page.address.number != number) {
+                    error("Номер страницы не совпадает с ожидаемым.")
+                }
+                pages.add(page)
+                page.pages.forEach { (pageNum, link) ->
+                    if (pageNum !in attempted && pageNum !in found) found[pageNum] = link
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                errors.add("Не удалось прочитать страницу №$number.")
+            }
+            withContext(Dispatchers.Main) { progress(pages.size, pages.size + found.size) }
+        }
+        ModelListingSources.combine(pages, errors, capped)
     }
 
     private fun download(context: Context, media: Media): Pair<File, String> {

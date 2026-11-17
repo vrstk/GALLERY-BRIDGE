@@ -77,6 +77,9 @@ class MainActivity : ComponentActivity() {
     private var galleryPreviewMode by mutableStateOf(GalleryPreviewMode.MOSAIC)
     private var working by mutableStateOf(false)
     private var scanning by mutableStateOf(false)
+    private var scanJob: Job? = null
+    private var modelListing by mutableStateOf<ModelListingSources.Result?>(null)
+    private var modelListingSelected by mutableStateOf<Set<String>>(emptySet())
     private var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
     private var items by mutableStateOf<List<Media>>(emptyList())
     private var selected by mutableStateOf<Set<String>>(emptySet())
@@ -504,6 +507,8 @@ class MainActivity : ComponentActivity() {
         cancelImageSizes()
         items = emptyList()
         selected = emptySet()
+        modelListing = null
+        modelListingSelected = emptySet()
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
@@ -538,6 +543,36 @@ class MainActivity : ComponentActivity() {
         status = if (newUrl.isBlank()) "Вставьте HTTPS-ссылку на фотогалерею." else "Запустите поиск по ссылке."
     }
 
+    /** Explicit import only; existing labels, history, queue and credentials remain intact. */
+    private fun saveListingSelection() {
+        val discovered = modelListing ?: return
+        val chosen = discovered.photos.filter { it.url in modelListingSelected }.take(100)
+        val current = GalleryCatalogStore.load(this)
+        val additions = chosen.filterNot { GalleryCatalogStore.contains(current, it.url) }
+            .map { pub ->
+                CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
+                    pub.title, pub.date, System.currentTimeMillis())
+            }
+        val plan = try {
+            GalleryCatalogStore.importMissing(this, additions)
+        } catch (e: Exception) {
+            status = "Не удалось сохранить публикации: ${e.message}"
+            return
+        }
+        catalog = GalleryCatalogStore.load(this)
+        modelListingSelected = emptySet()
+        status = "Сохранено новых публикаций: ${plan.added}; " +
+            "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
+    }
+
+    private fun openListingPublication(pub: ModelListingSources.Publication) {
+        setGalleryUrl(pub.url)
+        if (model.isBlank()) model = pub.model
+        if (title.isBlank()) title = pub.title
+        if (date.isBlank()) date = pub.date
+        screen = GalleryPage.HOME
+    }
+
     private fun saveGalleryMetadata() {
         metadataReport = try {
             val fields = GalleryFields(model, title, date)
@@ -570,8 +605,22 @@ class MainActivity : ComponentActivity() {
         mediaFilter = null
         showDestination = false
         uploadStatus = ""
-        scope.launch {
+        scanJob?.cancel()
+        scanJob = scope.launch {
             try {
+                if (ModelListingSources.accepts(requestedUrl)) {
+                    val found = Services.scanModelIndex(requestedUrl) { loaded, total ->
+                        if (url == requestedUrl) status = "Чтение страниц каталога: $loaded из $total."
+                    }
+                    ensureActive()
+                    if (requestedUrl != url) return@launch
+                    modelListing = found
+                    modelListingSelected = emptySet()
+                    status = "Обнаружено ${found.photos.size} фотопубликаций. " +
+                        if (found.incomplete) "Список неполный: есть подгрузка при прокрутке."
+                        else "Обработаны доступные страницы."
+                    return@launch
+                }
                 val scan = Services.scan(requestedUrl)
                 val photos = scan.media.filter { it.kind == Kind.PHOTO }
                 val recommended = withContext(Dispatchers.Default) {
@@ -607,6 +656,7 @@ class MainActivity : ComponentActivity() {
             } finally {
                 scanning = false
                 working = false
+                scanJob = null
             }
         }
     }
@@ -1034,16 +1084,42 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun DownloadsPage(searchAllowed: Boolean, startSearch: () -> Unit) {
+        val listing = modelListing
+        if (listing != null && items.isEmpty()) {
+            ModelListingReview(
+                result = listing, existing = catalog,
+                selected = modelListingSelected, message = status,
+                onSelect = { link, checked ->
+                    modelListingSelected = if (checked) {
+                        if (modelListingSelected.size < 100) modelListingSelected + link
+                        else modelListingSelected
+                    } else modelListingSelected - link
+                },
+                onSave = ::saveListingSelection,
+                onOpen = ::openListingPublication,
+                onBack = { screen = GalleryPage.HOME }
+            )
+            return
+        }
         if (items.isEmpty()) {
             GalleryPageColumn {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
-                FindMediaButton(searchAllowed && url.isNotBlank(), startSearch)
+                FindMediaButton(
+                    searchAllowed && url.isNotBlank(), startSearch,
+                    if (ModelListingSources.accepts(url)) "Найти фотопубликации" else "Найти фотографии"
+                )
                 OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
                     modifier = Modifier.fillMaxWidth()) {
                     Text("Добавить фотографии с устройства")
                 }
                 Text(status, style = MaterialTheme.typography.bodyMedium)
-                if (scanning) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (scanning) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    TextButton(onClick = {
+                        scanJob?.cancel()
+                        status = "Поиск прерывается; передача не запускалась."
+                    }) { Text("Остановить поиск") }
+                }
                 QueueShortcut()
                 BatchReviewControls()
                 if (GalleryKeys.canonical(url) != null) {

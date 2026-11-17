@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.R
+import com.gallerybridge.app.core.ModelListingSources
 
 internal data class LatestTransfer(
     val title: String,
@@ -55,7 +56,10 @@ internal fun GalleryHome(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Новая загрузка", style = MaterialTheme.typography.titleLarge)
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
-            FindMediaButton(searchAllowed && url.isNotBlank(), onSearch)
+            FindMediaButton(
+                searchAllowed && url.isNotBlank(), onSearch,
+                if (ModelListingSources.accepts(url)) "Найти фотопубликации" else "Найти фотографии"
+            )
             if (hasResults) {
                 TextButton(onClick = onResults, modifier = Modifier.align(Alignment.End)) {
                     Text("Открыть результаты")
@@ -153,7 +157,7 @@ internal fun GalleryLinkField(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("Ссылка на фотогалерею", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label = { Text("Ссылка на галерею или каталог модели", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         placeholder = { Text("https://") },
         leadingIcon = { Icon(painterResource(R.drawable.ic_link), null) },
         trailingIcon = if (enabled && url.isNotEmpty()) {
@@ -171,7 +175,9 @@ internal fun GalleryLinkField(
 }
 
 @Composable
-internal fun FindMediaButton(enabled: Boolean, onClick: () -> Unit) {
+internal fun FindMediaButton(
+    enabled: Boolean, onClick: () -> Unit, label: String = "Найти фотографии"
+) {
     Button(
         onClick = onClick,
         enabled = enabled,
@@ -181,7 +187,7 @@ internal fun FindMediaButton(enabled: Boolean, onClick: () -> Unit) {
     ) {
         Icon(Icons.Outlined.Search, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Найти фотографии")
+        Text(label)
     }
 }
 
