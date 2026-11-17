@@ -6,6 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -14,21 +18,30 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.text.style.TextOverflow
 import com.gallerybridge.app.core.JustifiedRows
 import com.gallerybridge.app.core.Media
+import kotlin.math.max
 
 @Composable
 private fun GalleryPhoto(
@@ -104,6 +117,11 @@ internal fun JustifiedPhotoRow(
     }
 }
 
+/**
+ * Fullscreen edge-to-edge viewer: a photo always uses the full viewport, while
+ * compact translucent controls float over it instead of shrinking its bounds.
+ * Transform state and current pager page survive a normal Activity recreation.
+ */
 @Composable
 internal fun FullscreenPhotoViewer(
     photos: List<Media>,
@@ -117,108 +135,205 @@ internal fun FullscreenPhotoViewer(
         initialPage = initialIndex.coerceIn(0, photos.lastIndex),
         pageCount = { photos.size }
     )
-    var currentZoom by remember { mutableFloatStateOf(1f) }
-    LaunchedEffect(pager.currentPage) { currentZoom = 1f }
+    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var zoomPhoto by rememberSaveable {
+        mutableStateOf(photos[initialIndex.coerceIn(0, photos.lastIndex)].url)
+    }
+    var zoom by rememberSaveable { mutableFloatStateOf(1f) }
+    var panX by rememberSaveable { mutableFloatStateOf(0f) }
+    var panY by rememberSaveable { mutableFloatStateOf(0f) }
+
+    // Switching pictures resets the transform, but rotation restores it for the
+    // current picture. A stored transform must never disable swiping on a new one.
+    LaunchedEffect(pager.currentPage, photos) {
+        val newPhoto = photos[pager.currentPage.coerceIn(0, photos.lastIndex)].url
+        if (zoomPhoto != newPhoto) {
+            zoomPhoto = newPhoto
+            zoom = 1f
+            panX = 0f
+            panY = 0f
+        }
+    }
     BackHandler(onBack = onClose)
     Dialog(
         onDismissRequest = onClose,
-        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Column(
-            Modifier.fillMaxSize().background(Color.Black)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Закрыть фото", tint = Color.White)
+        val view = LocalView.current
+        val window = (view.parent as? DialogWindowProvider)?.window
+        DisposableEffect(window) {
+            onDispose {
+                // Never leave the host Activity with hidden system bars.
+                window?.let {
+                    WindowCompat.getInsetsController(it, view).show(
+                        WindowInsetsCompat.Type.systemBars()
+                    )
                 }
-                Text(
-                    "${pager.currentPage + 1} / ${photos.size}",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                val current = photos[pager.currentPage.coerceIn(0, photos.lastIndex)]
-                Checkbox(
-                    checked = current.url in selected,
-                    onCheckedChange = { onSelection(current, it) }
-                )
             }
+        }
+        SideEffect {
+            window?.let {
+                val controller = WindowCompat.getInsetsController(it, view)
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (controlsVisible) controller.show(WindowInsetsCompat.Type.systemBars())
+                else controller.hide(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+
+        Box(Modifier.fillMaxSize().background(Color.Black).testTag("fullscreen-photo-viewer")) {
             HorizontalPager(
                 state = pager,
-                userScrollEnabled = currentZoom <= 1.01f,
-                modifier = Modifier.weight(1f).fillMaxWidth().testTag("fullscreen-photo-pager")
+                key = { photos[it].url },
+                userScrollEnabled = zoom <= 1.01f,
+                modifier = Modifier.fillMaxSize().testTag("fullscreen-photo-pager")
             ) { page ->
                 val media = photos[page]
-                var zoom by remember(media.url) { mutableFloatStateOf(1f) }
-                var panX by remember(media.url) { mutableFloatStateOf(0f) }
-                var panY by remember(media.url) { mutableFloatStateOf(0f) }
-                // Do not restore a stale zoom/pan when revisiting an image.
-                // Keep the pager's one-finger swipe enabled on each new page.
-                LaunchedEffect(pager.currentPage) {
-                    if (pager.currentPage == page) {
-                        zoom = 1f
-                        panX = 0f
-                        panY = 0f
-                        currentZoom = 1f
+                var ratio by rememberSaveable(media.url) { mutableFloatStateOf(0f) }
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val boundsWidth = constraints.maxWidth.toFloat()
+                    val boundsHeight = constraints.maxHeight.toFloat()
+                    val isCurrent = page == pager.currentPage
+                    val currentScale = if (isCurrent) zoom else 1f
+                    val bounds = PhotoZoomMath.bounds(
+                        boundsWidth, boundsHeight, ratio, currentScale
+                    )
+                    val transform = rememberTransformableState { zoomChange, offset, _ ->
+                        if (isCurrent) {
+                            val candidate = (zoom * zoomChange).coerceIn(1f, PhotoZoomMath.MAX_SCALE)
+                            val next = PhotoZoomMath.bounds(
+                                boundsWidth, boundsHeight, ratio, candidate
+                            )
+                            zoom = candidate
+                            if (candidate > 1.01f) {
+                                panX = (panX + offset.x).coerceIn(-next.x, next.x)
+                                panY = (panY + offset.y).coerceIn(-next.y, next.y)
+                            } else {
+                                panX = 0f
+                                panY = 0f
+                            }
+                        }
                     }
-                }
-                val transform = rememberTransformableState { scale, offset, _ ->
-                    zoom = (zoom * scale).coerceIn(1f, 5f)
-                    if (zoom > 1.01f) {
-                        panX += offset.x
-                        panY += offset.y
-                    } else {
-                        panX = 0f
-                        panY = 0f
-                    }
-                    if (page == pager.currentPage) currentZoom = zoom
-                }
-                BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    val density = androidx.compose.ui.platform.LocalDensity.current
-                    val maxX = with(density) { maxWidth.toPx() } * (zoom - 1f) / 2f
-                    val maxY = with(density) { maxHeight.toPx() } * (zoom - 1f) / 2f
                     Box(
-                        modifier = Modifier.fillMaxSize().clipToBounds(),
+                        modifier = Modifier.fillMaxSize().clipToBounds()
+                            .testTag(if (isCurrent) "fullscreen-photo-image"
+                                else "fullscreen-photo-image-other")
+                            .pointerInput(media.url, isCurrent, boundsWidth, boundsHeight, ratio) {
+                                detectTapGestures(
+                                    onTap = {
+                                        if (isCurrent) controlsVisible = !controlsVisible
+                                    },
+                                    onDoubleTap = {
+                                        if (isCurrent) {
+                                            zoom = if (zoom > 1.01f) 1f
+                                                else PhotoZoomMath.doubleTapScale(
+                                                    boundsWidth, boundsHeight, ratio
+                                                )
+                                            panX = 0f
+                                            panY = 0f
+                                        }
+                                    }
+                                )
+                            }
+                            .transformable(
+                                state = transform,
+                                canPan = { isCurrent && zoom > 1.01f }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         GalleryPhoto(
                             media = media,
-                            modifier = Modifier.fillMaxSize()
-                                .pointerInput(media.url) {
-                                    detectTapGestures(onDoubleTap = {
-                                        zoom = if (zoom > 1f) 1f else 2.5f
-                                        if (zoom == 1f) { panX = 0f; panY = 0f }
-                                        currentZoom = zoom
-                                    })
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                scaleX = currentScale
+                                scaleY = currentScale
+                                translationX = if (isCurrent) panX.coerceIn(-bounds.x, bounds.x)
+                                    else 0f
+                                translationY = if (isCurrent) panY.coerceIn(-bounds.y, bounds.y)
+                                    else 0f
+                            },
+                            onAspectRatio = { measured ->
+                                if (measured > 0f && measured.isFinite() && ratio != measured) {
+                                    ratio = measured
                                 }
-                                // At 1x scale leave one-finger horizontal drags to
-                                // HorizontalPager. Pinch-zoom still works; after zooming
-                                // past 1x, this image handles panning instead.
-                                .transformable(
-                                    state = transform,
-                                    canPan = { zoom > 1.01f }
-                                )
-                                .graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                    translationX = panX.coerceIn(-maxX, maxX)
-                                    translationY = panY.coerceIn(-maxY, maxY)
-                                    clip = true
-                                }
+                            }
                         )
                     }
                 }
             }
-            Text(
-                photos[pager.currentPage.coerceIn(0, photos.lastIndex)].name,
-                color = Color.White,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.fillMaxWidth().padding(12.dp)
-            )
+
+            AnimatedVisibility(
+                visible = controlsVisible,
+                modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                enter = fadeIn(animationSpec = tween(140)),
+                exit = fadeOut(animationSpec = tween(140))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("fullscreen-photo-controls-top")
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Black.copy(alpha = 0.52f), Color.Transparent)
+                            )
+                        )
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Закрыть фото",
+                            tint = Color.White)
+                    }
+                    Text(
+                        "${pager.currentPage + 1} / ${photos.size}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp)
+                            .testTag("fullscreen-photo-position")
+                    )
+                    val current = photos[pager.currentPage.coerceIn(0, photos.lastIndex)]
+                    Checkbox(
+                        checked = current.url in selected,
+                        onCheckedChange = { onSelection(current, it) },
+                        modifier = Modifier.testTag("fullscreen-photo-selection"),
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = Color(0xFF86BBFF),
+                            uncheckedColor = Color.White,
+                            checkmarkColor = Color.Black
+                        )
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = controlsVisible,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                enter = fadeIn(animationSpec = tween(140)),
+                exit = fadeOut(animationSpec = tween(140))
+            ) {
+                Box(
+                    Modifier.fillMaxWidth().testTag("fullscreen-photo-controls-bottom")
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.52f))
+                            )
+                        )
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        photos[pager.currentPage.coerceIn(0, photos.lastIndex)].name,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
     }
 }
