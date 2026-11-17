@@ -48,6 +48,27 @@ class GalleryHomeTest {
     }
 
     @Test
+    fun mosaicAndPhotoSelectionSurviveActivityRecreation() {
+        compose.onNodeWithText("Ссылка на фотогалерею").performTextInput(
+            "https://example.com/rotation-fixture.jpg"
+        )
+        compose.onNodeWithText("Найти фотографии").performClick()
+        awaitSearchResult()
+        compose.onNodeWithText("Плитка").assertDoesNotExist()
+        compose.onNodeWithText("Список без фото").assertDoesNotExist()
+        compose.onNodeWithText("Снять выделение").performClick()
+        compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
+
+        // Simulates Android destroying and recreating Activity on rotation.
+        compose.activityRule.scenario.recreate()
+
+        compose.onNodeWithText("Фотографии: 1").assertIsDisplayed()
+        compose.onNodeWithText("Выбрано: 0").assertIsDisplayed()
+        compose.onNodeWithText("Плитка").assertDoesNotExist()
+        compose.onNodeWithText("Список без фото").assertDoesNotExist()
+    }
+
+    @Test
     fun galleryCatalogOpensAndReturnsHomeWithoutStartingScan() {
         compose.onNodeWithText("Каталог галерей").performClick()
         compose.onNodeWithText("Каталог галерей").assertIsDisplayed()
