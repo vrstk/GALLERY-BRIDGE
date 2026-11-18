@@ -1,6 +1,7 @@
 package com.gallerybridge.app
 
 import android.content.Context
+import androidx.lifecycle.ViewModelProvider
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import com.gallerybridge.app.transfer.HistoryStore
@@ -78,18 +79,19 @@ class GalleryHomeTest {
         )
         compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
-        compose.onNodeWithTag("gallery-mosaic-photo-https://example.com/rotation-fixture.jpg")
-            .performClick()
-        // A dialog uses a separate Android window. Verify the actual pager,
-        // rather than assuming its overlay text is visible in every test frame.
-        println("GALLERY_VIEWER_TEST_PHASE: after_open_before_rotation")
+        // Restore from the same ViewModel used by the real Activity.
+        // Gesture/thumbnail interactions have their own viewer test; this
+        // case specifically checks the lifecycle of an already open viewer.
+        compose.runOnIdle {
+            ViewModelProvider(compose.activity)[GallerySessionState::class.java]
+                .openedPhoto = "https://example.com/rotation-fixture.jpg"
+        }
         compose.waitUntil(timeoutMillis = 8_000) {
             compose.onAllNodesWithTag("fullscreen-photo-pager")
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("fullscreen-photo-pager").assertExists()
         compose.activityRule.scenario.recreate()
-        println("GALLERY_VIEWER_TEST_PHASE: after_recreation")
         compose.waitUntil(timeoutMillis = 8_000) {
             compose.onAllNodesWithTag("fullscreen-photo-pager")
                 .fetchSemanticsNodes().isNotEmpty()
