@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import com.gallerybridge.app.ui.GalleryPage
 import com.gallerybridge.app.ui.GalleryShell
@@ -58,8 +59,15 @@ class GalleryVisualThemeTest {
             }
         }
         compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
-        compose.onNodeWithText("Главная").assertIsDisplayed()
-        compose.onNodeWithText("Очередь").performClick()
+        compose.onNodeWithText("Каталог").assertIsDisplayed()
+        compose.onNodeWithText("Галереи").assertIsDisplayed()
+        compose.onNodeWithText("Загрузки").assertIsDisplayed()
+        compose.onNodeWithText("Хранилища").assertIsDisplayed()
+        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithContentDescription("Открыть очередь").performClick()
         compose.onNodeWithText("Очередь загрузок").assertIsDisplayed()
+        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithContentDescription("Открыть историю").performClick()
+        compose.onNodeWithText("История загрузок").assertIsDisplayed()
     }
 }

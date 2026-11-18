@@ -58,6 +58,22 @@ class GalleryPhotoFirstTest {
             .assertIsDisplayed()
     }
 
+    @Test fun knownDateAppearsInPublicationHeader() {
+        compose.setContent {
+            GalleryTheme(dark = true) {
+                GalleryPhotoHeader(
+                    visibleCount = 8, totalCount = 8,
+                    foundCount = 8, extraCount = 0,
+                    publicationModel = "Модель",
+                    publicationTitle = "Съёмка",
+                    publicationDate = "2026-10-12"
+                )
+            }
+        }
+        compose.onNodeWithTag("gallery-publication-date").assertIsDisplayed()
+        compose.onNodeWithText("Дата: 2026-10-12").assertIsDisplayed()
+    }
+
     @Test fun missingMetadataStaysMissingAndPhotoCountRemainsVisible() {
         compose.setContent {
             GalleryTheme(dark = false) {

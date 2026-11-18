@@ -338,9 +338,9 @@ internal fun FullscreenPhotoViewer(
                         onCheckedChange = { onSelection(current, it) },
                         modifier = Modifier.testTag("fullscreen-photo-selection"),
                         colors = CheckboxDefaults.colors(
-                            checkedColor = Color(0xFF86BBFF),
+                            checkedColor = MaterialTheme.colorScheme.primary,
                             uncheckedColor = Color.White,
-                            checkmarkColor = Color.Black
+                            checkmarkColor = MaterialTheme.colorScheme.onPrimary
                         )
                     )
                 }
@@ -358,13 +358,21 @@ internal fun FullscreenPhotoViewer(
                         .windowInsetsPadding(WindowInsets.navigationBars)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        photos[pager.currentPage.coerceIn(0, photos.lastIndex)].name,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            photos[pager.currentPage.coerceIn(0, photos.lastIndex)].name,
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "Свайп — другое фото · Двойное касание — масштаб",
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2
+                        )
+                    }
                 }
             }
         }

@@ -619,7 +619,12 @@ class MainActivity : ComponentActivity() {
 
     private fun backFromPage() {
         reveal = false
-        screen = if (screen == GalleryPage.SETTINGS) settingsOrigin else GalleryPage.HOME
+        screen = when (screen) {
+            GalleryPage.SETTINGS -> settingsOrigin.takeUnless { it == GalleryPage.SETTINGS }
+                ?: GalleryPage.HOME
+            GalleryPage.QUEUE, GalleryPage.HISTORY -> GalleryPage.DOWNLOADS
+            else -> GalleryPage.HOME
+        }
     }
     private fun verifyImageSizes() {
         if (imageProbeRunning || working || transferRunning) return
@@ -1192,7 +1197,16 @@ class MainActivity : ComponentActivity() {
             page = screen,
             onNavigate = { page ->
                 keyboard?.hide()
-                screen = page
+                when (page) {
+                    GalleryPage.SETTINGS -> {
+                        if (screen != GalleryPage.SETTINGS) openSettings()
+                    }
+                    GalleryPage.CATALOG -> {
+                        catalog = GalleryCatalogStore.load(this@MainActivity)
+                        screen = page
+                    }
+                    else -> screen = page
+                }
             },
             onSettings = { openSettings() },
             onBack = ::backFromPage,
@@ -1453,7 +1467,8 @@ class MainActivity : ComponentActivity() {
                         foundCount = items.size,
                         extraCount = otherLinks,
                         publicationModel = model,
-                        publicationTitle = title
+                        publicationTitle = title,
+                        publicationDate = date
                     )
                     if (otherLinks > 0) {
                         TextButton(

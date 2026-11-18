@@ -6,6 +6,7 @@ import com.gallerybridge.app.transfer.QueueStore
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import org.junit.Assert.assertEquals
@@ -32,7 +33,8 @@ class QueueReviewTest {
         }
         try {
             compose.activityRule.scenario.recreate()
-            compose.onNodeWithText("Очередь").performClick()
+            compose.onNodeWithText("Загрузки").performClick()
+            compose.onNodeWithContentDescription("Открыть очередь").performClick()
             compose.onNodeWithText("Требуют ручной проверки: 1").assertIsDisplayed()
             compose.onNodeWithText("Проверьте частичный файл").performScrollTo().assertIsDisplayed()
             compose.onNodeWithText("Разрешить повтор после проверки").performScrollTo().performClick()

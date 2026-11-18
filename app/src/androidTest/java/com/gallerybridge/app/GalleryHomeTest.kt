@@ -53,11 +53,13 @@ class GalleryHomeTest {
         compose.onNodeWithText("Найти фотографии").performClick()
         awaitSearchResult()
 
-        compose.onNodeWithText("Очередь").performClick()
+        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithContentDescription("Открыть очередь").performClick()
         compose.onNodeWithText("Очередь загрузок").assertIsDisplayed()
-        compose.onNodeWithText("История").performClick()
+        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithContentDescription("Открыть историю").performClick()
         compose.onNodeWithText("История загрузок").assertIsDisplayed()
-        compose.onNodeWithText("Главная").performClick()
+        compose.onNodeWithText("Каталог").performClick()
         compose.onNodeWithText("Открыть результаты").performClick()
         awaitSearchResult()
     }
@@ -191,7 +193,8 @@ class GalleryHomeTest {
             QueueStore.save(compose.activity, queue.copy(entries = listOf(QueueStore.Entry(media, "FAILED"))))
         }
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithText("Очередь").performClick()
+        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithContentDescription("Открыть очередь").performClick()
         compose.onNodeWithText("Закрыть очередь и начать новую").performScrollTo().performClick()
         compose.onNodeWithText("Закрыть незавершённую очередь?").assertIsDisplayed()
         compose.onNodeWithText("Закрыть очередь").performClick()

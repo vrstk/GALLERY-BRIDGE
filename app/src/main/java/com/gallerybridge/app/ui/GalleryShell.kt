@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -29,15 +30,18 @@ import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.R
 
 internal enum class GalleryPage(val label: String, val title: String = label) {
-    HOME("Главная", "GALLERY BRIDGE"),
-    CATALOG("Каталог", "Каталог галерей"),
+    HOME("Каталог", "GALLERY BRIDGE"),
+    CATALOG("Галереи", "Каталог галерей"),
     DOWNLOADS("Загрузки"),
     QUEUE("Очередь", "Очередь загрузок"),
     HISTORY("История", "История загрузок"),
-    SETTINGS("Настройки")
+    SETTINGS("Хранилища", "Настройки")
 }
 
-private val NavigationPages = listOf(GalleryPage.HOME, GalleryPage.DOWNLOADS, GalleryPage.QUEUE, GalleryPage.HISTORY)
+// Queue and History remain separate pages, accessible from the Downloads toolbar.
+private val NavigationPages = listOf(
+    GalleryPage.HOME, GalleryPage.CATALOG, GalleryPage.DOWNLOADS, GalleryPage.SETTINGS
+)
 internal val GalleryContentWidth = 640.dp
 
 @Composable
@@ -76,7 +80,8 @@ internal fun GalleryShell(
                             GalleryPage.HOME -> Image(
                                 painterResource(R.drawable.ic_gallery_bridge), null, Modifier.size(42.dp)
                             )
-                            GalleryPage.SETTINGS, GalleryPage.CATALOG -> IconButton(onClick = onBack) {
+                            GalleryPage.SETTINGS, GalleryPage.CATALOG,
+                            GalleryPage.QUEUE, GalleryPage.HISTORY -> IconButton(onClick = onBack) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Назад")
                             }
                             else -> Unit
@@ -91,6 +96,22 @@ internal fun GalleryShell(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+                        if (page == GalleryPage.DOWNLOADS) {
+                            IconButton(
+                                onClick = { onNavigate(GalleryPage.QUEUE) },
+                                modifier = Modifier.testTag("downloads-queue-shortcut")
+                            ) {
+                                Icon(Icons.AutoMirrored.Outlined.List,
+                                    contentDescription = "Открыть очередь")
+                            }
+                            IconButton(
+                                onClick = { onNavigate(GalleryPage.HISTORY) },
+                                modifier = Modifier.testTag("downloads-history-shortcut")
+                            ) {
+                                Icon(painterResource(R.drawable.ic_history),
+                                    contentDescription = "Открыть историю")
+                            }
+                        }
                         if (page != GalleryPage.SETTINGS && page != GalleryPage.CATALOG) {
                             IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "Настройки") }
                         }
@@ -99,8 +120,7 @@ internal fun GalleryShell(
             }
         },
         bottomBar = {
-            if (page != GalleryPage.SETTINGS && page != GalleryPage.CATALOG) {
-                Surface(color = colors.surfaceContainerLowest) {
+            Surface(color = colors.surfaceContainerLowest) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         actions()
                         HorizontalDivider(color = colors.outlineVariant)
@@ -112,15 +132,18 @@ internal fun GalleryShell(
                         ) {
                             NavigationPages.forEach { destination ->
                                 NavigationBarItem(
-                                    selected = page == destination,
+                                    selected = page == destination ||
+                                        (destination == GalleryPage.DOWNLOADS &&
+                                            page in listOf(GalleryPage.QUEUE, GalleryPage.HISTORY)),
                                     onClick = { onNavigate(destination) },
+                                    modifier = Modifier.testTag("nav-${destination.name.lowercase()}"),
                                     icon = {
                                         when (destination) {
                                             GalleryPage.HOME -> Icon(Icons.Outlined.Home, null)
+                                            GalleryPage.CATALOG -> NavigationIcon(R.drawable.ic_gallery_bridge)
                                             GalleryPage.DOWNLOADS -> NavigationIcon(R.drawable.ic_download)
-                                            GalleryPage.QUEUE -> Icon(Icons.AutoMirrored.Outlined.List, null)
-                                            GalleryPage.HISTORY -> NavigationIcon(R.drawable.ic_history)
-                                            GalleryPage.SETTINGS, GalleryPage.CATALOG -> Unit
+                                            GalleryPage.SETTINGS -> Icon(Icons.Outlined.Settings, null)
+                                            GalleryPage.QUEUE, GalleryPage.HISTORY -> Unit
                                         }
                                     },
                                     label = {
@@ -138,7 +161,6 @@ internal fun GalleryShell(
                         }
                     }
                 }
-            }
         }
     ) { insets ->
         Box(

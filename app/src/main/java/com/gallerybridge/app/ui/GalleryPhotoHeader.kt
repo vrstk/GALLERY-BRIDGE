@@ -1,6 +1,9 @@
 package com.gallerybridge.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,7 +24,8 @@ internal fun GalleryPhotoHeader(
     foundCount: Int,
     extraCount: Int,
     publicationModel: String,
-    publicationTitle: String
+    publicationTitle: String,
+    publicationDate: String = ""
 ) {
     val colors = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -29,14 +33,27 @@ internal fun GalleryPhotoHeader(
             Surface(
                 modifier = Modifier.fillMaxWidth().testTag("gallery-publication-summary"),
                 shape = MaterialTheme.shapes.large,
-                color = colors.surfaceContainerLow
+                color = colors.surfaceContainerLow,
+                border = BorderStroke(1.dp, colors.outlineVariant)
             ) {
                 Column(
                     Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text("ПУБЛИКАЦИЯ", style = MaterialTheme.typography.labelSmall,
-                        color = colors.secondary)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "ПУБЛИКАЦИЯ", style = MaterialTheme.typography.labelSmall,
+                            color = colors.primary, modifier = Modifier.weight(1f)
+                        )
+                        if (publicationDate.isNotBlank()) {
+                            Text(
+                                "Дата: $publicationDate",
+                                modifier = Modifier.testTag("gallery-publication-date"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                    }
                     if (publicationModel.isNotBlank()) {
                         Text(publicationModel, style = MaterialTheme.typography.titleMedium,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
