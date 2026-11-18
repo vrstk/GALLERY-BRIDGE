@@ -82,12 +82,14 @@ class GalleryHomeTest {
             .performClick()
         // A dialog uses a separate Android window. Verify the actual pager,
         // rather than assuming its overlay text is visible in every test frame.
+        println("GALLERY_VIEWER_TEST_PHASE: after_open_before_rotation")
         compose.waitUntil(timeoutMillis = 8_000) {
             compose.onAllNodesWithTag("fullscreen-photo-pager")
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("fullscreen-photo-pager").assertExists()
         compose.activityRule.scenario.recreate()
+        println("GALLERY_VIEWER_TEST_PHASE: after_recreation")
         compose.waitUntil(timeoutMillis = 8_000) {
             compose.onAllNodesWithTag("fullscreen-photo-pager")
                 .fetchSemanticsNodes().isNotEmpty()
