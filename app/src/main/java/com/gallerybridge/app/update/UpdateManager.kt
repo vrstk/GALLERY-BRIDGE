@@ -95,6 +95,16 @@ internal class UpdateManager(
                                     ?: "Загрузка прервана. Повторите попытку.")
                         }
                     }
+                    if (current.state.isFinished) {
+                        // WorkManager exposes terminal state after cancellation;
+                        // keep the partial bytes of all still-running work IDs.
+                        withContext(Dispatchers.IO) {
+                            UpdatePartialFiles.cleanOrphans(
+                                folder,
+                                work.filter { !it.state.isFinished }.map { it.id }.toSet()
+                            )
+                        }
+                    }
                 }
         }
         // Verify cached complete APK independently of WorkManager's last result.
