@@ -139,7 +139,9 @@ internal fun DownloadActions(selectedCount: Int, enabled: Boolean, onChooseDesti
             onClick = onChooseDestination,
             enabled = enabled,
             shape = MaterialTheme.shapes.medium,
-            colors = ButtonDefaults.buttonColors(containerColor = SearchButtonBlue, contentColor = Color.White)
+            colors = ButtonDefaults.buttonColors(
+                containerColor = colors.primary, contentColor = colors.onPrimary
+            )
         ) {
             Icon(painterResource(R.drawable.ic_download), null, Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))

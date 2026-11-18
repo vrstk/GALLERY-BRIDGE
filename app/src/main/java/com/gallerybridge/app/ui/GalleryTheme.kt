@@ -14,61 +14,62 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Photo First palette. Keep light and dark themes explicit so stored user
+ * Graphite and violet visual identity. Keep light and dark themes explicit so stored user
  * preference continues to select the same appearance after an APK update.
  */
-internal val GalleryAccentBlue = Color(0xFF3478F6)
-internal val GalleryAccentCyan = Color(0xFF55C9DD)
-internal val SearchButtonBlue = Color(0xFF245DD4)
+// Blue remains a secondary highlight; violet is the approved primary UI accent.
+internal val GalleryAccentBlue = Color(0xFF64AEFF)
+internal val GalleryAccentCyan = Color(0xFF80BFFF)
+internal val SearchButtonBlue = Color(0xFF8040C4)
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF83B6FF),
-    onPrimary = Color(0xFF0C2850),
-    primaryContainer = Color(0xFF233B63),
-    onPrimaryContainer = Color(0xFFDEE9FF),
+    primary = Color(0xFFC58BFF),
+    onPrimary = Color(0xFF271136),
+    primaryContainer = Color(0xFF42245C),
+    onPrimaryContainer = Color(0xFFF4DFFF),
     secondary = GalleryAccentCyan,
-    onSecondary = Color(0xFF072F39),
-    secondaryContainer = Color(0xFF1A3D48),
-    onSecondaryContainer = Color(0xFFB7EBF1),
-    background = Color(0xFF11151C),
-    onBackground = Color(0xFFF4F6FA),
-    surface = Color(0xFF171D27),
-    onSurface = Color(0xFFF4F6FA),
-    surfaceVariant = Color(0xFF303E50),
-    onSurfaceVariant = Color(0xFFB8C6D7),
-    surfaceTint = GalleryAccentBlue,
-    surfaceContainerLowest = Color(0xFF0D1118),
-    surfaceContainerLow = Color(0xFF1D2632),
-    surfaceContainer = Color(0xFF253140),
-    surfaceContainerHigh = Color(0xFF2C3A4B),
-    surfaceContainerHighest = Color(0xFF364558),
-    outline = Color(0xFF91A4B9),
-    outlineVariant = Color(0xFF3A495C)
+    onSecondary = Color(0xFF082C4F),
+    secondaryContainer = Color(0xFF23374E),
+    onSecondaryContainer = Color(0xFFCCE5FF),
+    background = Color(0xFF0C0B12),
+    onBackground = Color(0xFFF7F4FF),
+    surface = Color(0xFF15131D),
+    onSurface = Color(0xFFF7F4FF),
+    surfaceVariant = Color(0xFF2A2734),
+    onSurfaceVariant = Color(0xFFBFC0D2),
+    surfaceTint = Color(0xFFC58BFF),
+    surfaceContainerLowest = Color(0xFF0A0910),
+    surfaceContainerLow = Color(0xFF1B1925),
+    surfaceContainer = Color(0xFF221F2D),
+    surfaceContainerHigh = Color(0xFF2B2738),
+    surfaceContainerHighest = Color(0xFF373044),
+    outline = Color(0xFF8E849E),
+    outlineVariant = Color(0xFF413A4C)
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF245DD4),
+    primary = Color(0xFF7939B8),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE8FF),
-    onPrimaryContainer = Color(0xFF143A7A),
-    secondary = Color(0xFF006D7C),
+    primaryContainer = Color(0xFFEFDCFF),
+    onPrimaryContainer = Color(0xFF34144E),
+    secondary = Color(0xFF255BA8),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFD8F3F5),
-    onSecondaryContainer = Color(0xFF154D55),
-    background = Color(0xFFF4F6FA),
-    onBackground = Color(0xFF182438),
+    secondaryContainer = Color(0xFFDCEBFF),
+    onSecondaryContainer = Color(0xFF15385D),
+    background = Color(0xFFFAF8FD),
+    onBackground = Color(0xFF221C2D),
     surface = Color.White,
-    onSurface = Color(0xFF182438),
-    surfaceVariant = Color(0xFFE1EAF4),
-    onSurfaceVariant = Color(0xFF4A5D74),
-    surfaceTint = GalleryAccentBlue,
+    onSurface = Color(0xFF221C2D),
+    surfaceVariant = Color(0xFFEBE5F3),
+    onSurfaceVariant = Color(0xFF5C5269),
+    surfaceTint = Color(0xFF7939B8),
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color.White,
-    surfaceContainer = Color(0xFFEEF2F8),
-    surfaceContainerHigh = Color(0xFFE5ECF5),
-    surfaceContainerHighest = Color(0xFFDCE5F1),
-    outline = Color(0xFF687C94),
-    outlineVariant = Color(0xFFC7D3E1)
+    surfaceContainerLow = Color(0xFFFCFAFF),
+    surfaceContainer = Color(0xFFF4EFFA),
+    surfaceContainerHigh = Color(0xFFEDE5F5),
+    surfaceContainerHighest = Color(0xFFE5D9F0),
+    outline = Color(0xFF776B86),
+    outlineVariant = Color(0xFFD6CBDD)
 )
 
 private val GalleryShapes = Shapes(

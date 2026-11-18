@@ -55,7 +55,8 @@ internal fun GalleryHome(
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("home-search-card"),
         shape = MaterialTheme.shapes.large,
-        color = colors.surfaceContainerLow
+        color = colors.surfaceContainerLow,
+        border = BorderStroke(1.dp, colors.outlineVariant)
     ) {
         Column(
             Modifier.padding(16.dp),
@@ -193,7 +194,10 @@ internal fun FindMediaButton(
         enabled = enabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
         shape = MaterialTheme.shapes.medium,
-        colors = ButtonDefaults.buttonColors(containerColor = SearchButtonBlue, contentColor = Color.White)
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        )
     ) {
         Icon(Icons.Outlined.Search, null, Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))

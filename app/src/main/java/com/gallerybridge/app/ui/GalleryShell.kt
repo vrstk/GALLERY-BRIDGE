@@ -2,6 +2,7 @@ package com.gallerybridge.app.ui
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +16,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -51,9 +57,13 @@ internal fun GalleryShell(
         topBar = {
             Surface(color = colors.surface) {
                 Box(
-                    Modifier.fillMaxWidth().windowInsetsPadding(
-                        WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
-                    ),
+                    Modifier.fillMaxWidth()
+                        .background(Brush.horizontalGradient(
+                            listOf(colors.surface, colors.primaryContainer, colors.surface)
+                        ))
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
@@ -72,7 +82,10 @@ internal fun GalleryShell(
                             else -> Unit
                         }
                         Text(
-                            page.title,
+                            if (page == GalleryPage.HOME) buildAnnotatedString {
+                                append("GALLERY ")
+                                withStyle(SpanStyle(color = colors.primary)) { append("BRIDGE") }
+                            } else AnnotatedString(page.title),
                             modifier = Modifier.weight(1f).semantics { heading() },
                             style = MaterialTheme.typography.titleLarge,
                             maxLines = 2,
@@ -87,13 +100,13 @@ internal fun GalleryShell(
         },
         bottomBar = {
             if (page != GalleryPage.SETTINGS && page != GalleryPage.CATALOG) {
-                Surface(color = colors.surface) {
+                Surface(color = colors.surfaceContainerLowest) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         actions()
                         HorizontalDivider(color = colors.outlineVariant)
                         NavigationBar(
                             modifier = Modifier.widthIn(max = GalleryContentWidth),
-                            containerColor = colors.surface,
+                            containerColor = colors.surfaceContainerLowest,
                             tonalElevation = 0.dp,
                             windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
                         ) {
