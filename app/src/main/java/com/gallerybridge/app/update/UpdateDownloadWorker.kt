@@ -101,9 +101,8 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
             ?: return Result.failure(workDataOf(ERROR to "Манифест обновления изменился."))
         val file = partialFile(applicationContext, id)
         return try {
-            withContext(Dispatchers.IO) {
-                UpdatePartialFiles.cleanOrphans(file.parentFile!!, setOf(id))
-            }
+            // Cleanup is coordinated in UpdateManager with every active ID:
+            // a replaced worker must not delete another worker's partial file.
             setForeground(foreground(
                 (file.length().coerceAtMost(release.bytes) * 100L / release.bytes).toInt()
             ))

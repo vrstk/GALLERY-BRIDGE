@@ -13,6 +13,7 @@ import androidx.core.content.FileProvider
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,16 @@ internal class UpdateManager(
             WorkManager.getInstance(context.applicationContext)
                 .getWorkInfosForUniqueWorkFlow(UpdateDownloadWorker.UNIQUE)
                 .collect { work ->
+                    // Cleanup also runs when there is no newer release.
+                    // Preserve all active WorkSpec IDs, including a replacement
+                    // whose manifest is not currently shown in Settings.
+                    withContext(Dispatchers.IO) {
+                        UpdatePartialFiles.cleanOrphans(
+                            folder,
+                            work.filterNot { it.state.isFinished }
+                                .mapTo(hashSetOf()) { it.id }
+                        )
+                    }
                     val release = state.release ?: return@collect
                     val matching = work.filter { info ->
                         UpdateDownloadWorker.matches(info.tags, release)
@@ -95,16 +106,6 @@ internal class UpdateManager(
                                     ?: "Загрузка прервана. Повторите попытку.")
                         }
                     }
-                    if (current.state.isFinished) {
-                        // WorkManager exposes terminal state after cancellation;
-                        // keep the partial bytes of all still-running work IDs.
-                        withContext(Dispatchers.IO) {
-                            UpdatePartialFiles.cleanOrphans(
-                                folder,
-                                work.filter { !it.state.isFinished }.map { it.id }.toSet()
-                            )
-                        }
-                    }
                 }
         }
         // Verify cached complete APK independently of WorkManager's last result.
@@ -138,6 +139,16 @@ internal class UpdateManager(
         checkJob = scope.launch {
             state = state.copy(checking = true, message = "Проверяем обновления…")
             try {
+                // The observer may not have delivered the first WorkInfo after
+                // process recreation. Never replace the manifest of an active
+                // download, even if the UI state still says idle.
+                val pending = WorkManager.getInstance(context.applicationContext)
+                    .getWorkInfosForUniqueWorkFlow(UpdateDownloadWorker.UNIQUE)
+                    .first()
+                if (pending.any { !it.state.isFinished }) {
+                    state = state.copy(message = "Обновление скачивается в фоне. Проверка отложена.")
+                    return@launch
+                }
                 val (manifest, release) = withContext(Dispatchers.IO) {
                     val response = JSONObject(UpdateConnections.readText(UpdatePolicy.API, 200_000))
                     val assets = response.getJSONArray("assets")
