@@ -10,21 +10,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
-import kotlin.coroutines.coroutineContext
 
 internal class UpdateManager(
     private val context: Context,
@@ -44,9 +40,7 @@ internal class UpdateManager(
     private val preferences = context.getSharedPreferences("gallery_bridge_updater", Context.MODE_PRIVATE)
     private val folder = File(context.cacheDir, "updates")
     private val complete = File(folder, "verified.apk")
-    private val partial = File(folder, "partial.apk")
     private var checkJob: Job? = null
-    private var downloadJob: Job? = null
     var automatic by mutableStateOf(preferences.getBoolean("automatic", true))
         private set
     private val storedRelease = preferences.getString("validatedManifest", null)
@@ -58,11 +52,58 @@ internal class UpdateManager(
         private set
 
     init {
-        // The previous APK can be reused only after re-verification on each process start.
+        // Durable work is observed across Activity recreation and app process restart.
+        scope.launch {
+            WorkManager.getInstance(context.applicationContext)
+                .getWorkInfosForUniqueWorkFlow(UpdateDownloadWorker.UNIQUE)
+                .collect { work ->
+                    val current = work.firstOrNull() ?: return@collect
+                    val release = state.release ?: return@collect
+                    if (current.inputData.getString(UpdateDownloadWorker.HASH) != release.hash ||
+                        current.inputData.getLong(UpdateDownloadWorker.CODE, -1L) != release.code)
+                        return@collect
+                    when (current.state) {
+                        WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> {
+                            val loaded = current.progress.getLong(UpdateDownloadWorker.BYTES, 0L)
+                            state = state.copy(downloading = true, ready = false,
+                                progress = (loaded.coerceIn(0L, release.bytes) * 100L /
+                                    release.bytes).toInt(),
+                                message = if (current.state == WorkInfo.State.RUNNING)
+                                    "Скачивание APK продолжается, можно свернуть приложение."
+                                    else "Скачивание ожидает доступной сети.")
+                        }
+                        WorkInfo.State.SUCCEEDED -> {
+                            val valid = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    UpdateArchiveVerifier.verify(context, complete, release)
+                                    true
+                                }.getOrDefault(false)
+                            }
+                            state = state.copy(downloading = false, ready = valid,
+                                progress = if (valid) 100 else 0,
+                                message = if (valid)
+                                    "APK проверена. Установка требует подтверждения Android."
+                                else "Скачанная APK не прошла повторную проверку.")
+                        }
+                        WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                            state = state.copy(downloading = false, ready = false,
+                                progress = 0,
+                                message = if (current.state == WorkInfo.State.CANCELLED)
+                                    "Загрузка отменена."
+                                else current.outputData.getString(UpdateDownloadWorker.ERROR)
+                                    ?: "Загрузка прервана. Повторите попытку.")
+                        }
+                    }
+                }
+        }
+        // Verify cached complete APK independently of WorkManager's last result.
         val release = storedRelease
         if (release != null && complete.isFile) scope.launch {
             val valid = withContext(Dispatchers.IO) {
-                runCatching { verifyArchive(complete, release); true }.getOrDefault(false)
+                runCatching {
+                    UpdateArchiveVerifier.verify(context, complete, release)
+                    true
+                }.getOrDefault(false)
             }
             if (valid && state.release == release && !state.downloading) {
                 state = state.copy(ready = true, progress = 100,
@@ -78,7 +119,7 @@ internal class UpdateManager(
     }
 
     fun check(auto: Boolean = false) {
-        if (checkJob?.isActive == true || downloadJob?.isActive == true) return
+        if (checkJob?.isActive == true || state.downloading) return
         val now = System.currentTimeMillis()
         if (auto && !UpdateCheckPolicy.shouldAutoCheck(automatic, now, state.lastCheck, lastAttempt)) return
         lastAttempt = now
@@ -87,7 +128,7 @@ internal class UpdateManager(
             state = state.copy(checking = true, message = "Проверяем обновления…")
             try {
                 val (manifest, release) = withContext(Dispatchers.IO) {
-                    val response = JSONObject(readText(UpdatePolicy.API, 200_000))
+                    val response = JSONObject(UpdateConnections.readText(UpdatePolicy.API, 200_000))
                     val assets = response.getJSONArray("assets")
                     var found = false
                     for (index in 0 until assets.length()) {
@@ -97,14 +138,25 @@ internal class UpdateManager(
                             a.getLong("size") in 1L..50_000L) found = true
                     }
                     require(found) { "В preview-signed ещё нет update.json" }
-                    val json = readText(UpdatePolicy.MANIFEST, 50_000)
+                    val json = UpdateConnections.readText(UpdatePolicy.MANIFEST, 50_000)
                     json to UpdatePolicy.parse(json)
                 }
                 val newer = UpdatePolicy.isNewer(release.code, installedCode())
-                removeTemp()
+                // Retain the verified APK for the same release. Only a changed
+                // manifest invalidates the previously downloaded package.
+                val changed = state.release?.hash != release.hash ||
+                    state.release?.code != release.code
+                if (!newer || changed) {
+                    withContext(Dispatchers.IO) {
+                        complete.delete()
+                    }
+                }
                 val checked = System.currentTimeMillis()
-                state = state.copy(release = release.takeIf { newer }, ready = false, lastCheck = checked,
-                    message = if (newer) "Доступна версия ${release.version}" else "Установлена актуальная версия")
+                state = state.copy(release = release.takeIf { newer },
+                    ready = if (newer && !changed) state.ready else false,
+                    lastCheck = checked,
+                    message = if (newer) "Доступна версия ${release.version}"
+                        else "Установлена актуальная версия")
                 preferences.edit().putLong("lastSuccess", checked)
                     .apply {
                         if (newer) putString("validatedManifest", manifest)
@@ -121,55 +173,26 @@ internal class UpdateManager(
 
     fun download() {
         val release = state.release ?: return
-        if (downloadJob?.isActive == true || checkJob?.isActive == true) return
-        downloadJob = scope.launch {
-            state = state.copy(downloading = true, ready = false, progress = 0, message = "Скачиваем APK…")
-            try {
-                withContext(Dispatchers.IO) {
-                    folder.mkdirs()
-                    partial.delete()
-                    val md = MessageDigest.getInstance("SHA-256")
-                    var bytes = 0L
-                    connect(release.apkUrl).useConnection { connection ->
-                        connection.inputStream.use { stream ->
-                            partial.outputStream().use { output ->
-                                val chunk = ByteArray(65536)
-                                while (true) {
-                                    coroutineContext.ensureActive()
-                                    val n = stream.read(chunk)
-                                    if (n < 0) break
-                                    bytes += n
-                                    require(bytes <= release.bytes) { "Размер APK превышен" }
-                                    md.update(chunk, 0, n)
-                                    output.write(chunk, 0, n)
-                                    withContext(Dispatchers.Main) {
-                                        state = state.copy(progress = (bytes * 100 / release.bytes).toInt())
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    require(bytes == release.bytes) { "Неполная загрузка APK" }
-                    require(md.digest().hex() == release.hash) { "SHA-256 APK не совпадает" }
-                    verifyArchive(partial, release)
-                    complete.delete()
-                    require(partial.renameTo(complete)) { "Не удалось сохранить APK" }
-                }
-                state = state.copy(downloading = false, ready = true, progress = 100,
-                    message = "APK проверена. Установка требует подтверждения Android.")
-            } catch (e: CancellationException) {
-                // Remove partial APK even after the parent coroutine was cancelled.
-                withContext(NonCancellable + Dispatchers.IO) { removeTemp() }
-                state = state.copy(downloading = false, ready = false, message = "Загрузка отменена")
-            } catch (e: Exception) {
-                withContext(Dispatchers.IO) { removeTemp() }
-                state = state.copy(downloading = false, ready = false,
-                    message = "Ошибка загрузки: ${e.message ?: "повторите попытку"}")
-            }
+        if (state.downloading || checkJob?.isActive == true) return
+        // WorkManager persists the transfer, retries transient errors and resumes
+        // a partial file. Installing is never automatic.
+        state = state.copy(downloading = true, ready = false,
+            progress = 0, message = "Скачивание APK поставлено в очередь.")
+        try {
+            WorkManager.getInstance(context.applicationContext)
+                .let { UpdateDownloadWorker.enqueue(context.applicationContext, release) }
+        } catch (e: Exception) {
+            state = state.copy(downloading = false,
+                message = "Не удалось запустить загрузку: ${e.message ?: "ошибка"}")
         }
     }
 
-    fun cancel() { downloadJob?.cancel() }
+    fun cancel() {
+        WorkManager.getInstance(context.applicationContext)
+            .cancelUniqueWork(UpdateDownloadWorker.UNIQUE)
+        state = state.copy(downloading = false, ready = false,
+            progress = 0, message = "Загрузка отменяется.")
+    }
 
     fun install() {
         val release = state.release ?: return
@@ -179,7 +202,7 @@ internal class UpdateManager(
         }
         if (!state.ready) return
         try {
-            verifyArchive(complete, release)
+            UpdateArchiveVerifier.verify(context, complete, release)
             if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
                 context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                     Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -206,82 +229,4 @@ internal class UpdateManager(
         return if (Build.VERSION.SDK_INT >= 28) p.longVersionCode else p.versionCode.toLong()
     }
 
-    @Suppress("DEPRECATION")
-    private fun verifyArchive(apk: File, release: UpdatePolicy.Release) {
-        require(apk.isFile && apk.length() == release.bytes) { "Неверный размер APK" }
-        val digest = MessageDigest.getInstance("SHA-256")
-        apk.inputStream().use { input ->
-            val buffer = ByteArray(65536)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                digest.update(buffer, 0, n)
-            }
-        }
-        require(digest.digest().hex() == release.hash) { "SHA-256 APK не совпадает" }
-        val pm = context.packageManager
-        val info = if (Build.VERSION.SDK_INT >= 33)
-            pm.getPackageArchiveInfo(apk.absolutePath,
-                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()))
-        else pm.getPackageArchiveInfo(apk.absolutePath,
-            if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
-        require(info != null && info.packageName == UpdatePolicy.PACKAGE) { "Неверный package ID APK" }
-        val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-        require(code == release.code && UpdatePolicy.isNewer(code, installedCode())) { "Версия APK не подходит" }
-        require(info.versionName == release.version) { "Версия APK отличается от манифеста" }
-        val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
-        require(signatures?.size == 1) { "Подпись APK не найдена" }
-        val certificate = MessageDigest.getInstance("SHA-256").digest(signatures[0].toByteArray()).hex()
-        require(certificate == UpdatePolicy.CERTIFICATE) { "Неверная подпись APK" }
-    }
-
-    private fun removeTemp() { partial.delete(); complete.delete() }
-    private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
-
-    private inline fun <T> HttpURLConnection.useConnection(block: (HttpURLConnection) -> T): T =
-        try { block(this) } finally { disconnect() }
-
-    private fun connect(initial: String): HttpURLConnection {
-        var address = initial
-        repeat(6) {
-            require(address == UpdatePolicy.API || address == UpdatePolicy.MANIFEST ||
-                UpdatePolicy.permittedUrl(address) || UpdatePolicy.permittedRedirect(address)) {
-                "Недопустимый HTTPS-источник"
-            }
-            val connection = URL(address).openConnection() as HttpURLConnection
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = 15000
-            connection.readTimeout = 30000
-            connection.setRequestProperty("User-Agent", "GALLERY-BRIDGE-updater")
-            val code = connection.responseCode
-            if (code in 300..399) {
-                val location = connection.getHeaderField("Location") ?: error("Нет адреса перенаправления")
-                val next = URL(URL(address), location).toString()
-                connection.disconnect()
-                require(UpdatePolicy.permittedRedirect(next)) { "Небезопасное перенаправление" }
-                address = next
-            } else {
-                if (code !in 200..299) {
-                    connection.disconnect()
-                    error("GitHub HTTP $code")
-                }
-                return connection
-            }
-        }
-        error("Слишком много перенаправлений")
-    }
-
-    private fun readText(url: String, max: Int): String = connect(url).useConnection { connection ->
-        connection.inputStream.use { input ->
-            val out = ByteArrayOutputStream()
-            val buffer = ByteArray(4096)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                require(out.size() + n <= max) { "Ответ GitHub слишком большой" }
-                out.write(buffer, 0, n)
-            }
-            out.toString(Charsets.UTF_8.name())
-        }
-    }
 }
