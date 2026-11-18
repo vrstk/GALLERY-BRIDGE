@@ -1,11 +1,16 @@
 package com.gallerybridge.app
 
+import android.content.res.Configuration
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -45,6 +50,37 @@ class GalleryVisualThemeTest {
             assertEquals(Color(0xFFFAF8FD), sampled!!.background)
             assertEquals(Color(0xFF221C2D), sampled!!.onBackground)
         }
+    }
+
+    @Test fun landscapeUsesCompactBarAndTransparentGalleryGlyph() {
+        val page = mutableStateOf(GalleryPage.HOME)
+        compose.setContent {
+            val current = LocalConfiguration.current
+            val landscape = remember(current) {
+                Configuration(current).apply {
+                    orientation = Configuration.ORIENTATION_LANDSCAPE
+                }
+            }
+            CompositionLocalProvider(LocalConfiguration provides landscape) {
+                GalleryTheme(dark = true) {
+                    GalleryShell(
+                        page = page.value, onNavigate = { page.value = it },
+                        onSettings = {}, onBack = {}
+                    ) {
+                        Text("Содержимое")
+                    }
+                }
+            }
+        }
+        compose.onNodeWithTag("landscape-bottom-navigation").assertIsDisplayed()
+        compose.onNodeWithTag("nav-galleries-icon", useUnmergedTree = true).assertExists()
+        compose.onNodeWithTag("nav-catalog").performClick()
+        compose.onNodeWithText("Каталог галерей").assertIsDisplayed()
+        compose.onNodeWithTag("nav-downloads").performClick()
+        compose.onNodeWithContentDescription("Открыть очередь").performClick()
+        compose.onNodeWithText("Очередь загрузок").assertIsDisplayed()
+        compose.onNodeWithTag("nav-settings").performClick()
+        compose.onNodeWithText("Настройки").assertIsDisplayed()
     }
 
     @Test fun brandedHeaderRetainsReadableTextAndExistingNavigation() {
