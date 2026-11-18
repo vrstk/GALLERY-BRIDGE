@@ -1,10 +1,14 @@
 package com.gallerybridge.app
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import com.gallerybridge.app.ui.GalleryPhotoHeader
+import com.gallerybridge.app.ui.CompactPhotoSelection
 import com.gallerybridge.app.ui.GalleryTheme
 import org.junit.Rule
 import org.junit.Test
@@ -12,6 +16,30 @@ import org.junit.Test
 /** Preview-only UI: no network, queue or on-device storage used. */
 class GalleryPhotoFirstTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun compactPhotoSelectionKeepsLargeHitAreaAndSmallVisibleMark() {
+        var selected by androidx.compose.runtime.mutableStateOf(true)
+        compose.setContent {
+            GalleryTheme(dark = true) {
+                CompactPhotoSelection(
+                    checked = selected, enabled = true,
+                    photoName = "001.jpg", onClick = { selected = !selected }
+                )
+            }
+        }
+        val target = compose.onNodeWithTag("gallery-photo-selection", useUnmergedTree = true)
+        val visual = compose.onNodeWithTag("gallery-photo-selection-visual", useUnmergedTree = true)
+        target.assertIsDisplayed()
+        visual.assertIsDisplayed()
+        compose.runOnIdle {
+            val targetWidth = target.getUnclippedBoundsInRoot().width.value
+            val visualWidth = visual.getUnclippedBoundsInRoot().width.value
+            org.junit.Assert.assertTrue("Visual indicator must be smaller than hit area",
+                visualWidth < targetWidth * 0.7f)
+        }
+        compose.onNodeWithContentDescription("Снять выделение: 001.jpg").performClick()
+        compose.onNodeWithContentDescription("Выбрать фото: 001.jpg").assertIsDisplayed()
+    }
 
     @Test fun realPublicationLabelsAppearAbovePhotos() {
         compose.setContent {

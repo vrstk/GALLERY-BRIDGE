@@ -1,6 +1,7 @@
 package com.gallerybridge.app.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -14,7 +15,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
@@ -55,26 +55,26 @@ internal fun GalleryHome(
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("home-search-card"),
         shape = MaterialTheme.shapes.large,
-        color = colors.surfaceContainerLow,
-        border = BorderStroke(1.dp, colors.outlineVariant)
+        color = colors.surfaceContainerLow
     ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("ФОТОГАЛЕРЕИ", style = MaterialTheme.typography.labelSmall,
-                color = colors.secondary)
-            Text("Новая загрузка", style = MaterialTheme.typography.titleLarge)
-            Text("Вставьте ссылку на публикацию или фотографию.",
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant)
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Новая загрузка", modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge)
+                if (hasResults) {
+                    TextButton(onClick = onResults) {
+                        Text("Открыть результаты")
+                    }
+                }
+            }
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
             FindMediaButton(
                 searchAllowed && url.isNotBlank(), onSearch,
                 if (ModelListingSources.accepts(url)) "Найти фотопубликации" else "Найти фотографии"
             )
-            if (hasResults) {
-                TextButton(onClick = onResults, modifier = Modifier.align(Alignment.End)) {
-                    Text("Открыть результаты")
-                }
-            }
         }
     }
     OutlinedCard(
@@ -89,12 +89,11 @@ internal fun GalleryHome(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Surface(shape = MaterialTheme.shapes.medium, color = colors.primaryContainer) {
-                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.ic_gallery_bridge), null,
-                        tint = colors.onPrimaryContainer, modifier = Modifier.size(26.dp))
-                }
-            }
+            Image(
+                painterResource(R.drawable.ic_gallery_bridge),
+                contentDescription = null,
+                modifier = Modifier.size(40.dp)
+            )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Каталог галерей", style = MaterialTheme.typography.titleMedium)
                 Text(
@@ -108,40 +107,30 @@ internal fun GalleryHome(
         }
     }
     Text("Мои хранилища", style = MaterialTheme.typography.titleMedium)
-    Text("Настройте место сохранения фотографий.",
-        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val columns = if (maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.2f) 2 else 1
-        FlowRow(
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        StorageCard(
+            title = "Папка Android / облака",
+            configured = folderConfigured,
+            configuredLabel = if (folderConfigured) "Выбрана: $folderName" else
+                if (folderName == "Папка не выбрана") "Выбрать папку"
+                else "Доступ утрачен · выбрать снова",
+            onClick = onFolderSettings,
             modifier = Modifier.fillMaxWidth(),
-            maxItemsInEachRow = columns,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            testTag = "storage-android-folder"
         ) {
-            StorageCard(
-                title = "Папка Android / облака",
-                configured = folderConfigured,
-                configuredLabel = if (folderConfigured) "Выбрана: $folderName" else
-                    if (folderName == "Папка не выбрана") "Выбрать папку"
-                    else "Доступ утрачен · выбрать снова",
-                onClick = onFolderSettings,
-                modifier = Modifier.weight(1f),
-                testTag = "storage-android-folder"
-            ) {
-                Icon(painterResource(R.drawable.ic_folder), null,
-                    tint = colors.secondary, modifier = Modifier.size(23.dp))
-            }
-            StorageCard(
-                title = "Mail WebDAV",
-                configured = mailConfigured,
-                configuredLabel = "Данные указаны",
-                onClick = onMailSettings,
-                modifier = Modifier.weight(1f),
-                testTag = "storage-mail-webdav"
-            ) {
-                Icon(Icons.Outlined.Email, null, tint = colors.secondary,
-                    modifier = Modifier.size(22.dp))
-            }
+            Icon(painterResource(R.drawable.ic_folder), null,
+                tint = colors.secondary, modifier = Modifier.size(22.dp))
+        }
+        StorageCard(
+            title = "Mail WebDAV",
+            configured = mailConfigured,
+            configuredLabel = "Данные указаны",
+            onClick = onMailSettings,
+            modifier = Modifier.fillMaxWidth(),
+            testTag = "storage-mail-webdav"
+        ) {
+            Icon(Icons.Outlined.Email, null, tint = colors.secondary,
+                modifier = Modifier.size(22.dp))
         }
     }
     Text("Последняя загрузка", style = MaterialTheme.typography.titleMedium)
@@ -202,7 +191,7 @@ internal fun FindMediaButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
         shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.buttonColors(containerColor = SearchButtonBlue, contentColor = Color.White)
     ) {
@@ -241,26 +230,30 @@ private fun StorageCard(
         border = BorderStroke(1.dp, colors.outlineVariant),
         colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainerLow)
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = MaterialTheme.shapes.small, color = colors.surfaceContainerHigh) {
-                    Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) { icon() }
-                }
-                Spacer(Modifier.weight(1f))
-                Icon(
-                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                    null,
-                    Modifier.size(18.dp),
-                    tint = colors.onSurfaceVariant
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(shape = MaterialTheme.shapes.small, color = colors.surfaceContainerHigh) {
+                Box(Modifier.size(38.dp), contentAlignment = Alignment.Center) { icon() }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    if (configured || testTag == "storage-android-folder") configuredLabel
+                    else "Настроить доступ",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (configured) colors.secondary else colors.onSurfaceVariant
                 )
             }
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(
-                if (configured || testTag == "storage-android-folder") configuredLabel
-                else "Настроить доступ",
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2, overflow = TextOverflow.Ellipsis,
-                color = if (configured) colors.secondary else colors.onSurfaceVariant
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                null,
+                Modifier.size(18.dp),
+                tint = colors.onSurfaceVariant
             )
         }
     }

@@ -1,6 +1,8 @@
 package com.gallerybridge.app.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -70,7 +72,7 @@ internal fun GalleryCatalog(
     LazyColumn(
         modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         item(key = "search") {
             OutlinedTextField(
@@ -99,7 +101,7 @@ internal fun GalleryCatalog(
             )
         }
         item(key = "tools") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
                 TextButton(onClick = { showFilters = !showFilters }) {
                     Text(if (showFilters) "Скрыть фильтры" else "Фильтры")
                 }
@@ -109,7 +111,7 @@ internal fun GalleryCatalog(
                     }
                 }
                 TextButton(onClick = { showBackupTools = !showBackupTools }) {
-                    Text("Резервная копия")
+                    Text("Копия")
                 }
             }
         }
@@ -189,10 +191,11 @@ internal fun GalleryCatalog(
         } else {
             items(filtered, key = { it.url }) { entry ->
                 val progress = GalleryCatalogProgress.resolve(entry, queue)
+                var menuExpanded by remember(entry.url) { mutableStateOf(false) }
                 OutlinedCard(
                     onClick = { onOpen(entry) },
                     modifier = Modifier.fillMaxWidth().testTag("catalog-publication-card"),
-                    shape = MaterialTheme.shapes.large,
+                    shape = MaterialTheme.shapes.medium,
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp, MaterialTheme.colorScheme.outlineVariant
                     ),
@@ -202,12 +205,12 @@ internal fun GalleryCatalog(
                 ) {
                     val colors = MaterialTheme.colorScheme
                     Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Row(
                             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             if (showBatchTools && GalleryBatchSelection.eligible(entry, queue)) {
                                 Checkbox(
@@ -222,7 +225,7 @@ internal fun GalleryCatalog(
                                         batchSelection.size < GalleryBatchSelection.LIMIT
                                 )
                             }
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(entry.model.ifBlank { "Без имени" },
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -231,38 +234,59 @@ internal fun GalleryCatalog(
                                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                                     color = colors.onSurfaceVariant)
                             }
-                        }
-                        if (entry.date.isNotBlank()) {
-                            Text(entry.date, style = MaterialTheme.typography.labelSmall,
-                                color = colors.onSurfaceVariant)
-                        }
-                        Surface(
-                            color = if (progress.needsAttention) colors.errorContainer
-                                else colors.secondaryContainer,
-                            shape = MaterialTheme.shapes.small
-                        ) {
-                            Text(
-                                progress.title,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (progress.needsAttention) colors.onErrorContainer
-                                    else colors.onSecondaryContainer
-                            )
+                            if (entry.date.isNotBlank()) {
+                                Text(entry.date, style = MaterialTheme.typography.labelSmall,
+                                    color = colors.onSurfaceVariant)
+                            }
                         }
                         Text(
-                            progress.detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant
+                            progress.title,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (progress.needsAttention) colors.error else colors.secondary
                         )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            verticalArrangement = Arrangement.spacedBy(0.dp)
+                        if (progress.kind != GalleryCatalogProgress.Kind.SAVED) {
+                            Text(
+                                progress.detail,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
                         ) {
                             TextButton(onClick = { onOpen(entry) }) { Text("Открыть") }
-                            TextButton(onClick = { pendingEdit = entry }) { Text("Изменить") }
-                            TextButton(onClick = { pendingRemoval = entry }) { Text("Убрать") }
                             if (progress.linkedQueue) {
                                 TextButton(onClick = onQueue) { Text("Очередь") }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Box {
+                                IconButton(onClick = { menuExpanded = true },
+                                    modifier = Modifier.size(40.dp)) {
+                                    Icon(Icons.Filled.MoreVert,
+                                        contentDescription = "Действия с публикацией")
+                                }
+                                DropdownMenu(
+                                    expanded = menuExpanded,
+                                    onDismissRequest = { menuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Изменить") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            pendingEdit = entry
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Убрать") },
+                                        onClick = {
+                                            menuExpanded = false
+                                            pendingRemoval = entry
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

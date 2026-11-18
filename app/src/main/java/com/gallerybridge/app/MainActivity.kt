@@ -22,6 +22,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -1821,9 +1824,10 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.error)
                 }
                 Text(
-                    "Папку Google Диска можно выбрать без OAuth, если облачный провайдер " +
-                        "поддерживает запись через Android. Синхронизация с облаком может продолжиться позже.",
-                    style = MaterialTheme.typography.bodySmall
+                    "Облачные папки подключаются через Android. Синхронизацией " +
+                        "управляет выбранный провайдер.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 OutlinedButton(
                     onClick = { treePicker.launch(null) }, enabled = settingsEnabled, modifier = Modifier.fillMaxWidth()
@@ -1953,26 +1957,46 @@ class MainActivity : ComponentActivity() {
         val completed = done + skipped
         val total = queue.entries.size
         GalleryCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text(queue.model, style = MaterialTheme.typography.titleMedium)
-                Text(queue.title, maxLines = 3, style = MaterialTheme.typography.bodyMedium)
-                Text(queue.target, style = MaterialTheme.typography.bodySmall)
-                Text("Готово: $completed из $total", style = MaterialTheme.typography.titleMedium)
-                if (total > 0) {
-                    LinearProgressIndicator(
-                        progress = { completed.toFloat() / total },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+                Text(queue.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(queue.target, modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Готово: $completed из $total", style = MaterialTheme.typography.titleSmall)
                 }
-                TransferCounts(done, skipped, failed, queue.remaining, queue.target)
+                if (total > 0) {
+                    // Custom track avoids Material3's stop-dot at the far end,
+                    // which looks like full completion when progress is zero.
+                    Box(
+                        Modifier.fillMaxWidth().height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth((completed.toFloat() / total).coerceIn(0f, 1f))
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.secondary)
+                        )
+                    }
+                }
+                Text(
+                    (if (queue.target == "Папка Android") "Передано" else "Загружено") +
+                        ": $done · Уже были: $skipped · Ошибки: $failed · Осталось: ${queue.remaining}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 if (queue.blocked > 0) {
-                    Text("Требуют ручной проверки: " + queue.blocked,
+                    Text("Требуют ручной проверки: ${queue.blocked}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error)
                 }
                 if (queue.target == "Папка Android" && done > 0) {
-                    Text("Синхронизация зависит от выбранного провайдера папки.", style = MaterialTheme.typography.bodySmall)
+                    Text("Синхронизация зависит от выбранного провайдера папки.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -1992,11 +2016,13 @@ class MainActivity : ComponentActivity() {
                 enabled = !working && !auditing,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Закрыть очередь и начать новую") }
-            Text(
-                "Если источник запрещает скачивание (HTTP 403), проверьте разрешённый способ получения файла. " +
-                    "Повтор без изменения доступа может снова завершиться ошибкой.",
-                style = MaterialTheme.typography.bodySmall
-            )
+            if (queue.entries.any { it.failureReason.contains("403") }) {
+                Text(
+                    "Источник вернул HTTP 403. Проверьте разрешённый способ получения файла: " +
+                        "повтор без изменения доступа может снова завершиться ошибкой.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         } else {
             if (queue.target == "Папка Android") {
                 OutlinedButton(
@@ -2029,30 +2055,40 @@ class MainActivity : ComponentActivity() {
             }
         }
         if (filtered.isEmpty()) Text("В этой категории файлов нет.")
-        filtered.take(80).forEach { (index, item) ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                Text(when(item.state) {
-                    "DONE" -> "✓"
-                    "SKIPPED" -> "↷"
-                    "FAILED", "BLOCKED" -> "!"
-                    else -> "·"
-                })
-                Column(Modifier.weight(1f)) {
-                    Text(item.media.name, style=MaterialTheme.typography.bodyMedium)
-                    Text(when(item.state) {
-                        "DONE" -> if (queue.target == "Папка Android") "Передан провайдеру" else "Загружен"
-                        "SKIPPED" -> if (queue.target == "Папка Android") "Существует у провайдера" else "Уже был в облаке"
-                        "FAILED" -> "Ошибка, безопасный повтор доступен"
-                        "BLOCKED" -> "Требует проверки перед повтором"
-                        else -> "Ожидает"
-                    }, style=MaterialTheme.typography.bodySmall)
-                    if (item.failureReason.isNotBlank()) {
-                        Text(item.failureReason, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (item.state == "BLOCKED") {
-                        TextButton(onClick = { pendingUnblock = queue.id to index },
-                            enabled = !transferRunning && !working) {
-                            Text("Разрешить повтор после проверки")
+        Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            filtered.take(80).forEachIndexed { position, indexed ->
+                val index = indexed.index
+                val item = indexed.value
+                if (position > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(when (item.state) {
+                        "DONE" -> "✓"
+                        "SKIPPED" -> "↷"
+                        "FAILED", "BLOCKED" -> "!"
+                        else -> "·"
+                    })
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(item.media.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(when (item.state) {
+                            "DONE" -> if (queue.target == "Папка Android") "Передан провайдеру" else "Загружен"
+                            "SKIPPED" -> if (queue.target == "Папка Android") "Существует у провайдера" else "Уже был в облаке"
+                            "FAILED" -> "Ошибка, безопасный повтор доступен"
+                            "BLOCKED" -> "Требует проверки перед повтором"
+                            else -> "Ожидает"
+                        }, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (item.failureReason.isNotBlank()) {
+                            Text(item.failureReason, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                        if (item.state == "BLOCKED") {
+                            TextButton(onClick = { pendingUnblock = queue.id to index },
+                                enabled = !transferRunning && !working) {
+                                Text("Разрешить повтор после проверки")
+                            }
                         }
                     }
                 }
@@ -2068,13 +2104,31 @@ class MainActivity : ComponentActivity() {
         }
         history.forEach { record ->
             GalleryCard {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Text(record.model, style=MaterialTheme.typography.titleMedium)
-                    Text(record.title, maxLines=2, style=MaterialTheme.typography.bodyMedium)
-                    Text("${record.target} · ${record.outcome}", style=MaterialTheme.typography.bodySmall)
-                    Text("Готово: ${record.uploaded + record.skipped} из ${record.total}", style = MaterialTheme.typography.bodySmall)
-                    TransferCounts(record.uploaded, record.skipped, record.failed, record.remaining, record.target)
-                    Text(SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(record.updatedAt)), style=MaterialTheme.typography.bodySmall)
+                Column(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(record.model, modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(SimpleDateFormat("dd.MM.yy HH:mm", Locale.getDefault())
+                            .format(Date(record.updatedAt)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(record.title, maxLines = 2,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${record.target} · ${record.outcome}",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("Готово: ${record.uploaded + record.skipped} из ${record.total}" +
+                        " · Осталось: ${record.remaining}",
+                        style = MaterialTheme.typography.labelMedium)
+                    Text("Загружено: ${record.uploaded} · Уже были: ${record.skipped}" +
+                        " · Ошибки: ${record.failed}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.gallerybridge.app.core.CatalogGallery
@@ -19,6 +20,31 @@ import org.junit.Test
 /** Pure UI test: does not modify persisted queue, history or cloud contents. */
 class GalleryCatalogStatusTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun overflowKeepsDestructiveActionBehindConfirmation() {
+        val entry = CatalogGallery("https://example.com/gallery/one", "Модель",
+            "Съёмка", "", 1L)
+        var removed = false
+        compose.setContent {
+            MaterialTheme {
+                GalleryCatalog(
+                    entries = listOf(entry), queue = null,
+                    onBatchReview = {}, onQueue = {}, onOpen = {},
+                    onRemove = { removed = true },
+                    onEdit = { _: CatalogGallery, _: GalleryFields -> true },
+                    onExport = {}, onImport = {},
+                    backupStatus = "", historyCount = 0
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Действия с публикацией")
+            .performScrollTo().performClick()
+        compose.onNodeWithText("Убрать").performClick()
+        compose.onNodeWithText("Убрать галерею из каталога?").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(!removed) }
+        compose.onNodeWithText("Отмена").performClick()
+        compose.runOnIdle { assertTrue(!removed) }
+    }
 
     @Test fun reviewFilterShowsBlockedGalleryAndQueueNavigation() {
         val blocked = CatalogGallery("https://example.com/gallery/blocked", "Модель B",

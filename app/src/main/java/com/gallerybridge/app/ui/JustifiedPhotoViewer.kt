@@ -3,6 +3,7 @@ package com.gallerybridge.app.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -12,7 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,7 +26,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -78,7 +81,7 @@ internal fun JustifiedPhotoRow(
                     .clip(MaterialTheme.shapes.medium)
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     .border(
-                        width = if (checked) 2.dp else 0.dp,
+                        width = if (checked) 1.5.dp else 0.dp,
                         color = MaterialTheme.colorScheme.primary,
                         shape = MaterialTheme.shapes.medium
                     )
@@ -91,38 +94,55 @@ internal fun JustifiedPhotoRow(
                         .semantics { contentDescription = "Открыть фото: ${media.name}" },
                     onAspectRatio = { onAspectRatio(media, it) }
                 )
-                Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                    color = if (checked) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    IconButton(
-                        onClick = { onSelection(media, !checked) },
+                Box(Modifier.align(Alignment.TopEnd).padding(2.dp)) {
+                    CompactPhotoSelection(
+                        checked = checked,
                         enabled = enabled,
-                        modifier = Modifier.size(44.dp).semantics {
-                            contentDescription = if (checked) "Снять выделение: ${media.name}"
-                                else "Выбрать фото: ${media.name}"
-                        }
-                    ) {
-                        if (checked) {
-                            Icon(
-                                Icons.Outlined.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(23.dp),
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            Surface(
-                                modifier = Modifier.size(22.dp),
-                                shape = MaterialTheme.shapes.extraSmall,
-                                color = Color.Transparent,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.5.dp, MaterialTheme.colorScheme.onSurface
-                                )
-                            ) {}
-                        }
-                    }
+                        photoName = media.name,
+                        onClick = { onSelection(media, !checked) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * The visual mark is deliberately 26 dp, while the transparent 44 dp hit area
+ * stays usable. The old 44 dp filled square obscured narrow portrait photos.
+ */
+@Composable
+internal fun CompactPhotoSelection(
+    checked: Boolean,
+    enabled: Boolean,
+    photoName: String,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier.size(44.dp)
+            .testTag("gallery-photo-selection")
+            .clickable(enabled = enabled, role = Role.Checkbox, onClick = onClick)
+            .semantics {
+                contentDescription = if (checked) "Снять выделение: $photoName"
+                    else "Выбрать фото: $photoName"
+                stateDescription = if (checked) "Выбрано" else "Не выбрано"
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier.size(26.dp).testTag("gallery-photo-selection-visual"),
+            shape = CircleShape,
+            color = if (checked) colors.primary else Color.Black.copy(alpha = 0.48f),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp, if (checked) colors.primary else Color.White.copy(alpha = 0.9f)
+            )
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (checked) {
+                    Icon(Icons.Filled.Check, contentDescription = null,
+                        modifier = Modifier.size(18.dp), tint = colors.onPrimary)
                 }
             }
         }
