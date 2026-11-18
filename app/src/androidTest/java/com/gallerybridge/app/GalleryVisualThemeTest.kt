@@ -63,10 +63,10 @@ class GalleryVisualThemeTest {
         compose.onNodeWithText("Галереи").assertIsDisplayed()
         compose.onNodeWithText("Загрузки").assertIsDisplayed()
         compose.onNodeWithText("Хранилища").assertIsDisplayed()
-        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithTag("nav-downloads").performClick()
         compose.onNodeWithContentDescription("Открыть очередь").performClick()
         compose.onNodeWithText("Очередь загрузок").assertIsDisplayed()
-        compose.onNodeWithText("Загрузки").performClick()
+        compose.onNodeWithTag("nav-downloads").performClick()
         compose.onNodeWithContentDescription("Открыть историю").performClick()
         compose.onNodeWithText("История загрузок").assertIsDisplayed()
     }
