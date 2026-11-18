@@ -19,7 +19,6 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.gallerybridge.app.R
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
@@ -64,7 +63,7 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
             "apk:${release.hash}:${release.code}" in tags
 
         fun partialFile(context: Context, id: java.util.UUID): File =
-            File(File(context.cacheDir, "updates"), "$id.part")
+            UpdatePartialFiles.part(File(context.cacheDir, "updates"), id)
     }
 
     private fun foreground(progress: Int): ForegroundInfo {
@@ -102,6 +101,9 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
             ?: return Result.failure(workDataOf(ERROR to "Манифест обновления изменился."))
         val file = partialFile(applicationContext, id)
         return try {
+            withContext(Dispatchers.IO) {
+                UpdatePartialFiles.cleanOrphans(file.parentFile!!, setOf(id))
+            }
             setForeground(foreground(
                 (file.length().coerceAtMost(release.bytes) * 100L / release.bytes).toInt()
             ))
@@ -144,33 +146,27 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
             partial.delete()
             start = 0L
         }
+        coroutineContext.ensureActive()
         val connection = UpdateConnections.connect(release.apkUrl, start)
         try {
-            val action = UpdateRangePolicy.decide(start, connection.responseCode,
-                connection.getHeaderField("Content-Range"), release.bytes)
-            var count = if (action == UpdateRangePolicy.Action.APPEND) start else 0L
             var lastReported = -1
             connection.inputStream.use { stream ->
-                FileOutputStream(partial, action == UpdateRangePolicy.Action.APPEND).use { out ->
-                    val buffer = ByteArray(65536)
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val size = stream.read(buffer)
-                        if (size == -1) break
-                        count += size
-                        require(count <= release.bytes) { "Размер APK превышен" }
-                        out.write(buffer, 0, size)
-                        val progress = (count * 100L / release.bytes).toInt()
-                        if (progress != lastReported) {
-                            lastReported = progress
-                            setProgress(workDataOf(BYTES to count))
-                            setForeground(foreground(progress))
-                        }
+                UpdatePartialFiles.receive(
+                    part = partial,
+                    total = release.bytes,
+                    requestedOffset = start,
+                    code = connection.responseCode,
+                    contentRange = connection.getHeaderField("Content-Range"),
+                    source = stream
+                ) { count ->
+                    val progress = (count * 100L / release.bytes).toInt()
+                    if (progress != lastReported) {
+                        lastReported = progress
+                        setProgress(workDataOf(BYTES to count))
+                        setForeground(foreground(progress))
                     }
-                    out.flush()
                 }
             }
-            if (count != release.bytes) throw IOException("Неполная загрузка APK")
         } finally {
             connection.disconnect()
         }
