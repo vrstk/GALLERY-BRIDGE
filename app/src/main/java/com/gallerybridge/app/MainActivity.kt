@@ -1786,10 +1786,18 @@ class MainActivity : ComponentActivity() {
         }
         HorizontalDivider()
         Text("Хранилища", style = MaterialTheme.typography.titleMedium)
-        DestinationPicker(settingsDestination) {
-            settingsDestination = it
-            reveal = false
-        }
+        StorageDestinationCards(
+            selected = settingsDestination,
+            folderName = treeName,
+            folderSelected = treeUri.isNotBlank(),
+            folderReady = folderPermissionReady,
+            mailConfigured = email.isNotBlank() && password.isNotBlank(),
+            enabled = settingsEnabled,
+            onSelect = {
+                settingsDestination = it
+                reveal = false
+            }
+        )
         when (settingsDestination) {
             "Mail WebDAV" -> {
                 OutlinedTextField(

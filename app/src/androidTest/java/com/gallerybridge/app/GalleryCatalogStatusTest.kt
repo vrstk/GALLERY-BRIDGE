@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -20,6 +21,28 @@ import org.junit.Test
 /** Pure UI test: does not modify persisted queue, history or cloud contents. */
 class GalleryCatalogStatusTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun publicationCardShowsOnlySavedLabelsAndDate() {
+        val entry = CatalogGallery(
+            "https://example.com/gallery/real", "Модель из каталога",
+            "Название публикации", "2026-10-12", 10L
+        )
+        compose.setContent {
+            MaterialTheme {
+                GalleryCatalog(
+                    entries = listOf(entry), queue = null,
+                    onBatchReview = {}, onQueue = {}, onOpen = {},
+                    onRemove = {}, onEdit = { _, _ -> true },
+                    onExport = {}, onImport = {}, backupStatus = "", historyCount = 0
+                )
+            }
+        }
+        compose.onNodeWithTag("catalog-publication-preview").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Модель из каталога").assertIsDisplayed()
+        compose.onNodeWithText("Название публикации").assertIsDisplayed()
+        compose.onNodeWithText("2026-10-12").assertIsDisplayed()
+        compose.onNodeWithText("Сохранена ссылка").assertIsDisplayed()
+    }
 
     @Test fun overflowKeepsDestructiveActionBehindConfirmation() {
         val entry = CatalogGallery("https://example.com/gallery/one", "Модель",

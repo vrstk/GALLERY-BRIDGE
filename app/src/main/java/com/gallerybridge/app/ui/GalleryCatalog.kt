@@ -1,8 +1,12 @@
 package com.gallerybridge.app.ui
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -10,10 +14,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.gallerybridge.app.R
 import com.gallerybridge.app.core.CatalogGallery
 import com.gallerybridge.app.core.GalleryBatchSelection
 import com.gallerybridge.app.core.GalleryCatalogFilter
@@ -78,7 +86,9 @@ internal fun GalleryCatalog(
             OutlinedTextField(
                 value = query, onValueChange = { query = it },
                 label = { Text("Поиск по каталогу") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                shape = MaterialTheme.shapes.medium,
+                singleLine = true, modifier = Modifier.fillMaxWidth().testTag("catalog-search"),
                 trailingIcon = if (query.isNotEmpty()) {
                     { TextButton(onClick = { query = "" }) { Text("Сброс") } }
                 } else null
@@ -93,12 +103,22 @@ internal fun GalleryCatalog(
             }
         }
         item(key = "status") {
-            Text(
-                "Показано: ${filtered.size} из ${entries.size}" +
-                    if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Публикации",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "Показано: ${filtered.size} из ${entries.size}" +
+                        if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         item(key = "tools") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -205,12 +225,12 @@ internal fun GalleryCatalog(
                 ) {
                     val colors = MaterialTheme.colorScheme
                     Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             if (showBatchTools && GalleryBatchSelection.eligible(entry, queue)) {
                                 Checkbox(
@@ -225,25 +245,63 @@ internal fun GalleryCatalog(
                                         batchSelection.size < GalleryBatchSelection.LIMIT
                                 )
                             }
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(entry.model.ifBlank { "Без имени" },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(entry.title.ifBlank { "Без названия" },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                    color = colors.onSurfaceVariant)
+                            // The catalog stores a publication URL, not a verified photo.
+                            // Use a clearly decorative placeholder; do not fetch or invent a cover.
+                            Box(
+                                modifier = Modifier.size(width = 58.dp, height = 68.dp)
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(colors.primaryContainer, colors.surfaceContainerHigh)
+                                        ),
+                                        MaterialTheme.shapes.small
+                                    ).testTag("catalog-publication-preview"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(R.drawable.ic_gallery_bridge),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(34.dp)
+                                )
                             }
-                            if (entry.date.isNotBlank()) {
-                                Text(entry.date, style = MaterialTheme.typography.labelSmall,
-                                    color = colors.onSurfaceVariant)
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    entry.model.ifBlank { "Без имени" },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    entry.title.ifBlank { "Без названия" },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (entry.date.isNotBlank()) {
+                                    Text(
+                                        entry.date,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
-                        Text(
-                            progress.title,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (progress.needsAttention) colors.error else colors.secondary
-                        )
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = if (progress.needsAttention) colors.errorContainer
+                                else colors.surfaceContainerHigh
+                        ) {
+                            Text(
+                                progress.title,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (progress.needsAttention) colors.onErrorContainer
+                                    else colors.onSurface
+                            )
+                        }
                         if (progress.kind != GalleryCatalogProgress.Kind.SAVED) {
                             Text(
                                 progress.detail,
@@ -255,7 +313,7 @@ internal fun GalleryCatalog(
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             TextButton(onClick = { onOpen(entry) }) { Text("Открыть") }
                             if (progress.linkedQueue) {
