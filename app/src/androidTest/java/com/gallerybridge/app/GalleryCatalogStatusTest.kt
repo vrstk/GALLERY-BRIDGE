@@ -37,7 +37,11 @@ class GalleryCatalogStatusTest {
                 )
             }
         }
-        compose.onNodeWithTag("catalog-publication-preview").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Модель из каталога").performScrollTo().assertIsDisplayed()
+        // The clickable card merges descendant semantics. The decorative preview
+        // is intentionally unlabelled, so inspect the unmerged tree instead.
+        compose.onNodeWithTag("catalog-publication-preview", useUnmergedTree = true)
+            .assertExists()
         compose.onNodeWithText("Модель из каталога").assertIsDisplayed()
         compose.onNodeWithText("Название публикации").assertIsDisplayed()
         compose.onNodeWithText("2026-10-12").assertIsDisplayed()
