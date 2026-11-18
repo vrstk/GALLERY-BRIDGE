@@ -18,12 +18,12 @@ class GalleryPhotoFirstTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun compactPhotoSelectionKeepsLargeHitAreaAndSmallVisibleMark() {
-        var selected by androidx.compose.runtime.mutableStateOf(true)
+        val selected = androidx.compose.runtime.mutableStateOf(true)
         compose.setContent {
             GalleryTheme(dark = true) {
                 CompactPhotoSelection(
-                    checked = selected, enabled = true,
-                    photoName = "001.jpg", onClick = { selected = !selected }
+                    checked = selected.value, enabled = true,
+                    photoName = "001.jpg", onClick = { selected.value = !selected.value }
                 )
             }
         }
@@ -32,8 +32,10 @@ class GalleryPhotoFirstTest {
         target.assertIsDisplayed()
         visual.assertIsDisplayed()
         compose.runOnIdle {
-            val targetWidth = target.getUnclippedBoundsInRoot().width.value
-            val visualWidth = visual.getUnclippedBoundsInRoot().width.value
+            val targetBounds = target.getUnclippedBoundsInRoot()
+            val visualBounds = visual.getUnclippedBoundsInRoot()
+            val targetWidth = (targetBounds.right - targetBounds.left).value
+            val visualWidth = (visualBounds.right - visualBounds.left).value
             org.junit.Assert.assertTrue("Visual indicator must be smaller than hit area",
                 visualWidth < targetWidth * 0.7f)
         }
