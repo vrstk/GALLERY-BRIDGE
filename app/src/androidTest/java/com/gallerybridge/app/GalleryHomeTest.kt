@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -78,8 +79,15 @@ class GalleryHomeTest {
         awaitSearchResult()
         compose.onNodeWithTag("gallery-mosaic-photo-https://example.com/rotation-fixture.jpg")
             .performClick()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithText("1 / 1").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("1 / 1").assertIsDisplayed()
         compose.activityRule.scenario.recreate()
+        // Dialog creation is asynchronous on slower emulators after recreation.
+        compose.waitUntil(timeoutMillis = 8_000) {
+            compose.onAllNodesWithText("1 / 1").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText("1 / 1").assertIsDisplayed()
         compose.onNodeWithContentDescription("Закрыть фото").performClick()
         compose.onNodeWithText("Фотографии: 1").assertIsDisplayed()
