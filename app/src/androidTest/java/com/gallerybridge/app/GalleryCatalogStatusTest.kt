@@ -49,6 +49,8 @@ class GalleryCatalogStatusTest {
         compose.onNodeWithText("Требуют внимания").performClick()
         compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Требует проверки").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Очередь: обработано 0/1; требуют проверки 1")
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Очередь").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(openedQueue) }
         compose.onNodeWithText("В очереди").performClick()

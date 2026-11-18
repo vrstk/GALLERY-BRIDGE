@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.core.CatalogGallery
@@ -190,14 +191,24 @@ internal fun GalleryCatalog(
                 val progress = GalleryCatalogProgress.resolve(entry, queue)
                 OutlinedCard(
                     onClick = { onOpen(entry) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("catalog-publication-card"),
+                    shape = MaterialTheme.shapes.large,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, MaterialTheme.colorScheme.outlineVariant
+                    ),
                     colors = CardDefaults.outlinedCardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                     )
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    val colors = MaterialTheme.colorScheme
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             if (showBatchTools && GalleryBatchSelection.eligible(entry, queue)) {
                                 Checkbox(
                                     checked = entry.url in batchSelection,
@@ -211,20 +222,42 @@ internal fun GalleryCatalog(
                                         batchSelection.size < GalleryBatchSelection.LIMIT
                                 )
                             }
-                            Column(Modifier.weight(1f)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(entry.model.ifBlank { "Без имени" },
                                     style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(entry.title.ifBlank { "Без названия" },
                                     style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    color = colors.onSurfaceVariant)
                             }
                         }
-                        Text(progress.title + if (entry.date.isNotBlank()) " · ${entry.date}" else "",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (progress.needsAttention) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.secondary)
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (entry.date.isNotBlank()) {
+                            Text(entry.date, style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant)
+                        }
+                        Surface(
+                            color = if (progress.needsAttention) colors.errorContainer
+                                else colors.secondaryContainer,
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Text(
+                                progress.title,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (progress.needsAttention) colors.onErrorContainer
+                                    else colors.onSecondaryContainer
+                            )
+                        }
+                        Text(
+                            progress.detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            verticalArrangement = Arrangement.spacedBy(0.dp)
+                        ) {
                             TextButton(onClick = { onOpen(entry) }) { Text("Открыть") }
                             TextButton(onClick = { pendingEdit = entry }) { Text("Изменить") }
                             TextButton(onClick = { pendingRemoval = entry }) { Text("Убрать") }

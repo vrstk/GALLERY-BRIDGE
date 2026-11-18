@@ -1430,8 +1430,8 @@ class MainActivity : ComponentActivity() {
                 photos = visibleItems,
                 aspectRatios = ratioSnapshot,
                 availableWidth = (maxWidth.value - 32f).coerceAtLeast(48f),
-                targetHeight = if (fontScale > 1.3f) 190f else 154f,
-                spacing = 6f
+                targetHeight = if (fontScale > 1.3f) 194f else 166f,
+                spacing = 8f
             ) else emptyList()
         }
         LazyVerticalGrid(
@@ -1444,17 +1444,13 @@ class MainActivity : ComponentActivity() {
         ) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        if (remainingInList > 0) "Фотографии: $photos из ${candidates.size}"
-                        else "Фотографии: $photos",
-                        style = MaterialTheme.typography.titleLarge
-                    )
-                    Text(
-                        if (otherLinks > 0)
-                            "Всего найдено: ${items.size} · Дополнительных вариантов: $otherLinks"
-                        else "Все найденные фотографии показаны ниже",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    GalleryPhotoHeader(
+                        visibleCount = photos,
+                        totalCount = candidates.size,
+                        foundCount = items.size,
+                        extraCount = otherLinks,
+                        publicationModel = model,
+                        publicationTitle = title
                     )
                     if (otherLinks > 0) {
                         TextButton(
@@ -1521,7 +1517,7 @@ class MainActivity : ComponentActivity() {
                         row = row,
                         selected = selected,
                         enabled = searchAllowed,
-                        spacing = 6.dp,
+                        spacing = 8.dp,
                         onOpen = { openedPhoto = it.url },
                         onSelection = { media, checked ->
                             selected = if (checked) selected + media.url else selected - media.url

@@ -2,6 +2,7 @@ package com.gallerybridge.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -24,6 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.core.view.WindowCompat
@@ -72,37 +75,46 @@ internal fun JustifiedPhotoRow(
             Box(
                 Modifier.width(row.widths[index].dp)
                     .height(row.height.dp)
-                    .clip(MaterialTheme.shapes.small)
+                    .clip(MaterialTheme.shapes.medium)
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .border(
+                        width = if (checked) 2.dp else 0.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        shape = MaterialTheme.shapes.medium
+                    )
             ) {
                 GalleryPhoto(
                     media = media,
                     modifier = Modifier.fillMaxSize()
                         .testTag("gallery-mosaic-photo-${media.url}")
-                        .clickable { onOpen(media) },
+                        .clickable { onOpen(media) }
+                        .semantics { contentDescription = "Открыть фото: ${media.name}" },
                     onAspectRatio = { onAspectRatio(media, it) }
                 )
                 Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                     color = if (checked) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
                     shape = MaterialTheme.shapes.small
                 ) {
                     IconButton(
                         onClick = { onSelection(media, !checked) },
                         enabled = enabled,
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(44.dp).semantics {
+                            contentDescription = if (checked) "Снять выделение: ${media.name}"
+                                else "Выбрать фото: ${media.name}"
+                        }
                     ) {
                         if (checked) {
                             Icon(
                                 Icons.Outlined.CheckCircle,
-                                contentDescription = "Снять выделение: ${media.name}",
-                                modifier = Modifier.size(21.dp),
+                                contentDescription = null,
+                                modifier = Modifier.size(23.dp),
                                 tint = MaterialTheme.colorScheme.onPrimary
                             )
                         } else {
                             Surface(
-                                modifier = Modifier.size(19.dp),
+                                modifier = Modifier.size(22.dp),
                                 shape = MaterialTheme.shapes.extraSmall,
                                 color = Color.Transparent,
                                 border = androidx.compose.foundation.BorderStroke(
