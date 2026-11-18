@@ -49,7 +49,7 @@ internal fun GalleryShell(
         contentColor = colors.onBackground,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            Surface(color = colors.background) {
+            Surface(color = colors.surface) {
                 Box(
                     Modifier.fillMaxWidth().windowInsetsPadding(
                         WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
@@ -57,7 +57,7 @@ internal fun GalleryShell(
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
-                        Modifier.widthIn(max = GalleryContentWidth).fillMaxWidth().heightIn(min = 68.dp)
+                        Modifier.widthIn(max = GalleryContentWidth).fillMaxWidth().heightIn(min = 66.dp)
                             .padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -90,6 +90,7 @@ internal fun GalleryShell(
                 Surface(color = colors.surface) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         actions()
+                        HorizontalDivider(color = colors.outlineVariant)
                         NavigationBar(
                             modifier = Modifier.widthIn(max = GalleryContentWidth),
                             containerColor = colors.surface,
@@ -140,8 +141,8 @@ internal fun GalleryShell(
 internal fun GalleryPageColumn(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier.widthIn(max = GalleryContentWidth).fillMaxWidth().verticalScroll(rememberScrollState())
-            .padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         content = content
     )
 }

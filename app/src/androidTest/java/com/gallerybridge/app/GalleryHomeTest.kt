@@ -33,6 +33,18 @@ class GalleryHomeTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
+    fun refreshedHomeKeepsPrimaryActionsAndStorageShortcutsAccessible() {
+        compose.onNodeWithTag("home-search-card").assertIsDisplayed()
+        compose.onNodeWithText("Новая загрузка").assertIsDisplayed()
+        compose.onNodeWithText("Найти фотографии").assertIsNotEnabled()
+        compose.onNodeWithTag("home-catalog-card").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("storage-android-folder").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("storage-mail-webdav").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("home-catalog-card").performScrollTo().performClick()
+        compose.onNodeWithText("Каталог пока пуст.", substring = true).assertIsDisplayed()
+    }
+
+    @Test
     fun homeSearchOpensDownloadsAndKeepsResultsWhenChangingTabs() {
         compose.onNodeWithText("GALLERY BRIDGE").assertIsDisplayed()
         compose.onNodeWithText("Ссылка на фотогалерею").performTextInput(

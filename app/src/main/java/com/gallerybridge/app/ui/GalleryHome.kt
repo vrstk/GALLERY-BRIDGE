@@ -52,9 +52,19 @@ internal fun GalleryHome(
     onLatestTransfer: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    GalleryCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("home-search-card"),
+        shape = MaterialTheme.shapes.large,
+        color = colors.surfaceContainerLow,
+        border = BorderStroke(1.dp, colors.outlineVariant)
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("ФОТОГАЛЕРЕИ", style = MaterialTheme.typography.labelSmall,
+                color = colors.secondary)
             Text("Новая загрузка", style = MaterialTheme.typography.titleLarge)
+            Text("Вставьте ссылку на публикацию или фотографию.",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant)
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
             FindMediaButton(
                 searchAllowed && url.isNotBlank(), onSearch,
@@ -69,15 +79,23 @@ internal fun GalleryHome(
     }
     OutlinedCard(
         onClick = onCatalog,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("home-catalog-card"),
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(1.dp, colors.outlineVariant),
         colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainerLow)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Column(Modifier.weight(1f)) {
+            Surface(shape = MaterialTheme.shapes.medium, color = colors.primaryContainer) {
+                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                    Icon(painterResource(R.drawable.ic_gallery_bridge), null,
+                        tint = colors.onPrimaryContainer, modifier = Modifier.size(26.dp))
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Каталог галерей", style = MaterialTheme.typography.titleMedium)
                 Text(
                     "Сохранено галерей: " + catalogCount,
@@ -85,10 +103,13 @@ internal fun GalleryHome(
                     color = colors.onSurfaceVariant
                 )
             }
-            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Открыть каталог")
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Открыть каталог",
+                tint = colors.onSurfaceVariant)
         }
     }
     Text("Мои хранилища", style = MaterialTheme.typography.titleMedium)
+    Text("Настройте место сохранения фотографий.",
+        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.2f) 2 else 1
         FlowRow(
@@ -181,7 +202,7 @@ internal fun FindMediaButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
         shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.buttonColors(containerColor = SearchButtonBlue, contentColor = Color.White)
     ) {
@@ -220,10 +241,10 @@ private fun StorageCard(
         border = BorderStroke(1.dp, colors.outlineVariant),
         colors = CardDefaults.outlinedCardColors(containerColor = colors.surfaceContainerLow)
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = MaterialTheme.shapes.small, color = colors.surfaceContainerHigh) {
-                    Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) { icon() }
+                    Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) { icon() }
                 }
                 Spacer(Modifier.weight(1f))
                 Icon(
