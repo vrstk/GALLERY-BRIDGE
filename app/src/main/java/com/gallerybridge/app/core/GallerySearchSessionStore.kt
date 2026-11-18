@@ -24,7 +24,9 @@ internal object GallerySearchSessionStore {
         val screen: String,
         val items: List<Media>,
         val selected: Set<String>,
-        val recommended: Set<String>
+        val recommended: Set<String>,
+        /** Current viewer position, if still part of the persisted photo list. */
+        val openedPhoto: String? = null
     )
 
     private fun safeMediaAddress(link: String): Boolean {
@@ -35,8 +37,10 @@ internal object GallerySearchSessionStore {
 
     internal fun encode(snapshot: Snapshot): String {
         val items = JSONArray()
-        snapshot.items.asSequence().filter { it.kind == Kind.PHOTO && safeMediaAddress(it.url) }
-            .take(MAX_ITEMS).forEach { item ->
+        val storedPhotos = snapshot.items.asSequence()
+            .filter { it.kind == Kind.PHOTO && safeMediaAddress(it.url) }
+            .take(MAX_ITEMS).toList()
+        storedPhotos.forEach { item ->
                 items.put(JSONObject().put("url", item.url).put("name", item.name)
                     .put("source", item.source).put("referrer", item.referrer))
             }
@@ -49,6 +53,9 @@ internal object GallerySearchSessionStore {
             .put("items", items)
             .put("selected", JSONArray(snapshot.selected.take(MAX_ITEMS)))
             .put("recommended", JSONArray(snapshot.recommended.take(MAX_ITEMS)))
+            .put("openedPhoto", snapshot.openedPhoto?.takeIf {
+                snapshot.screen == "DOWNLOADS" && storedPhotos.any { photo -> photo.url == it }
+            } ?: JSONObject.NULL)
             .toString()
     }
 
@@ -81,7 +88,10 @@ internal object GallerySearchSessionStore {
         Snapshot(link, json.optString("model").take(130),
             json.optString("title").take(250), json.optString("date").take(10),
             json.optString("screen").take(30), items.distinctBy(Media::url),
-            selected("selected"), selected("recommended"))
+            selected("selected"), selected("recommended"),
+            json.optString("openedPhoto").takeIf {
+                it in urls && json.optString("screen") == "DOWNLOADS"
+            })
     }.getOrNull()
 
     @Synchronized fun load(context: Context): Snapshot? = runCatching {

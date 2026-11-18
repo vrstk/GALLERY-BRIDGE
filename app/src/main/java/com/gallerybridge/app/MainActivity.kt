@@ -135,6 +135,9 @@ class MainActivity : ComponentActivity() {
     private var selected
         get() = session.selected
         set(value) { session.selected = value }
+    private var openedPhoto
+        get() = session.openedPhoto
+        set(value) { session.openedPhoto = value }
     private var reveal
         get() = session.reveal
         set(value) { session.reveal = value }
@@ -428,6 +431,11 @@ class MainActivity : ComponentActivity() {
             recoverableSession = previousSession
         }
         if (previousLink != null) {
+            // Bundle may be newer than the disk snapshot when Android stops us
+            // just after the user swiped to another photo.
+            val recentPhoto = savedInstanceState.getString("openedPhoto")
+            if (screen == GalleryPage.DOWNLOADS && recentPhoto != null &&
+                items.any { it.url == recentPhoto }) openedPhoto = recentPhoto
             model = savedInstanceState.getString("galleryModel") ?: model
             title = savedInstanceState.getString("galleryTitle") ?: title
             date = savedInstanceState.getString("galleryDate") ?: date
@@ -462,7 +470,7 @@ class MainActivity : ComponentActivity() {
         if (recoverableSession != null) return
         runCatching {
             GallerySearchSessionStore.save(this, GallerySearchSessionStore.Snapshot(
-                url, model, title, date, screen.name, items, selected, recommendedUrls))
+                url, model, title, date, screen.name, items, selected, recommendedUrls, openedPhoto))
         }
     }
 
@@ -477,6 +485,9 @@ class MainActivity : ComponentActivity() {
         items = snapshot.items
         selected = snapshot.selected
         recommendedUrls = snapshot.recommended
+        openedPhoto = snapshot.openedPhoto?.takeIf { photo ->
+            snapshot.screen == GalleryPage.DOWNLOADS.name && items.any { it.url == photo }
+        }
         if (ModelListingSources.accepts(snapshot.url)) {
             ModelListingCheckpointStore.read(this)?.takeIf {
                 it.source == snapshot.url && it.finished
@@ -569,6 +580,7 @@ class MainActivity : ComponentActivity() {
         outState.putString("galleryModel", model)
         outState.putString("galleryTitle", title)
         outState.putString("galleryDate", date)
+        outState.putString("openedPhoto", openedPhoto)
         outState.putStringArrayList("batchReviewUrls", ArrayList(batchReviewUrls))
         outState.putInt("batchReviewIndex", batchReviewIndex)
     }
@@ -744,6 +756,7 @@ class MainActivity : ComponentActivity() {
         url = newUrl
         if (!changed) return
         recoverableSession = null
+        openedPhoto = null
         cancelImageSizes()
         items = emptyList()
         selected = emptySet()
@@ -1147,7 +1160,7 @@ class MainActivity : ComponentActivity() {
         BackHandler(enabled = screen != GalleryPage.HOME, onBack = ::backFromPage)
         // Persist edits and photo selection before Android may reclaim the process.
         // No password, authentication token, cloud queue or user file body is persisted.
-        LaunchedEffect(url, model, title, date, screen, items, selected, recommendedUrls) {
+        LaunchedEffect(url, model, title, date, screen, items, selected, recommendedUrls, openedPhoto) {
             if (url.isBlank() || GalleryKeys.canonical(url) != null) {
                 delay(350)
                 withContext(Dispatchers.IO) {
@@ -1408,7 +1421,6 @@ class MainActivity : ComponentActivity() {
         val gridState = rememberLazyGridState()
         val fontScale = LocalDensity.current.fontScale
         val justified = true
-        var openedPhoto by rememberSaveable(url) { mutableStateOf<String?>(null) }
         val aspectRatios = remember(url) { mutableStateMapOf<String, Float>() }
 
         BoxWithConstraints(Modifier.widthIn(max = GalleryContentWidth).fillMaxSize()) {
@@ -1545,7 +1557,8 @@ class MainActivity : ComponentActivity() {
                     onSelection = { media, checked ->
                         selected = if (checked) selected + media.url else selected - media.url
                     },
-                    onClose = { openedPhoto = null }
+                    onClose = { openedPhoto = null },
+                    onPhotoChanged = { media -> openedPhoto = media.url }
                 )
             } else {
                 LaunchedEffect(photoUrl) { openedPhoto = null }

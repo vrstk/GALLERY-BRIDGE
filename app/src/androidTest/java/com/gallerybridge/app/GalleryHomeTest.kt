@@ -68,6 +68,23 @@ class GalleryHomeTest {
         compose.onNodeWithText("Список без фото").assertDoesNotExist()
     }
 
+
+    @Test
+    fun fullscreenViewerRemainsOpenAfterRotationAndCanClose() {
+        compose.onNodeWithText("Ссылка на фотогалерею").performTextInput(
+            "https://example.com/rotation-fixture.jpg"
+        )
+        compose.onNodeWithText("Найти фотографии").performClick()
+        awaitSearchResult()
+        compose.onNodeWithTag("gallery-mosaic-photo-https://example.com/rotation-fixture.jpg")
+            .performClick()
+        compose.onNodeWithText("1 / 1").assertIsDisplayed()
+        compose.activityRule.scenario.recreate()
+        compose.onNodeWithText("1 / 1").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Закрыть фото").performClick()
+        compose.onNodeWithText("Фотографии: 1").assertIsDisplayed()
+    }
+
     @Test
     fun galleryCatalogOpensAndReturnsHomeWithoutStartingScan() {
         compose.onNodeWithText("Каталог галерей").performClick()

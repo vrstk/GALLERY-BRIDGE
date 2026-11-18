@@ -77,7 +77,9 @@ internal fun JustifiedPhotoRow(
             ) {
                 GalleryPhoto(
                     media = media,
-                    modifier = Modifier.fillMaxSize().clickable { onOpen(media) },
+                    modifier = Modifier.fillMaxSize()
+                        .testTag("gallery-mosaic-photo-${media.url}")
+                        .clickable { onOpen(media) },
                     onAspectRatio = { onAspectRatio(media, it) }
                 )
                 Surface(
@@ -126,7 +128,8 @@ internal fun FullscreenPhotoViewer(
     initialIndex: Int,
     selected: Set<String>,
     onSelection: (Media, Boolean) -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onPhotoChanged: (Media) -> Unit = {}
 ) {
     if (photos.isEmpty()) return
     val pager = rememberPagerState(
@@ -146,7 +149,9 @@ internal fun FullscreenPhotoViewer(
     // Switching pictures resets the transform, but rotation restores it for the
     // current picture. A stored transform must never disable swiping on a new one.
     LaunchedEffect(pager.currentPage, photos) {
-        val newPhoto = photos[pager.currentPage.coerceIn(0, photos.lastIndex)].url
+        val current = photos[pager.currentPage.coerceIn(0, photos.lastIndex)]
+        val newPhoto = current.url
+        onPhotoChanged(current)
         if (zoomPhoto != newPhoto) {
             zoomPhoto = newPhoto
             zoom = 1f
