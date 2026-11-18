@@ -50,6 +50,7 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
             // The signed manifest is persisted by UpdateManager.check().
             val request = OneTimeWorkRequestBuilder<UpdateDownloadWorker>()
                 .setInputData(workDataOf(HASH to release.hash, CODE to release.code))
+                .addTag("apk:${release.hash}:${release.code}")
                 .setConstraints(Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
@@ -58,6 +59,9 @@ internal class UpdateDownloadWorker(context: Context, params: WorkerParameters) 
                 UNIQUE, ExistingWorkPolicy.REPLACE, request
             )
         }
+
+        fun matches(tags: Set<String>, release: UpdatePolicy.Release): Boolean =
+            "apk:${release.hash}:${release.code}" in tags
 
         fun partialFile(context: Context, id: java.util.UUID): File =
             File(File(context.cacheDir, "updates"), "$id.part")

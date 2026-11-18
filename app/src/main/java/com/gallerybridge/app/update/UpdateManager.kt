@@ -57,11 +57,12 @@ internal class UpdateManager(
             WorkManager.getInstance(context.applicationContext)
                 .getWorkInfosForUniqueWorkFlow(UpdateDownloadWorker.UNIQUE)
                 .collect { work ->
-                    val current = work.firstOrNull() ?: return@collect
                     val release = state.release ?: return@collect
-                    if (current.inputData.getString(UpdateDownloadWorker.HASH) != release.hash ||
-                        current.inputData.getLong(UpdateDownloadWorker.CODE, -1L) != release.code)
-                        return@collect
+                    val matching = work.filter { info ->
+                        UpdateDownloadWorker.matches(info.tags, release)
+                    }
+                    val current = matching.firstOrNull { !it.state.isFinished }
+                        ?: matching.firstOrNull() ?: return@collect
                     when (current.state) {
                         WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> {
                             val loaded = current.progress.getLong(UpdateDownloadWorker.BYTES, 0L)
