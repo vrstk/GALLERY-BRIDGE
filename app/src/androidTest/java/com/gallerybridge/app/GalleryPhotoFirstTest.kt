@@ -31,14 +31,12 @@ class GalleryPhotoFirstTest {
         val visual = compose.onNodeWithTag("gallery-photo-selection-visual", useUnmergedTree = true)
         target.assertIsDisplayed()
         visual.assertIsDisplayed()
-        compose.runOnIdle {
-            val targetBounds = target.getUnclippedBoundsInRoot()
-            val visualBounds = visual.getUnclippedBoundsInRoot()
-            val targetWidth = (targetBounds.right - targetBounds.left).value
-            val visualWidth = (visualBounds.right - visualBounds.left).value
-            org.junit.Assert.assertTrue("Visual indicator must be smaller than hit area",
-                visualWidth < targetWidth * 0.7f)
-        }
+        val targetBounds = target.getUnclippedBoundsInRoot()
+        val visualBounds = visual.getUnclippedBoundsInRoot()
+        val targetWidth = (targetBounds.right - targetBounds.left).value
+        val visualWidth = (visualBounds.right - visualBounds.left).value
+        org.junit.Assert.assertTrue("Visual indicator must be smaller than hit area",
+            visualWidth < targetWidth * 0.7f)
         compose.onNodeWithContentDescription("Снять выделение: 001.jpg").performClick()
         compose.onNodeWithContentDescription("Выбрать фото: 001.jpg").assertIsDisplayed()
     }
