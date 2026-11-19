@@ -5,6 +5,9 @@ import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.core.PrimaryVideoSources
+import com.gallerybridge.app.core.XeroticaBridge
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 
 /**
@@ -20,6 +23,15 @@ object BrowserSessionHeaders {
             media.url.startsWith("https://")
 
     fun withContext(builder: Request.Builder, media: Media, context: Context): Request.Builder {
+        if (media.source == PrimaryVideoSources.SOURCE &&
+            XeroticaBridge.acceptsWatchPage(media.referrer)) {
+            val video = media.url.toHttpUrlOrNull()
+            if (video?.scheme == "https") {
+                builder.header("Referer", media.referrer.substringBefore('#'))
+                builder.header("User-Agent", WebSettings.getDefaultUserAgent(context))
+            }
+            return builder
+        }
         if (!isBrowserMedia(media)) return builder
         val origin = Uri.parse(media.referrer)
         if (origin.scheme != "https" || origin.host.isNullOrBlank()) return builder

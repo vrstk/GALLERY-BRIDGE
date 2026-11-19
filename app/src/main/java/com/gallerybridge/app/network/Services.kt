@@ -2,6 +2,7 @@ package com.gallerybridge.app.network
 
 import android.content.Context
 import android.net.Uri
+import android.media.MediaMetadataRetriever
 import com.gallerybridge.app.core.*
 import com.gallerybridge.app.transfer.QueueStore
 import kotlinx.coroutines.Dispatchers
@@ -78,7 +79,7 @@ object Services {
             error("Это каталог модели, а не отдельная фотогалерея. Откройте раздел «Публикации модели» через поиск.")
         }
         if (ext.containsMatchIn(url.encodedPath)) return@withContext Scan("Прямая ссылка", "", listOf(Media(url.toString(), Paths.clean(url.pathSegments.last()), kind(url.encodedPath), "Прямой URL")))
-        http.newCall(request(url.toString())).execute().use { response ->
+        http.newCall(request(url.toString())).execute().use scanPage@ { response ->
             if (!response.isSuccessful) error("Сайт вернул HTTP ${response.code}")
             val type = response.header("Content-Type").orEmpty()
             if (type.startsWith("image/") || type.startsWith("video/"))
@@ -95,7 +96,43 @@ object Services {
                 val videoMetadata = PageMetadata.extract(doc, response.request.url.toString(), videoTitle)
                 return@use Scan(videoTitle.ifBlank { "Без названия" },
                     videoMetadata.publishedDate, primary,
-                    videoMetadata.model, videoMetadata.modelSource, videoMetadata.dateSource)
+                    videoMetadata.model, videoMetadata.modelSource,
+                    videoMetadata.dateSource,
+                    posterUrl = PrimaryVideoSources.poster(doc, response.request.url.toString()))
+            }
+            // Follow only an explicitly linked XErotica watch page inside the
+            // selected Elite Babes publication, not an unrelated cover or advert.
+            val linkedVideo = XeroticaBridge.externalPage(doc, response.request.url.toString())
+            if (linkedVideo != null) {
+                val externalClient = http.newBuilder()
+                    .followRedirects(false).followSslRedirects(false)
+                    .callTimeout(25L, TimeUnit.SECONDS).build()
+                externalClient.newCall(request(linkedVideo)).execute().use { external ->
+                    require(external.code == 200 &&
+                        external.request.url.toString() == linkedVideo) {
+                        "Страница видеопубликации недоступна: HTTP ${external.code}."
+                    }
+                    require(external.header("Content-Type").orEmpty().let {
+                        it.isBlank() || it.contains("html", true)
+                    }) {
+                        "Вместо видеопубликации получен другой тип содержимого."
+                    }
+                    val htmlExternal = external.body?.string()?.take(2_000_000).orEmpty()
+                    require(!EliteBabesModelAdapter.isUnavailable(htmlExternal)) {
+                        "Сайт вернул Site Unavailable вместо видеоплеера."
+                    }
+                    val videoPage = Jsoup.parse(htmlExternal, linkedVideo)
+                    val videos = PrimaryVideoSources.extract(videoPage, linkedVideo)
+                    require(videos.isNotEmpty()) {
+                        "На связанной странице не найден подтверждённый MP4 плеера."
+                    }
+                    val title = PageMetadata.publicationTitle(doc)
+                    val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
+                    return@scanPage Scan(title.ifBlank { "Видеопубликация" },
+                        metadata.publishedDate, videos, metadata.model,
+                        metadata.modelSource, metadata.dateSource,
+                        posterUrl = PrimaryVideoSources.poster(videoPage, linkedVideo))
+                }
             }
             // Prefer the real gallery lightbox when the site has a stable
             // gallery structure. Do not mix related sets, ads or site icons.
@@ -367,45 +404,33 @@ object Services {
         ModelListingSources.combine(pages, errors, capped)
     }
 
-    /** Refresh only the same MP4 quality from its actual player, preserving new URL queries. */
-    private fun freshVideo(media: Media): Media {
-        if (media.kind != Kind.VIDEO || media.source != PrimaryVideoSources.SOURCE) return media
-        val page = media.referrer.toHttpUrlOrNull()
-            ?: error("Неизвестна страница исходного видеоплеера.")
-        require(page.scheme == "https" && page.port == 443 &&
-            (page.host == "xerotica.com" || page.host.endsWith(".xerotica.com") ||
-                page.host == "elitebabes.com" || page.host.endsWith(".elitebabes.com"))) {
-            "Недопустимая страница исходного видеоплеера."
-        }
-        val original = media.url.toHttpUrlOrNull() ?: error("Неверный адрес MP4.")
-        http.newCall(request(page.toString())).execute().use { response ->
-            require(response.code == 200 && response.request.url.toString() == page.toString()) {
-                "Не удалось обновить адрес видеоплеера."
+    private fun freshPrimaryVideoSource(media: Media): Media {
+        if (media.kind != Kind.VIDEO || media.source != PrimaryVideoSources.SOURCE ||
+            !XeroticaBridge.acceptsWatchPage(media.referrer)) return media
+        val page = media.referrer
+        val client = http.newBuilder().followRedirects(false).followSslRedirects(false)
+            .callTimeout(25L, TimeUnit.SECONDS).build()
+        client.newCall(request(page)).execute().use { response ->
+            require(response.code == 200 && response.request.url.toString() == page) {
+                "Страница источника видео недоступна для обновления ссылки."
             }
-            val mime = response.header("Content-Type").orEmpty().lowercase()
-            require(mime.isBlank() || mime.contains("html")) { "Видеоплеер вернул не HTML." }
-            val output = ByteArrayOutputStream()
-            val stream = response.body?.byteStream() ?: error("Страница видеоплеера пуста.")
-            stream.use { input ->
-                val block = ByteArray(8192)
-                while (true) {
-                    val n = input.read(block)
-                    if (n < 0) break
-                    if (n == 0) continue
-                    require(output.size() + n <= 2_000_000) {
-                        "Страница видеоплеера превышает 2 МБ."
-                    }
-                    output.write(block, 0, n)
-                }
+            require(response.header("Content-Type").orEmpty().let {
+                it.isBlank() || it.contains("html", true)
+            }) {
+                "Вместо страницы плеера получен другой файл."
             }
-            val body = output.toString(Charsets.UTF_8.name())
-            require(!EliteBabesModelAdapter.isUnavailable(body)) {
-                "Вместо видеоплеера получена заглушка."
+            val html = response.body?.string()?.take(2_000_000).orEmpty()
+            require(!EliteBabesModelAdapter.isUnavailable(html)) {
+                "Страница видеоплеера недоступна."
             }
-            return PrimaryVideoSources.extract(Jsoup.parse(body, page.toString()),
-                page.toString()).firstOrNull {
-                it.url.toHttpUrlOrNull()?.encodedPath == original.encodedPath
-            } ?: error("Исходный вариант MP4 больше не найден в плеере.")
+            val doc = Jsoup.parse(html, page)
+            val candidates = PrimaryVideoSources.extract(doc, page)
+            val old = media.url.toHttpUrlOrNull() ?: error("Некорректная ссылка MP4.")
+            // Same original file/quality only; no guessing from a CDN directory.
+            return candidates.singleOrNull {
+                val now = it.url.toHttpUrlOrNull()
+                now?.host == old.host && now.encodedPath == old.encodedPath
+            } ?: error("Та же версия MP4 больше не доступна. Откройте публикацию заново.")
         }
     }
 
@@ -424,40 +449,40 @@ object Services {
                 require(file.length() > 0L) { "Локальный файл пустой" }
                 return file to mime
             }
-            val currentMedia = freshVideo(media)
+            // Re-read the selected public player before each video attempt.
+            // Signed CDN query parameters are never reconstructed or truncated.
+            val sourceMedia = freshPrimaryVideoSource(media)
             val sourceRequest = BrowserSessionHeaders.withContext(
-                request(currentMedia.url).newBuilder(), currentMedia, context
+                request(sourceMedia.url).newBuilder(), sourceMedia, context
             ).build()
             http.newCall(sourceRequest).execute().use { r ->
                 if (!r.isSuccessful) throw SourceDownloadFailure.HttpError(r.code)
-                if (media.kind == Kind.VIDEO && r.code != 200) {
-                    error("HTTP ${r.code}: не подтверждено скачивание целого MP4.")
-                }
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
                 if (mime.startsWith("text/") || mime.contains("html")) error("Вместо файла получен текст")
                 val body = r.body ?: error("Пустой файл")
-                val expected = body.contentLength()
                 if (media.kind == Kind.VIDEO) {
-                    require(mime.equals("video/mp4", ignoreCase = true) &&
-                        expected > 0 && r.header("Content-Range") == null) {
-                        "Невозможно проверить целый MP4 по ответу сервера."
-                    }
+                    VideoDownloadIntegrity.requireCompleteResponse(
+                        r.code, mime, r.header("Content-Range"), body.contentLength())
                 }
+                val expected = body.contentLength()
                 if (expected > 0 && context.cacheDir.usableSpace < expected + 20_000_000) error("Недостаточно памяти")
                 body.byteStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
                 if (file.length() == 0L || expected >= 0 && file.length() != expected) error("Неполный файл")
-                if (media.kind == Kind.PHOTO) PhotoSourceValidation.verifyFile(file, mime)
-                if (media.kind == Kind.VIDEO) {
-                    val retriever = android.media.MediaMetadataRetriever()
+                if (media.kind == Kind.PHOTO) {
+                    PhotoSourceValidation.verifyFile(file, mime)
+                } else if (media.kind == Kind.VIDEO) {
+                    val metadata = MediaMetadataRetriever()
                     try {
-                        retriever.setDataSource(file.absolutePath)
-                        require((retriever.extractMetadata(
-                            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
-                        )?.toLongOrNull() ?: 0L) > 0L) {
-                            "MP4 не содержит подтверждённой длительности."
+                        metadata.setDataSource(file.absolutePath)
+                        val hasVideo = metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
+                        val duration = metadata.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        require(hasVideo == "yes" && duration > 0) {
+                            "Получен файл без воспроизводимой видеодорожки."
                         }
                     } finally {
-                        retriever.release()
+                        metadata.release()
                     }
                 }
                 return file to (mime.ifBlank { "application/octet-stream" })

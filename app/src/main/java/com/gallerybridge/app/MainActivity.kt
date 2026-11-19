@@ -139,6 +139,9 @@ class MainActivity : ComponentActivity() {
     private var selected
         get() = session.selected
         set(value) { session.selected = value }
+    private var videoPosterUrl
+        get() = session.videoPosterUrl
+        set(value) { session.videoPosterUrl = value }
     private var openedPhoto
         get() = session.openedPhoto
         set(value) { session.openedPhoto = value }
@@ -539,7 +542,6 @@ class MainActivity : ComponentActivity() {
                             working = false
                             if (checkpoint.finished) {
                                 modelListing = checkpoint.result()
-                                // Store metadata-only cards, including videos, without starting downloads.
                                 try {
                                     val imported = modelListing?.allCards.orEmpty().map { pub ->
                                         CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
@@ -552,7 +554,7 @@ class MainActivity : ComponentActivity() {
                                     GalleryCatalogStore.importMissing(this@MainActivity, imported)
                                     catalog = GalleryCatalogStore.load(this@MainActivity)
                                 } catch (_: Exception) {
-                                    // The scan result stays visible even if catalog storage fails.
+                                    // The scan stays visible even if catalog storage fails.
                                 }
                                 status = "Найдено фотопубликаций: ${modelListing?.photos?.size ?: 0}. " +
                                     if (modelListing?.incomplete == true)
@@ -797,6 +799,7 @@ class MainActivity : ComponentActivity() {
         cancelImageSizes()
         items = emptyList()
         selected = emptySet()
+        videoPosterUrl = ""
         modelListing = null
         modelListingSelected = emptySet()
         recommendedUrls = emptySet()
@@ -922,7 +925,7 @@ class MainActivity : ComponentActivity() {
                 if (created != null) {
                     savedQueue = created
                     screen = GalleryPage.QUEUE
-                    transferStatus = "Очередь сохранена; требуется проверить состояние: ${e.message}"
+                    transferStatus = "Очередь сохранена; проверьте состояние: ${e.message}"
                 } else {
                     status = "Очередь не создана: ${e.message ?: "ошибка источника"}"
                 }
@@ -940,6 +943,7 @@ class MainActivity : ComponentActivity() {
         if (title.isBlank()) title = pub.title
         // Displayed model-card date is not verified publication metadata.
         screen = GalleryPage.HOME
+        if (pub.type == "video") scan()
     }
 
     private fun saveGalleryMetadata() {
@@ -1014,11 +1018,18 @@ class MainActivity : ComponentActivity() {
                     "Точная дата публикации не найдена.".takeIf { date.isBlank() && suggestedPublicationDate.isBlank() }
                 ).joinToString(" ")
                 recommendedUrls = recommended
-                selected = recommended
-                items = photos
+                val videos = scan.media.filter { it.kind == Kind.VIDEO }
+                selected = if (photos.isNotEmpty()) recommended
+                    else videos.firstOrNull()?.let { setOf(it.url) }.orEmpty()
+                items = if (photos.isNotEmpty()) photos else videos
+                videoPosterUrl = scan.posterUrl
                 saveViewingSession()
-                status = if (items.isEmpty()) "Фотографии по этой ссылке не найдены."
-                    else "Найдено фотографий: ${items.size}"
+                status = when {
+                    photos.isNotEmpty() -> "Найдено фотографий: ${photos.size}"
+                    videos.isNotEmpty() -> "Найдено вариантов видео: ${videos.size}. " +
+                        "Видео будут загружаться только после выбора."
+                    else -> "По этой ссылке не найдены подтверждённые медиафайлы."
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1052,8 +1063,14 @@ class MainActivity : ComponentActivity() {
             if (target == "Mail WebDAV" && rememberMailPassword && password.isNotBlank()) {
                 SecureMailCredentials.save(this, email, password)
             }
-            val chosen = items.filter { it.kind == Kind.PHOTO && it.url in selected }
-            require(chosen.isNotEmpty()) { "Выберите фотографии для передачи" }
+            val chosen = items.filter { it.url in selected }
+            require(chosen.isNotEmpty()) { "Выберите файлы для передачи" }
+            require(chosen.none { it.kind == Kind.VIDEO } ||
+                (chosen.size == 1 && chosen.single().source == PrimaryVideoSources.SOURCE &&
+                    com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(
+                        chosen.single().referrer))) {
+                "Видео разрешено добавлять только по одному из подтверждённого плеера XErotica."
+            }
             if (target == "Папка Android") {
                 val access = SafFolderAccess.inspect(this, treeUri)
                 folderPermissionReady = access.ready
@@ -1089,8 +1106,11 @@ class MainActivity : ComponentActivity() {
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
             require(queue.entries.filter { it.state != "DONE" && it.state != "SKIPPED" }
-                .all { it.media.kind == Kind.PHOTO }) {
-                "Очередь содержит видео из прежней версии. Закройте её, чтобы начать новую фотозагрузку."
+                .all { it.media.kind == Kind.PHOTO ||
+                    (it.media.source == PrimaryVideoSources.SOURCE &&
+                        com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(
+                            it.media.referrer)) }) {
+                "Очередь содержит неподтверждённое видео из прежней версии."
             }
             if (queue.target == "Папка Android") {
                 val access = SafFolderAccess.inspect(this, queue.root)
@@ -1202,8 +1222,11 @@ class MainActivity : ComponentActivity() {
             transferStatus = "Эта фотография больше не доступна для безопасного повтора. Обновите очередь."
             return
         }
-        if (queue.entries.any { it.state != "DONE" && it.state != "SKIPPED" && it.media.kind != Kind.PHOTO }) {
-            transferStatus = "Это сохранённое задание содержит видео из прежней версии. Закройте очередь и начните новую с фотографиями."
+        if (queue.entries.any { it.state != "DONE" && it.state != "SKIPPED" &&
+                it.media.kind == Kind.VIDEO &&
+                (it.media.source != PrimaryVideoSources.SOURCE ||
+                    !com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(it.media.referrer)) }) {
+            transferStatus = "Сохранённая очередь содержит неподтверждённое видео прежней версии."
             return
         }
         if (!TransferTargets.isSupported(queue.target)) {
@@ -1504,7 +1527,8 @@ class MainActivity : ComponentActivity() {
             ModelListingReview(
                 result = listing, existing = catalog,
                 selected = modelListingSelected, message = status,
-                busy = working && !scanning, scanning = scanning,
+                busy = working, scanning = scanning,
+                destination = target, onDestination = { target = it },
                 onSelect = { link, checked ->
                     modelListingSelected = if (checked) {
                         if (modelListingSelected.size < ModelBatchQueuePlan.MAX_GALLERIES)
@@ -1518,8 +1542,6 @@ class MainActivity : ComponentActivity() {
                 onClear = { modelListingSelected = emptySet() },
                 onSave = ::saveListingSelection,
                 onQueueSelected = ::queueSelectedModelGalleries,
-                destination = target,
-                onDestinationChange = { target = it },
                 onStop = ::stopSearch,
                 onContinue = ::scan,
                 onOpen = ::openListingPublication,
@@ -1554,6 +1576,17 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        if (items.any { it.kind == Kind.VIDEO } &&
+            items.none { it.kind == Kind.PHOTO }) {
+            VideoPageReview(
+                title = title, posterUrl = videoPosterUrl,
+                variants = items.filter { it.kind == Kind.VIDEO },
+                selectedUrl = selected.firstOrNull(),
+                onSelect = { selected = setOf(it) },
+                onBack = { screen = GalleryPage.HOME })
+            if (showDestination) DestinationDialog()
+            return
+        }
         var metadataExpanded by rememberSaveable(url) { mutableStateOf(false) }
         var checksExpanded by rememberSaveable(url) { mutableStateOf(false) }
         val candidates = remember(items, showOtherMedia, recommendedUrls) {

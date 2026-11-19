@@ -31,11 +31,8 @@ class ModelListingReviewTest {
                 ModelListingReview(
                     result, emptyList(), selected, "",
                     busy = false, scanning = false,
-                    onSelectAllPhotos = {},
-                    onClear = {},
-                    onQueueSelected = {},
-                    onStop = {},
-                    onContinue = {},
+                    onSelectAllPhotos = {}, onClear = {}, onQueueSelected = {},
+                    onStop = {}, onContinue = {},
                     onSelect = { url, checked ->
                         selected = if (checked) selected + url else selected - url
                     },

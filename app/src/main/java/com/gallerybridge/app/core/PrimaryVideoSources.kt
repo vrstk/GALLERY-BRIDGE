@@ -20,27 +20,15 @@ object PrimaryVideoSources {
         "video"
     )
 
-    /** Poster is a display asset, never a downloadable video or original gallery photo. */
-    fun posterUrl(doc: Document, pageUrl: String): String? {
-        val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
-            ?: return null
-        val original = pageUrl.toHttpUrlOrNull() ?: return null
-        if (original.scheme != "https") return null
-        val raw = player.absUrl("poster")
-        val poster = raw.toHttpUrlOrNull() ?: return null
-        val ext = poster.pathSegments.lastOrNull()
-            ?.substringAfterLast('.', "")?.lowercase()
-        return poster.toString().takeIf {
-            poster.scheme == "https" && ext in setOf("jpg", "jpeg", "png", "webp")
-        }
-    }
-
     fun extract(doc: Document, pageUrl: String): List<Media> {
+        if (XeroticaBridge.acceptsWatchPage(pageUrl) &&
+            doc.selectFirst("video#thisPlayer, figure.stage.media-player video") == null)
+            return emptyList()
         val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
             ?: return emptyList()
         val origin = pageUrl.toHttpUrlOrNull() ?: return emptyList()
         if (origin.scheme != "https") return emptyList()
-        val referer = origin.newBuilder().query(null).fragment(null).build().toString()
+        val referer = origin.newBuilder().fragment(null).build().toString()
         val candidateElements = buildList {
             add(player)
             addAll(player.select("source[src]"))
@@ -61,6 +49,17 @@ object PrimaryVideoSources {
             ))
         }
         return results.values.toList()
+    }
+
+    /** The poster must be explicit on the selected player, not a grid cover. */
+    fun poster(doc: Document, pageUrl: String): String {
+        val origin = pageUrl.toHttpUrlOrNull() ?: return ""
+        if (origin.scheme != "https") return ""
+        val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) } ?: return ""
+        val poster = player.absUrl("poster").toHttpUrlOrNull() ?: return ""
+        if (poster.scheme != "https" || poster.port != 443) return ""
+        val ext = poster.encodedPath.substringAfterLast('.', "").lowercase()
+        return poster.toString().takeIf { ext in setOf("jpg", "jpeg", "png", "webp") }.orEmpty()
     }
 
     fun isVideoPage(doc: Document, pageUrl: String): Boolean {

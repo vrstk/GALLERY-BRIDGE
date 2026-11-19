@@ -38,6 +38,7 @@ internal class GallerySessionState(application: Application) : AndroidViewModel(
     var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
     var items by mutableStateOf<List<Media>>(emptyList())
     var selected by mutableStateOf<Set<String>>(emptySet())
+    var videoPosterUrl by mutableStateOf("")
     /** Current full-screen photo URL; kept across Activity recreation. */
     var openedPhoto by mutableStateOf<String?>(null)
     var reveal by mutableStateOf(false)

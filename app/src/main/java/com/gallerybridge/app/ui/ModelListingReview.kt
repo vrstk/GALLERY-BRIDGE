@@ -15,6 +15,7 @@ import com.gallerybridge.app.core.GalleryKeys
 import com.gallerybridge.app.core.ModelListingSources
 
 /** Model previews never enter the download queue. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelListingReview(
     result: ModelListingSources.Result,
@@ -23,6 +24,8 @@ internal fun ModelListingReview(
     message: String,
     busy: Boolean,
     scanning: Boolean,
+    destination: String = "Папка Android",
+    onDestination: (String) -> Unit = {},
     onSelect: (String, Boolean) -> Unit,
     onSelectAllPhotos: () -> Unit,
     onClear: () -> Unit,
@@ -31,9 +34,7 @@ internal fun ModelListingReview(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onOpen: (ModelListingSources.Publication) -> Unit,
-    onBack: () -> Unit,
-    destination: String = "Папка Android",
-    onDestinationChange: (String) -> Unit = {}
+    onBack: () -> Unit
 ) {
     val photos = result.photos
     val videoCards = result.videoCards
@@ -61,8 +62,18 @@ internal fun ModelListingReview(
         if (scanning) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
             TextButton(onClick = onStop) { Text("Остановить сбор") }
-        } else if (result.incomplete) {
-            TextButton(onClick = onContinue, enabled = !busy) { Text("Продолжить сбор") }
+        } else {
+            TextButton(onClick = onContinue, enabled = !busy) {
+                Text(if (result.incomplete) "Продолжить сбор" else "Обновить каталог")
+            }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = destination == "Папка Android",
+                onClick = { onDestination("Папка Android") },
+                enabled = !busy, label = { Text("Папка Android / Drive") })
+            FilterChip(selected = destination == "Mail WebDAV",
+                onClick = { onDestination("Mail WebDAV") },
+                enabled = !busy, label = { Text("Облако Mail") })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             TextButton(onClick = onSelectAllPhotos, enabled = !busy && photos.isNotEmpty()) {
@@ -72,17 +83,10 @@ internal fun ModelListingReview(
                 Text("Снять выбор")
             }
         }
-        Text("Выбрано фотогалерей: $chosenPhotos. Даты показаны на карточках сайта, " +
+        Text("Выбрано: фотогалерей $chosenPhotos, видео " +
+            "${selected.count { chosen -> videoCards.any { it.url == chosen } }}. " +
+            "Даты показаны на карточках сайта, " +
             "это не подтверждённые даты публикации.", style = MaterialTheme.typography.bodySmall)
-        Text("Назначение: $destination", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(selected = destination == "Папка Android",
-                onClick = { onDestinationChange("Папка Android") }, enabled = !busy,
-                label = { Text("Папка Android / Drive") })
-            FilterChip(selected = destination == "Mail WebDAV",
-                onClick = { onDestinationChange("Mail WebDAV") }, enabled = !busy,
-                label = { Text("Mail") })
-        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Button(onClick = onQueueSelected, enabled = chosenPhotos > 0 && !busy) {
                 Text("В очередь ($chosenPhotos)")
@@ -105,10 +109,8 @@ internal fun ModelListingReview(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
-                        if (!video) {
-                            Checkbox(checked = publication.url in selected, enabled = !busy,
-                                onCheckedChange = { onSelect(publication.url, it) })
-                        }
+                        Checkbox(checked = publication.url in selected, enabled = !busy,
+                            onCheckedChange = { onSelect(publication.url, it) })
                         if (publication.previewUrl.isNotBlank()) {
                             AsyncImage(model = publication.previewUrl,
                                 contentDescription = "Обложка публикации",
