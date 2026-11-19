@@ -86,6 +86,12 @@ object Services {
                 return@scanPage Scan("Прямой файл", "", listOf(Media(response.request.url.toString(), Paths.clean(response.request.url.pathSegments.last()), if (type.startsWith("video/")) Kind.VIDEO else Kind.PHOTO, "Прямой файл")))
             require(type.contains("html") || type.isBlank()) { "Не HTML-страница" }
             val html = response.body?.string().orEmpty().take(3_000_000)
+            if (url.host in setOf("elitebabes.com", "www.elitebabes.com")) {
+                require(!EliteBabesModelAdapter.isUnavailable(html)) {
+                    "Сайт временно недоступен или не вернул страницу галереи. " +
+                        "Подтверждённых фотографий нет; повторите проверку позже."
+                }
+            }
             val doc = Jsoup.parse(html, response.request.url.toString())
             // Single-video pages must use only the main player's sources.
             // Do not attach sidebar recommendations, ad clips or unrelated MP4s.

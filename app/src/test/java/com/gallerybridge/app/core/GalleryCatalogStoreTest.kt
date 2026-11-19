@@ -45,6 +45,36 @@ class GalleryCatalogStoreTest {
         assertEquals(restored, GalleryCatalogStore.decode(GalleryCatalogStore.encode(restored)))
     }
 
+    @Test fun largeUniqueCatalogKeepsFieldsAndSortedOrder() {
+        val entries = (0 until 432).map { i ->
+            CatalogGallery("https://www.elitebabes.com/test-gallery-$i/",
+                "Модель", "Галерея $i", "", i.toLong(),
+                source = "elitebabes", sourceId = i.toString(),
+                previewUrl = "https://cdn.elitebabes.com/previews/$i.jpg")
+        }
+        val restored = GalleryCatalogStore.decode(GalleryCatalogStore.encode(entries))
+        assertEquals(432, restored.size)
+        assertEquals(entries.sortedByDescending { it.updatedAt }, restored)
+        assertEquals(restored, GalleryCatalogStore.decode(GalleryCatalogStore.encode(restored)))
+    }
+
+    @Test fun duplicateSourceIdsRetainEarlierTransferState() {
+        val first = CatalogGallery("https://www.elitebabes.com/old/",
+            "Модель", "Original", "", 10,
+            "Mail WebDAV", "Завершено", 12, 12,
+            source = "elitebabes", sourceId = "5")
+        val second = CatalogGallery("https://www.elitebabes.com/new/",
+            "Модель", "Edited", "", 20,
+            source = "elitebabes", sourceId = "5")
+        val restored = GalleryCatalogStore.decode(
+            GalleryCatalogStore.encode(listOf(first, second))
+        )
+        assertEquals(1, restored.size)
+        assertEquals("Edited", restored.single().title)
+        assertEquals(12, restored.single().completed)
+        assertEquals("Завершено", restored.single().outcome)
+    }
+
     @Test fun transferDoesNotOverwriteEditedLabels() {
         val old = CatalogGallery("https://example.com/alba", "Alba", "New title",
             "2026-01-04", 90, "Mail WebDAV", "Done", 4, 4)

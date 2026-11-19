@@ -81,8 +81,13 @@ internal fun ModelListingReview(
                 }
                 if (result.incomplete) {
                     Text(
-                        "Каталог НЕПОЛНЫЙ: собрано ${result.allCards.size} карточек. " +
-                            "Ошибка или повтор порции не означает конец выдачи.",
+                        if (result.advertisedCount == result.allCards.size)
+                            "Собраны все ${result.allCards.size} заявленных карточек, " +
+                                "но сервер не подтвердил конец выдачи. " +
+                                "Каталог пока считается неполным."
+                        else
+                            "Каталог НЕПОЛНЫЙ: собрано ${result.allCards.size} карточек. " +
+                                "Ошибка или повтор порции не означает конец выдачи.",
                         color = MaterialTheme.colorScheme.error
                     )
                 }
@@ -176,7 +181,7 @@ internal fun ModelListingReview(
                         }
                         Text(
                             publication.displayedDate.ifBlank { "Дата не указана" } +
-                                if (already) " · Сохранено" else "",
+                                if (already) " · В каталоге" else "",
                             style = MaterialTheme.typography.bodySmall
                         )
                         TextButton(onClick = { onOpen(publication) }, enabled = !busy) {

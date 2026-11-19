@@ -66,7 +66,24 @@ object GalleryCatalogStore {
                         previewUrl = item.optString("previewUrl").take(2048)
                     ))
                 }
-            }.fold(emptyList<CatalogGallery>()) { list, entry -> merge(list, entry) }
+            }.let { entries ->
+                // Unique catalogs are common and must not require a quadratic
+                // merge/sort on the UI-thread during Activity restoration.
+                // Legacy duplicate URLs and source IDs keep the original
+                // merge behavior, including retained transfer metadata.
+                val urls = HashSet<String>(entries.size)
+                val ids = HashSet<String>(entries.size)
+                if (entries.all { urls.add(it.url) && ids.add(identity(it)) }) {
+                    entries.mapNotNull { merge(emptyList(), it).singleOrNull() }
+                        .sortedWith(compareByDescending<CatalogGallery> { it.updatedAt }
+                            .thenBy { it.url })
+                        .take(LIMIT)
+                } else {
+                    entries.fold(emptyList<CatalogGallery>()) { list, entry ->
+                        merge(list, entry)
+                    }
+                }
+            }
         }.getOrDefault(emptyList())
     }
 
