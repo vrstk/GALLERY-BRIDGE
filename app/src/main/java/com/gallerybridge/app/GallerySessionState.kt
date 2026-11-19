@@ -73,6 +73,8 @@ internal class GallerySessionState(application: Application) : AndroidViewModel(
     var showCloseQueueConfirmation by mutableStateOf(false)
     var showRepeatConfirmation by mutableStateOf(false)
     var pendingUnblock by mutableStateOf<Pair<Long, Int>?>(null)
+    var pendingRetry by mutableStateOf<Pair<Long, Int>?>(null)
+    var singleRetryIndex: Int? = null
     var auditing by mutableStateOf(false)
     var auditProgress by mutableStateOf("")
     var auditReport by mutableStateOf("")

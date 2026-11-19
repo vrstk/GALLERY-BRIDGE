@@ -86,6 +86,30 @@ class QueueStoreTest {
         val retried = QueueStore.applyItemResult(failed, 0, photo, "DONE")
         assertEquals("DONE", retried.entries.single().state)
     }
+    @Test fun onePhotoRetryDoesNotTouchPendingDoneOrBlockedEntries() {
+        val second = photo.copy(name = "b.jpg")
+        val third = photo.copy(name = "c.jpg")
+        val fourth = photo.copy(name = "d.jpg")
+        val initial = queue(photo, second, third, fourth)
+        val failed = QueueStore.applyItemResult(initial, 1, second, "FAILED", "Нет сети")
+        val blocked = QueueStore.applyItemResult(failed, 2, third, "BLOCKED", "Неясный результат")
+        val done = QueueStore.applyItemResult(blocked, 3, fourth, "DONE")
+        assertEquals(listOf(0, 1), QueueStore.retryIndices(done))
+        assertEquals(listOf(1), QueueStore.retryIndices(done, 1))
+        assertEquals(emptyList<Int>(), QueueStore.retryIndices(done, 0))
+        assertEquals(emptyList<Int>(), QueueStore.retryIndices(done, 2))
+        assertEquals(emptyList<Int>(), QueueStore.retryIndices(done, 3))
+        assertEquals(emptyList<Int>(), QueueStore.retryIndices(done, 200))
+        assertEquals(listOf("PENDING", "FAILED", "BLOCKED", "DONE"), done.entries.map { it.state })
+    }
+
+    @Test fun selectedRetryRejectsLegacyVideoFailure() {
+        val video = Media("https://example.com/old.mp4", "old.mp4", Kind.VIDEO, "test")
+        val oldQueue = queue(video)
+        val failed = QueueStore.applyItemResult(oldQueue, 0, video, "FAILED", "Старая версия")
+        assertEquals(emptyList<Int>(), QueueStore.retryIndices(failed, 0))
+    }
+
     @Test fun blockedWriteNeverRetriesAutomatically() {
         val initial = queue(photo)
         val blocked = QueueStore.applyItemResult(initial, 0, photo, "BLOCKED", "Проверьте файл")

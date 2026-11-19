@@ -18,6 +18,37 @@ import org.junit.Test
 class QueueReviewTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun failedPhotoRetryNeedsConfirmationAndCancellationKeepsQueue() {
+        val id = 352036L
+        val failed = Media("https://example.com/retry-a.jpg", "retry-a.jpg", Kind.PHOTO, "test")
+        val pending = Media("https://example.com/retry-b.jpg", "retry-b.jpg", Kind.PHOTO, "test")
+        compose.runOnIdle {
+            QueueStore.save(compose.activity, QueueStore.Snapshot(
+                id = id, model = "Тест", title = "Выборочный повтор", date = "",
+                target = "Mail WebDAV", root = "Models", account = "",
+                entries = listOf(
+                    QueueStore.Entry(failed, "FAILED", "Временная ошибка сети"),
+                    QueueStore.Entry(pending, "PENDING")
+                )
+            ))
+        }
+        try {
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag("nav-downloads").performClick()
+            compose.onNodeWithContentDescription("Открыть очередь").performClick()
+            compose.onNodeWithText("Повторить только этот файл").performScrollTo().performClick()
+            compose.onNodeWithText("Повторить только эту фотографию?").assertIsDisplayed()
+            compose.onNodeWithText("Отмена").performClick()
+            compose.runOnIdle {
+                val queue = QueueStore.load(compose.activity)!!
+                assertEquals(listOf("FAILED", "PENDING"), queue.entries.map { it.state })
+                assertEquals("Временная ошибка сети", queue.entries[0].failureReason)
+            }
+        } finally {
+            compose.runOnIdle { QueueStore.clearIfId(compose.activity, id) }
+        }
+    }
+
     @Test fun blockedFileNeedsConfirmationAndNeverUnlocksAnotherFile() {
         val id = 352035L
         val first = Media("https://example.com/test-a.jpg", "test-a.jpg", Kind.PHOTO, "test")

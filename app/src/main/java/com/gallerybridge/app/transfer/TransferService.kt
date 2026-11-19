@@ -42,6 +42,8 @@ class TransferService : Service() {
         private const val ACTION_START = "com.gallerybridge.transfer.START"
         private const val ACTION_CANCEL = "com.gallerybridge.transfer.CANCEL"
         private const val ACTION_RESUME = "com.gallerybridge.transfer.RESUME"
+        private const val EXTRA_RESUME_QUEUE_ID = "resumeQueueId"
+        private const val EXTRA_RETRY_INDEX = "retryIndex"
         private const val EXTRA_FILES = "files"
         private const val EXTRA_MODEL = "model"
         private const val EXTRA_TITLE = "title"
@@ -128,10 +130,10 @@ class TransferService : Service() {
             context.startForegroundService(intent)
         }
 
-        fun resume(context: Context, email: String, password: String) {
+        fun resume(context: Context, email: String, password: String, singleFailedIndex: Int? = null) {
             val queue = QueueStore.load(context) ?: error("Сохранённая очередь не найдена")
-            require(queue.retryable > 0) {
-                "Нет файлов для безопасного повтора. Заблокированные записи проверьте вручную."
+            require(QueueStore.retryIndices(queue, singleFailedIndex).isNotEmpty()) {
+                "Выбранная ошибка уже обработана или требует ручной проверки. Обновите очередь."
             }
             require(TransferTargets.isSupported(queue.target)) {
                 "Google Drive API удалён. Закройте старую очередь и начните новую через папку Android."
@@ -143,6 +145,8 @@ class TransferService : Service() {
             }
             val intent = Intent(context, TransferService::class.java).setAction(ACTION_RESUME)
                 .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password)
+                .putExtra(EXTRA_RESUME_QUEUE_ID, queue.id)
+                .putExtra(EXTRA_RETRY_INDEX, singleFailedIndex ?: -1)
             context.startForegroundService(intent)
         }
 
@@ -194,9 +198,18 @@ class TransferService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (queue.retryable == 0) {
-            save(false, "Нет файлов для автоматического продолжения",
-                "Заблокированные записи требуют ручной проверки.")
+        if (intent.action == ACTION_RESUME &&
+            intent.getLongExtra(EXTRA_RESUME_QUEUE_ID, -1L) != queue.id) {
+            save(false, "Очередь изменилась", "Повтор отменён. Откройте текущую очередь.")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        val singleFailedIndex = if (intent.action == ACTION_RESUME)
+            intent.getIntExtra(EXTRA_RETRY_INDEX, -1).takeIf { it >= 0 } else null
+        val selectedIndices = QueueStore.retryIndices(queue, singleFailedIndex)
+        if (selectedIndices.isEmpty()) {
+            save(false, "Нет файлов для безопасного продолжения",
+                "Выбранная ошибка уже обработана или требует ручной проверки.")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -212,8 +225,8 @@ class TransferService : Service() {
         job = scope.launch {
             try {
                 val src = intent ?: error("Не указано задание")
-                val pending = queue.entries.withIndex().filter {
-                    it.value.state == "PENDING" || it.value.state == "FAILED"
+                val pending = selectedIndices.map { index ->
+                    IndexedValue(index, queue.entries[index])
                 }
                 val files = pending.map { it.value.media }
                 val result = Services.transfer(

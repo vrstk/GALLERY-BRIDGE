@@ -46,6 +46,23 @@ object QueueStore {
     internal fun restoreState(state: String, classified: Boolean): String =
         if (state == "FAILED" && !classified) "BLOCKED" else state
 
+    /**
+     * Default resume uses all pending and classified failures. An explicit one-file
+     * retry is allowed only for a FAILED photo: BLOCKED requires manual review
+     * and DONE/SKIPPED must never be replayed.
+     * Returns stable indices from the original persisted queue, not a filtered list.
+     */
+    fun retryIndices(snapshot: Snapshot, singleFailedIndex: Int? = null): List<Int> =
+        if (singleFailedIndex == null) {
+            snapshot.entries.indices.filter { snapshot.entries[it].state in setOf("PENDING", "FAILED") }
+        } else {
+            listOf(singleFailedIndex).filter { index ->
+                snapshot.entries.getOrNull(index)?.let {
+                    it.state == "FAILED" && it.media.kind == Kind.PHOTO
+                } == true
+            }
+        }
+
     /** Never report a transfer complete unless its durable queue state was saved. */
     class CheckpointFailure(message: String) : IllegalStateException(message)
 

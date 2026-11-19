@@ -264,6 +264,12 @@ class MainActivity : ComponentActivity() {
     private var pendingUnblock
         get() = session.pendingUnblock
         set(value) { session.pendingUnblock = value }
+    private var pendingRetry
+        get() = session.pendingRetry
+        set(value) { session.pendingRetry = value }
+    private var singleRetryIndex
+        get() = session.singleRetryIndex
+        set(value) { session.singleRetryIndex = value }
     private var auditing
         get() = session.auditing
         set(value) { session.auditing = value }
@@ -386,6 +392,7 @@ class MainActivity : ComponentActivity() {
         // Notification permission is optional for running a dataSync foreground service.
         if (resumeRequest) beginResumeTransfer() else beginServiceTransfer()
         resumeRequest = false
+        singleRetryIndex = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1004,11 +1011,12 @@ class MainActivity : ComponentActivity() {
                 "Очередь Google Drive API из прежней версии больше не поддерживается. " +
                     "Закройте её с сохранением истории и создайте новую загрузку через папку Android."
             }
-            TransferService.resume(this, email, password)
+            TransferService.resume(this, email, password, singleRetryIndex)
             savedQueue = QueueStore.load(this)
             transferRunning = true
             screen = GalleryPage.QUEUE
-            transferStatus = "Продолжаем сохранённую очередь"
+            transferStatus = if (singleRetryIndex == null) "Продолжаем сохранённую очередь"
+                else "Повторяем только выбранную фотографию"
         } catch (e: Exception) {
             transferStatus = "Не удалось возобновить загрузку. ${e.message}"
         } finally { working = false }
@@ -1075,9 +1083,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun resumeUpload() {
+    private fun resumeUpload(singleFailedIndex: Int? = null) {
         val queue = QueueStore.load(this) ?: return
         if (transferRunning || working || queue.remaining == 0) return
+        if (singleFailedIndex != null && QueueStore.retryIndices(queue, singleFailedIndex).isEmpty()) {
+            transferStatus = "Эта фотография больше не доступна для безопасного повтора. Обновите очередь."
+            return
+        }
         if (queue.entries.any { it.state != "DONE" && it.state != "SKIPPED" && it.media.kind != Kind.PHOTO }) {
             transferStatus = "Это сохранённое задание содержит видео из прежней версии. Закройте очередь и начните новую с фотографиями."
             return
@@ -1087,16 +1099,20 @@ class MainActivity : ComponentActivity() {
                 "Закройте её с сохранением истории и начните новую передачу через папку Android."
             return
         }
-        uploadResume()
+        uploadResume(singleFailedIndex)
     }
 
-    private fun uploadResume() {
+    private fun uploadResume(singleFailedIndex: Int?) {
+        singleRetryIndex = singleFailedIndex
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             resumeRequest = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else beginResumeTransfer()
+        } else {
+            beginResumeTransfer()
+            singleRetryIndex = null
+        }
     }
 
     private fun beginUpload() {
@@ -1947,8 +1963,8 @@ class MainActivity : ComponentActivity() {
                     text = {
                         Text("Сначала проверьте файл в назначении. Если запись была неполной, " +
                             "удалите её самостоятельно или исправьте в провайдере. " +
-                            "Приложение пропускает существующие файлы по имени и не проверяет их содержимое. " +
-                            "Подтвердите только после ручной проверки; другие файлы очередь не изменит.")
+                            "Приложение сверяет содержимое существующих файлов по SHA-256, " +
+                            "но не удаляет и не перезаписывает их. Другие записи очереди не изменятся.")
                     },
                     confirmButton = {
                         TextButton(onClick = {
@@ -1975,6 +1991,32 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        pendingRetry?.takeIf { it.first == queue.id }?.let { request ->
+            val item = queue.entries.getOrNull(request.second)
+            if (item?.state == "FAILED" && item.media.kind == Kind.PHOTO) {
+                AlertDialog(
+                    onDismissRequest = { pendingRetry = null },
+                    title = { Text("Повторить только эту фотографию?") },
+                    text = {
+                        Text("Повторится только выбранная ошибка. Ожидающие, завершённые " +
+                            "и требующие ручной проверки файлы не будут затронуты. " +
+                            "Проверьте доступность источника и назначения.")
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val current = QueueStore.load(this@MainActivity)
+                            pendingRetry = null
+                            if (current?.id != queue.id) {
+                                transferStatus = "Очередь изменилась. Откройте текущую очередь."
+                            } else resumeUpload(request.second)
+                        }) { Text("Повторить один файл") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingRetry = null }) { Text("Отмена") }
+                    }
+                )
+            }
+        }
         GalleryQueueSummary(queue)
         if (transferRunning) {
             Text("Передача выполняется в фоне")
@@ -1986,7 +2028,7 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(password, {password=it}, label={Text("Пароль приложения Mail")}, visualTransformation=PasswordVisualTransformation(), modifier=Modifier.fillMaxWidth())
                 }
             }
-            Button(onClick=::resumeUpload, enabled = !working && queue.retryable > 0, modifier=Modifier.fillMaxWidth()) { Text("Продолжить безопасно: ${queue.retryable} файлов") }
+            Button(onClick={ resumeUpload() }, enabled = !working && queue.retryable > 0, modifier=Modifier.fillMaxWidth()) { Text("Продолжить безопасно: ${queue.retryable} файлов") }
             OutlinedButton(
                 onClick = { showCloseQueueConfirmation = true },
                 enabled = !working && !auditing,
@@ -2059,6 +2101,12 @@ class MainActivity : ComponentActivity() {
                         if (item.failureReason.isNotBlank()) {
                             Text(item.failureReason, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error)
+                        }
+                        if (item.state == "FAILED" && item.media.kind == Kind.PHOTO) {
+                            TextButton(onClick = { pendingRetry = queue.id to index },
+                                enabled = !transferRunning && !working) {
+                                Text("Повторить только этот файл")
+                            }
                         }
                         if (item.state == "BLOCKED") {
                             TextButton(onClick = { pendingUnblock = queue.id to index },
