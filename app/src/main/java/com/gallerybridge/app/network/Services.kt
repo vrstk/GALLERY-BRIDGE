@@ -163,6 +163,38 @@ object Services {
     }
 
     /**
+     * Read every chosen PHOTO page before a queue is ever replaced or started.
+     * A broken gallery aborts the batch with its original queue intact.
+     */
+    suspend fun prepareModelPhotos(
+        publications: List<ModelListingSources.Publication>,
+        onProgress: suspend (Int, Int, String) -> Unit
+    ): List<PreparedGallery> = withContext(Dispatchers.IO) {
+        require(publications.isNotEmpty() &&
+            publications.size <= ModelBatchQueuePlan.MAX_GALLERIES &&
+            publications.all { it.type == "photo" }) {
+            "Выберите от 1 до 100 фотогалерей."
+        }
+        val groups = mutableListOf<PreparedGallery>()
+        for ((index, pub) in publications.withIndex()) {
+            coroutineContext.ensureActive()
+            require(ModelListingSources.publicationUrl(pub.url) != null) {
+                "Недопустимая ссылка фотогалереи."
+            }
+            onProgress(index + 1, publications.size, pub.title)
+            val result = scan(pub.url)
+            val photos = result.media.filter { it.kind == Kind.PHOTO }
+            require(photos.isNotEmpty()) {
+                "Фотографии не подтверждены для галереи «${pub.title.ifBlank { pub.sourceId }}»."
+            }
+            // Keep displayedDate distinct from publishedDate. Never guess originals.
+            groups.add(PreparedGallery(pub.url, pub.sourceId, pub.model,
+                pub.title, pub.displayedDate, photos))
+        }
+        ModelBatchQueuePlan.validate(groups)
+    }
+
+    /**
      * Bounded discovery of server-rendered model publication cards.
      * The website's separate infinite-scroll endpoint is not documented by
      * the HTML snapshots: never claim that the first visible 20 are complete.

@@ -48,7 +48,6 @@ internal fun GalleryCatalog(
     onEdit: (CatalogGallery, GalleryFields) -> Boolean,
     onExport: () -> Unit,
     onImport: () -> Unit,
-    onImportElite: () -> Unit = {},
     backupStatus: String,
     historyCount: Int
 ) {
@@ -191,9 +190,6 @@ internal fun GalleryCatalog(
                             Text("Сохранить копию")
                         }
                         OutlinedButton(onClick = onImport) { Text("Восстановить") }
-                        OutlinedButton(onClick = onImportElite) {
-                            Text("Импорт Elite Babes JSON")
-                        }
                     }
                     Text(
                         "Копия: каталог, до 40 записей истории и тема. " +

@@ -4,6 +4,8 @@ import android.content.Context
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.GalleryKeys
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.core.PreparedGallery
+import com.gallerybridge.app.core.ModelBatchQueuePlan
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -35,7 +37,12 @@ object QueueStore {
         val media: Media,
         val state: String,
         val failureReason: String = "",
-        val contentSha256: String = ""
+        val contentSha256: String = "",
+        val galleryUrl: String = "",
+        val gallerySourceId: String = "",
+        val galleryModel: String = "",
+        val galleryTitle: String = "",
+        val galleryDate: String = ""
     )
 
     /** A digest is evidence of downloaded source bytes, not proof of remote synchronization. */
@@ -82,7 +89,12 @@ object QueueStore {
                         if (x.optString("state") == "FAILED" && !x.has("failureReason"))
                             "Сбой из предыдущей версии. Проверьте назначение перед повтором."
                         else x.optString("failureReason").take(240),
-                        x.optString("contentSha256").takeIf(::validContentHash).orEmpty()))
+                        x.optString("contentSha256").takeIf(::validContentHash).orEmpty(),
+                        GalleryKeys.canonical(x.optString("galleryUrl")).orEmpty(),
+                        x.optString("gallerySourceId").take(30),
+                        x.optString("galleryModel").take(130),
+                        x.optString("galleryTitle").take(250),
+                        x.optString("galleryDate").take(10)))
                 }
             }
             Snapshot(data.getLong("id"), data.getString("model"), data.getString("title"),
@@ -109,7 +121,10 @@ object QueueStore {
                 .put("kind", entry.media.kind.name)
                 .put("source", entry.media.source).put("referrer", entry.media.referrer)
                 .put("state", entry.state).put("failureReason", entry.failureReason.take(240))
-                .put("contentSha256", entry.contentSha256.takeIf(::validContentHash).orEmpty()))
+                .put("contentSha256", entry.contentSha256.takeIf(::validContentHash).orEmpty())
+                .put("galleryUrl", entry.galleryUrl).put("gallerySourceId", entry.gallerySourceId)
+                .put("galleryModel", entry.galleryModel).put("galleryTitle", entry.galleryTitle)
+                .put("galleryDate", entry.galleryDate))
         }
         json.put("entries", entries)
         // Synchronous commit is necessary: .apply() or an unchecked false
@@ -193,6 +208,30 @@ object QueueStore {
         // Preserve confirmed per-photo outcomes before discarding the only detailed queue.
         PhotoOutcomeLedger.remember(context, current)
         return storage(context).edit().remove(KEY).commit()
+    }
+
+    fun foldersFor(entry: Entry, snapshot: Snapshot): List<String> =
+        if (entry.galleryUrl.isBlank()) com.gallerybridge.app.core.Paths.folders(
+            snapshot.model, snapshot.date, snapshot.title, entry.media.kind)
+        else ModelBatchQueuePlan.folder(PreparedGallery(
+            entry.galleryUrl, entry.gallerySourceId, entry.galleryModel,
+            entry.galleryTitle, entry.galleryDate, listOf(entry.media)), entry.media.kind)
+
+    fun newBatchSnapshot(
+        galleries: List<PreparedGallery>, target: String, root: String, account: String
+    ): Snapshot {
+        val groups = ModelBatchQueuePlan.validate(galleries)
+        val entries = groups.flatMap { g ->
+            g.media.map { media ->
+                Entry(media, "PENDING",
+                    galleryUrl = GalleryKeys.canonical(g.sourceUrl).orEmpty(),
+                    gallerySourceId = g.sourceId,
+                    galleryModel = g.model, galleryTitle = g.title,
+                    galleryDate = g.displayedDate)
+            }
+        }
+        return Snapshot(System.currentTimeMillis(), groups.first().model,
+            "Пакет: ${groups.size} фотогалерей", "", target, root, account, entries)
     }
 
     fun newSnapshot(

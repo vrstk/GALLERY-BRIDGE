@@ -74,7 +74,7 @@ internal fun GalleryHome(
             GalleryLinkField(url, onUrlChange, searchAllowed, onSearch)
             FindMediaButton(
                 searchAllowed && url.isNotBlank(), onSearch,
-                if (ModelListingSources.accepts(url)) "Найти фотопубликации" else "Найти фотографии"
+                if (ModelListingSources.accepts(url)) "Собрать галереи" else "Найти фотографии"
             )
         }
     }
@@ -168,7 +168,7 @@ internal fun GalleryLinkField(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled,
         singleLine = true,
-        label = { Text("Ссылка на фотогалерею", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label = { Text("Ссылка на модель или галерею", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         placeholder = { Text("https://") },
         leadingIcon = { Icon(painterResource(R.drawable.ic_link), null) },
         trailingIcon = if (enabled && url.isNotEmpty()) {

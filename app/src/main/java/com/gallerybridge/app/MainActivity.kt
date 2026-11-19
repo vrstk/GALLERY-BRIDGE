@@ -561,7 +561,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopSearch() {
-        if (ModelListingSources.accepts(url) && scanning) {
+        if (ModelListingSources.accepts(url) && scanning && scanJob == null) {
             WorkManager.getInstance(applicationContext)
                 .cancelUniqueWork(ModelListingScanWorker.UNIQUE)
             status = "Поиск остановлен. Ранее найденные публикации сохраняются."
@@ -832,6 +832,58 @@ class MainActivity : ComponentActivity() {
         modelListingSelected = emptySet()
         status = "Сохранено новых публикаций: ${plan.added}; " +
             "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
+    }
+
+    private fun startModelBatch() {
+        val listing = modelListing ?: return
+        if (working || transferRunning) {
+            status = "Дождитесь окончания поиска или текущей передачи."
+            return
+        }
+        val chosen = listing.photos.filter { it.url in modelListingSelected }
+        if (chosen.isEmpty()) {
+            status = "Выберите хотя бы одну фотогалерею."
+            return
+        }
+        if (QueueStore.load(this)?.remaining?.let { it > 0 } == true) {
+            status = "Сначала завершите прежнюю очередь. Новая её не заменит."
+            return
+        }
+        val destination = if (target == "Папка Android") treeUri else mailRoot
+        if (target == "Папка Android" && !SafFolderAccess.inspect(this, treeUri).ready) {
+            status = "Папка Android недоступна. Выберите её в настройках."
+            return
+        }
+        if (target == "Mail WebDAV" && (email.isBlank() || password.isBlank())) {
+            status = "Настройте Mail WebDAV перед пакетной передачей."
+            return
+        }
+        working = true
+        scanning = true
+        status = "Проверяем выбранные фотогалереи перед созданием очереди."
+        scanJob = scope.launch {
+            try {
+                val groups = Services.prepareModelPhotos(chosen) { index, total, galleryTitle ->
+                    status = "Проверяем фотогалерею $index из $total: $galleryTitle"
+                }
+                ensureActive()
+                TransferService.beginBatch(this@MainActivity, groups,
+                    target, email, password, destination)
+                savedQueue = QueueStore.load(this@MainActivity)
+                transferRunning = true
+                modelListingSelected = emptySet()
+                screen = GalleryPage.QUEUE
+                transferStatus = "Пакетная передача запущена: ${groups.size} галерей."
+            } catch (e: CancellationException) {
+                status = "Подготовка остановлена. Очередь не изменена."
+            } catch (e: Exception) {
+                status = "Очередь не создана: ${e.message ?: "ошибка"}"
+            } finally {
+                working = false
+                scanning = false
+                scanJob = null
+            }
+        }
     }
 
     private fun openListingPublication(pub: ModelListingSources.Publication) {
@@ -1404,6 +1456,15 @@ class MainActivity : ComponentActivity() {
             ModelListingReview(
                 result = listing, existing = catalog,
                 selected = modelListingSelected, message = status,
+                busy = scanning, destination = target,
+                onDestination = { choice -> target = choice },
+                onSelectAll = {
+                    modelListingSelected = listing.photos.map { it.url }.take(100).toSet()
+                },
+                onClear = { modelListingSelected = emptySet() },
+                onQueue = ::startModelBatch,
+                onRefresh = ::scan,
+                onStop = ::stopSearch,
                 onSelect = { link, checked ->
                     modelListingSelected = if (checked) {
                         if (modelListingSelected.size < 100) modelListingSelected + link
@@ -1421,7 +1482,7 @@ class MainActivity : ComponentActivity() {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
                 FindMediaButton(
                     searchAllowed && url.isNotBlank(), startSearch,
-                    if (ModelListingSources.accepts(url)) "Найти фотопубликации" else "Найти фотографии"
+                    if (ModelListingSources.accepts(url)) "Собрать галереи" else "Найти фотографии"
                 )
                 OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
                     modifier = Modifier.fillMaxWidth()) {

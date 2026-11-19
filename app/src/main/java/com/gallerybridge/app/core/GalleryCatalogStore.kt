@@ -176,6 +176,28 @@ object GalleryCatalogStore {
         )))
     }
 
+    /** Reconcile each gallery in a mixed queue without modifying legacy queue history. */
+    @Synchronized fun recordBatchProgress(context: Context, queue: QueueStore.Snapshot): Boolean {
+        val groups = queue.entries.filter { it.galleryUrl.isNotBlank() }
+            .groupBy { it.galleryUrl }
+        if (groups.isEmpty()) return true
+        var updated = load(context)
+        for ((source, entries) in groups) {
+            val first = entries.first()
+            val done = entries.count { it.state == "DONE" || it.state == "SKIPPED" }
+            val outcome = if (done == entries.size) "Завершено"
+                else if (entries.any { it.state == "FAILED" || it.state == "BLOCKED" })
+                    "Требует внимания" else "В очереди"
+            val candidate = CatalogGallery(source, first.galleryModel,
+                first.galleryTitle, first.galleryDate, System.currentTimeMillis(),
+                queue.target, outcome, done, entries.size,
+                source = "elitebabes", sourceId = first.gallerySourceId,
+                displayedDate = first.galleryDate)
+            updated = merge(updated, candidate)
+        }
+        return write(context, updated)
+    }
+
     /** Merge only missing backup entries and commit the new catalog synchronously. */
     @Synchronized fun importMissing(
         context: Context, imported: List<CatalogGallery>

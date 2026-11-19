@@ -14,6 +14,8 @@ import android.os.IBinder
 import com.gallerybridge.app.MainActivity
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.core.PreparedGallery
+import com.gallerybridge.app.core.ModelBatchQueuePlan
 import com.gallerybridge.app.core.GalleryCatalogStore
 import com.gallerybridge.app.core.GalleryTransferGuard
 import com.gallerybridge.app.core.TransferTargets
@@ -130,6 +132,46 @@ class TransferService : Service() {
             context.startForegroundService(intent)
         }
 
+        /** One resumable queue, one distinct destination folder per gallery. */
+        fun beginBatch(context: Context, galleries: List<PreparedGallery>,
+                       target: String, email: String, password: String, root: String) {
+            val approved = ModelBatchQueuePlan.validate(galleries)
+            require(TransferTargets.isSupported(target)) { "Недопустимое назначение." }
+            if (target == TransferTargets.FOLDER) {
+                require(SafFolderAccess.inspect(context, root).ready) {
+                    "Выбранная папка Android недоступна."
+                }
+            } else require(email.isNotBlank() && password.isNotBlank()) {
+                "Укажите настройки подключения Mail WebDAV."
+            }
+            val previous = QueueStore.load(context)
+            require(previous == null || previous.remaining == 0) {
+                "Сначала завершите или закройте прежнюю очередь."
+            }
+            val catalog = GalleryCatalogStore.load(context)
+            approved.forEach { gallery ->
+                when (GalleryTransferGuard.assess(gallery.sourceUrl, catalog, previous, false)) {
+                    GalleryTransferGuard.Decision.BLOCKED ->
+                        error("Для ${gallery.title} уже есть незавершённая очередь.")
+                    GalleryTransferGuard.Decision.REVIEW ->
+                        error("Повтор галереи ${gallery.title} требует отдельного подтверждения.")
+                    else -> Unit
+                }
+            }
+            previous?.let {
+                PhotoOutcomeLedger.remember(context, it)
+                HistoryStore.record(context, it, "Завершено")
+            }
+            QueueStore.save(context, QueueStore.newBatchSnapshot(approved, target, root,
+                if (target == "Mail WebDAV") email.trim() else ""))
+            check(GalleryCatalogStore.recordBatchProgress(
+                context, QueueStore.load(context)!!
+            )) { "Не удалось сохранить пакет в каталоге." }
+            context.startForegroundService(Intent(context, TransferService::class.java)
+                .setAction(ACTION_START)
+                .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password))
+        }
+
         fun resume(context: Context, email: String, password: String, singleFailedIndex: Int? = null) {
             val queue = QueueStore.load(context) ?: error("Сохранённая очередь не найдена")
             require(QueueStore.retryIndices(queue, singleFailedIndex).isNotEmpty()) {
@@ -229,6 +271,7 @@ class TransferService : Service() {
                     IndexedValue(index, queue.entries[index])
                 }
                 val files = pending.map { it.value.media }
+                val folders = pending.map { QueueStore.foldersFor(it.value, queue) }
                 val result = Services.transfer(
                     applicationContext, files, queue.model, queue.title, queue.date,
                     queue.target, src.getStringExtra(EXTRA_EMAIL).orEmpty(),
@@ -242,6 +285,7 @@ class TransferService : Service() {
                         val overall = (queue.completed + withinRun).coerceAtMost(queue.entries.size)
                         showProgress(overall, queue.entries.size)
                     },
+                    foldersPerFile = folders,
                     onItemResult = { index, item, state, reason, digest ->
                         if (mySession == session && !cancelRequested) {
                             QueueStore.checkpoint(
@@ -250,6 +294,9 @@ class TransferService : Service() {
                             )
                             QueueStore.load(applicationContext)?.let { updated ->
                                 if (updated.id == queue.id) {
+                                    check(GalleryCatalogStore.recordBatchProgress(
+                                        applicationContext, updated
+                                    )) { "Не удалось сохранить прогресс каталога." }
                                     val successes = updated.entries.count { it.state == "DONE" }
                                     val skipped = updated.entries.count { it.state == "SKIPPED" }
                                     val errors = updated.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
