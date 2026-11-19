@@ -176,26 +176,29 @@ object GalleryCatalogStore {
         )))
     }
 
-    /** Reconcile each gallery in a mixed queue without modifying legacy queue history. */
-    @Synchronized fun recordBatchProgress(context: Context, queue: QueueStore.Snapshot): Boolean {
+    /** Batch queue outcomes are projected per gallery without losing existing labels. */
+    @Synchronized fun recordBatchTransfer(context: Context, queue: QueueStore.Snapshot): Boolean {
         val groups = queue.entries.filter { it.galleryUrl.isNotBlank() }
             .groupBy { it.galleryUrl }
         if (groups.isEmpty()) return true
-        var updated = load(context)
-        for ((source, entries) in groups) {
-            val first = entries.first()
-            val done = entries.count { it.state == "DONE" || it.state == "SKIPPED" }
-            val outcome = if (done == entries.size) "Завершено"
-                else if (entries.any { it.state == "FAILED" || it.state == "BLOCKED" })
-                    "Требует внимания" else "В очереди"
-            val candidate = CatalogGallery(source, first.galleryModel,
-                first.galleryTitle, first.galleryDate, System.currentTimeMillis(),
-                queue.target, outcome, done, entries.size,
-                source = "elitebabes", sourceId = first.gallerySourceId,
-                displayedDate = first.galleryDate)
-            updated = merge(updated, candidate)
+        var current = load(context)
+        for ((url, items) in groups) {
+            val head = items.first()
+            val completed = items.count { it.state == "DONE" || it.state == "SKIPPED" }
+            val outcome = when {
+                completed == items.size -> "Завершено"
+                items.any { it.state == "FAILED" || it.state == "BLOCKED" } -> "Частично"
+                else -> "В очереди"
+            }
+            current = merge(current, CatalogGallery(
+                url = url, model = head.galleryModel, title = head.galleryTitle,
+                date = head.galleryDate, updatedAt = System.currentTimeMillis(),
+                target = queue.target, outcome = outcome,
+                completed = completed, total = items.size,
+                source = "elitebabes", sourceId = head.gallerySourceId,
+                displayedDate = head.galleryDate))
         }
-        return write(context, updated)
+        return write(context, current)
     }
 
     /** Merge only missing backup entries and commit the new catalog synchronously. */

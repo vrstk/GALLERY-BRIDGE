@@ -132,41 +132,43 @@ class TransferService : Service() {
             context.startForegroundService(intent)
         }
 
-        /** One resumable queue, one distinct destination folder per gallery. */
-        fun beginBatch(context: Context, galleries: List<PreparedGallery>,
-                       target: String, email: String, password: String, root: String) {
+        /** Each file keeps its original gallery and folder in the durable queue. */
+        fun beginBatch(
+            context: Context, galleries: List<PreparedGallery>,
+            target: String, email: String, password: String, root: String
+        ) {
             val approved = ModelBatchQueuePlan.validate(galleries)
-            require(TransferTargets.isSupported(target)) { "Недопустимое назначение." }
+            require(TransferTargets.isSupported(target)) { "Недопустимое облако назначения." }
             if (target == TransferTargets.FOLDER) {
                 require(SafFolderAccess.inspect(context, root).ready) {
                     "Выбранная папка Android недоступна."
                 }
-            } else require(email.isNotBlank() && password.isNotBlank()) {
-                "Укажите настройки подключения Mail WebDAV."
+            } else {
+                require(email.isNotBlank() && password.isNotBlank()) {
+                    "Укажите настройки подключения Mail WebDAV."
+                }
             }
-            val previous = QueueStore.load(context)
-            require(previous == null || previous.remaining == 0) {
-                "Сначала завершите или закройте прежнюю очередь."
+            val current = QueueStore.load(context)
+            require(current == null || current.remaining == 0) {
+                "Сначала завершите или вручную закройте прежнюю очередь."
             }
             val catalog = GalleryCatalogStore.load(context)
             approved.forEach { gallery ->
-                when (GalleryTransferGuard.assess(gallery.sourceUrl, catalog, previous, false)) {
+                when (GalleryTransferGuard.assess(gallery.sourceUrl, catalog, current, false)) {
                     GalleryTransferGuard.Decision.BLOCKED ->
-                        error("Для ${gallery.title} уже есть незавершённая очередь.")
+                        error("Для ${gallery.title} есть незавершённая очередь.")
                     GalleryTransferGuard.Decision.REVIEW ->
-                        error("Повтор галереи ${gallery.title} требует отдельного подтверждения.")
+                        error("Повтор ${gallery.title} требует отдельного подтверждения. " +
+                            "Откройте публикацию отдельно для повторной передачи.")
                     else -> Unit
                 }
             }
-            previous?.let {
+            current?.let {
                 PhotoOutcomeLedger.remember(context, it)
                 HistoryStore.record(context, it, "Завершено")
             }
-            QueueStore.save(context, QueueStore.newBatchSnapshot(approved, target, root,
-                if (target == "Mail WebDAV") email.trim() else ""))
-            check(GalleryCatalogStore.recordBatchProgress(
-                context, QueueStore.load(context)!!
-            )) { "Не удалось сохранить пакет в каталоге." }
+            QueueStore.save(context, QueueStore.newBatchSnapshot(
+                approved, target, root, if (target == "Mail WebDAV") email.trim() else ""))
             context.startForegroundService(Intent(context, TransferService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password))
@@ -294,9 +296,9 @@ class TransferService : Service() {
                             )
                             QueueStore.load(applicationContext)?.let { updated ->
                                 if (updated.id == queue.id) {
-                                    check(GalleryCatalogStore.recordBatchProgress(
-                                        applicationContext, updated
-                                    )) { "Не удалось сохранить прогресс каталога." }
+                                    check(GalleryCatalogStore.recordBatchTransfer(applicationContext, updated)) {
+                                        "Не удалось сохранить статус галерей; очередь сохранена."
+                                    }
                                     val successes = updated.entries.count { it.state == "DONE" }
                                     val skipped = updated.entries.count { it.state == "SKIPPED" }
                                     val errors = updated.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
@@ -323,6 +325,9 @@ class TransferService : Service() {
                 if (mySession == session && !cancelRequested) {
                     save(false, summary, details)
                     QueueStore.load(applicationContext)?.let { updated ->
+                        check(GalleryCatalogStore.recordBatchTransfer(applicationContext, updated)) {
+                            "Не удалось сохранить статусы галерей."
+                        }
                         HistoryStore.record(applicationContext, updated,
                             if (updated.remaining == 0) "Завершено" else "Частично")
                     }

@@ -525,6 +525,9 @@ class MainActivity : ComponentActivity() {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
                             scanning = true
                             working = true
+                            if (checkpoint.pages.isNotEmpty()) {
+                                modelListing = checkpoint.result()
+                            }
                             val n = info.progress.getInt(ModelListingScanWorker.LOADED,
                                 checkpoint.pages.size)
                             val total = info.progress.getInt(ModelListingScanWorker.TOTAL, 0)
@@ -561,7 +564,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopSearch() {
-        if (ModelListingSources.accepts(url) && scanning && scanJob == null) {
+        if (scanJob?.isActive == true) {
+            scanJob?.cancel()
+            status = "Подготовка отменена. Очередь сохранена."
+        } else if (ModelListingSources.accepts(url) && scanning) {
             WorkManager.getInstance(applicationContext)
                 .cancelUniqueWork(ModelListingScanWorker.UNIQUE)
             status = "Поиск остановлен. Ранее найденные публикации сохраняются."
@@ -815,12 +821,16 @@ class MainActivity : ComponentActivity() {
     /** Explicit import only; existing labels, history, queue and credentials remain intact. */
     private fun saveListingSelection() {
         val discovered = modelListing ?: return
-        val chosen = discovered.photos.filter { it.url in modelListingSelected }.take(100)
+        val chosen = discovered.allCards.filter { it.url in modelListingSelected }.take(100)
         val current = GalleryCatalogStore.load(this)
         val additions = chosen.filterNot { GalleryCatalogStore.contains(current, it.url) }
             .map { pub ->
                 CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
-                    pub.title, pub.date, System.currentTimeMillis())
+                    pub.title, pub.displayedDate, System.currentTimeMillis(),
+                    source = "elitebabes", sourceId = pub.sourceId,
+                    originalCaption = pub.caption, studio = pub.studio,
+                    displayedDate = pub.displayedDate, type = pub.type,
+                    previewUrl = pub.previewUrl)
             }
         val plan = try {
             GalleryCatalogStore.importMissing(this, additions)
@@ -834,50 +844,63 @@ class MainActivity : ComponentActivity() {
             "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
     }
 
-    private fun startModelBatch() {
+    private fun queueSelectedModelGalleries() {
         val listing = modelListing ?: return
-        if (working || transferRunning) {
-            status = "Дождитесь окончания поиска или текущей передачи."
-            return
-        }
         val chosen = listing.photos.filter { it.url in modelListingSelected }
-        if (chosen.isEmpty()) {
-            status = "Выберите хотя бы одну фотогалерею."
+        if (working || transferRunning || chosen.isEmpty()) return
+        if ((QueueStore.load(this)?.remaining ?: 0) > 0) {
+            status = "Сначала завершите или закройте сохранённую очередь."
             return
         }
-        if (QueueStore.load(this)?.remaining?.let { it > 0 } == true) {
-            status = "Сначала завершите прежнюю очередь. Новая её не заменит."
-            return
-        }
-        val destination = if (target == "Папка Android") treeUri else mailRoot
-        if (target == "Папка Android" && !SafFolderAccess.inspect(this, treeUri).ready) {
-            status = "Папка Android недоступна. Выберите её в настройках."
-            return
-        }
-        if (target == "Mail WebDAV" && (email.isBlank() || password.isBlank())) {
-            status = "Настройте Mail WebDAV перед пакетной передачей."
+        if (target == TransferTargets.FOLDER) {
+            refreshFolderAccess()
+            if (!folderPermissionReady) {
+                status = "Выберите доступную папку Android в настройках хранилища."
+                return
+            }
+        } else if (target == TransferTargets.MAIL && (email.isBlank() || password.isBlank())) {
+            status = "Настройте Mail WebDAV перед созданием очереди."
             return
         }
         working = true
         scanning = true
-        status = "Проверяем выбранные фотогалереи перед созданием очереди."
         scanJob = scope.launch {
             try {
-                val groups = Services.prepareModelPhotos(chosen) { index, total, galleryTitle ->
-                    status = "Проверяем фотогалерею $index из $total: $galleryTitle"
+                val prepared = mutableListOf<PreparedGallery>()
+                for ((index, pub) in chosen.withIndex()) {
+                    ensureActive()
+                    status = "Открываем фотогалерею ${index + 1} из ${chosen.size}: " +
+                        pub.title.ifBlank { pub.sourceId }
+                    val scan = Services.scan(pub.url)
+                    val photos = scan.media.filter { it.kind == Kind.PHOTO }
+                    require(photos.isNotEmpty()) {
+                        "Галерея ${pub.sourceId.ifBlank { pub.url }}: реальные фотографии не найдены."
+                    }
+                    prepared += PreparedGallery(pub.url, pub.sourceId, pub.model,
+                        pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)
                 }
-                ensureActive()
-                TransferService.beginBatch(this@MainActivity, groups,
-                    target, email, password, destination)
+                val root = if (target == TransferTargets.FOLDER) treeUri else mailRoot
+                ModelBatchQueuePlan.validate(prepared)
+                TransferService.beginBatch(
+                    this@MainActivity, prepared, target, email, password, root)
+                GalleryCatalogStore.importMissing(this@MainActivity,
+                    chosen.map { pub -> CatalogGallery(
+                        pub.url, pub.model, pub.title, pub.displayedDate,
+                        System.currentTimeMillis(), source = "elitebabes",
+                        sourceId = pub.sourceId, originalCaption = pub.caption,
+                        studio = pub.studio, displayedDate = pub.displayedDate,
+                        type = pub.type, previewUrl = pub.previewUrl) })
+                catalog = GalleryCatalogStore.load(this@MainActivity)
                 savedQueue = QueueStore.load(this@MainActivity)
                 transferRunning = true
-                modelListingSelected = emptySet()
                 screen = GalleryPage.QUEUE
-                transferStatus = "Пакетная передача запущена: ${groups.size} галерей."
+                transferStatus = "Создана очередь: ${prepared.size} галерей, " +
+                    "${prepared.sumOf { it.media.size }} фотографий."
             } catch (e: CancellationException) {
-                status = "Подготовка остановлена. Очередь не изменена."
+                status = "Подготовка остановлена. Существующая очередь не изменена."
+                throw e
             } catch (e: Exception) {
-                status = "Очередь не создана: ${e.message ?: "ошибка"}"
+                status = "Очередь не создана: ${e.message ?: "ошибка источника"}"
             } finally {
                 working = false
                 scanning = false
@@ -890,7 +913,7 @@ class MainActivity : ComponentActivity() {
         setGalleryUrl(pub.url)
         if (model.isBlank()) model = pub.model
         if (title.isBlank()) title = pub.title
-        if (date.isBlank()) date = pub.date
+        // Displayed model-card date is not verified publication metadata.
         screen = GalleryPage.HOME
     }
 
@@ -1456,22 +1479,22 @@ class MainActivity : ComponentActivity() {
             ModelListingReview(
                 result = listing, existing = catalog,
                 selected = modelListingSelected, message = status,
-                busy = scanning, destination = target,
-                onDestination = { choice -> target = choice },
-                onSelectAll = {
-                    modelListingSelected = listing.photos.map { it.url }.take(100).toSet()
-                },
-                onClear = { modelListingSelected = emptySet() },
-                onQueue = ::startModelBatch,
-                onRefresh = ::scan,
-                onStop = ::stopSearch,
+                busy = working && !scanning, scanning = scanning,
                 onSelect = { link, checked ->
                     modelListingSelected = if (checked) {
-                        if (modelListingSelected.size < 100) modelListingSelected + link
-                        else modelListingSelected
+                        if (modelListingSelected.size < ModelBatchQueuePlan.MAX_GALLERIES)
+                            modelListingSelected + link else modelListingSelected
                     } else modelListingSelected - link
                 },
+                onSelectAllPhotos = {
+                    modelListingSelected = listing.photos.take(ModelBatchQueuePlan.MAX_GALLERIES)
+                        .mapTo(linkedSetOf()) { it.url }
+                },
+                onClear = { modelListingSelected = emptySet() },
                 onSave = ::saveListingSelection,
+                onQueueSelected = ::queueSelectedModelGalleries,
+                onStop = ::stopSearch,
+                onContinue = ::scan,
                 onOpen = ::openListingPublication,
                 onBack = { screen = GalleryPage.HOME }
             )

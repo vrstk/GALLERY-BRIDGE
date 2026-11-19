@@ -163,38 +163,6 @@ object Services {
     }
 
     /**
-     * Read every chosen PHOTO page before a queue is ever replaced or started.
-     * A broken gallery aborts the batch with its original queue intact.
-     */
-    suspend fun prepareModelPhotos(
-        publications: List<ModelListingSources.Publication>,
-        onProgress: suspend (Int, Int, String) -> Unit
-    ): List<PreparedGallery> = withContext(Dispatchers.IO) {
-        require(publications.isNotEmpty() &&
-            publications.size <= ModelBatchQueuePlan.MAX_GALLERIES &&
-            publications.all { it.type == "photo" }) {
-            "Выберите от 1 до 100 фотогалерей."
-        }
-        val groups = mutableListOf<PreparedGallery>()
-        for ((index, pub) in publications.withIndex()) {
-            coroutineContext.ensureActive()
-            require(ModelListingSources.publicationUrl(pub.url) != null) {
-                "Недопустимая ссылка фотогалереи."
-            }
-            onProgress(index + 1, publications.size, pub.title)
-            val result = scan(pub.url)
-            val photos = result.media.filter { it.kind == Kind.PHOTO }
-            require(photos.isNotEmpty()) {
-                "Фотографии не подтверждены для галереи «${pub.title.ifBlank { pub.sourceId }}»."
-            }
-            // Keep displayedDate distinct from publishedDate. Never guess originals.
-            groups.add(PreparedGallery(pub.url, pub.sourceId, pub.model,
-                pub.title, pub.displayedDate, photos))
-        }
-        ModelBatchQueuePlan.validate(groups)
-    }
-
-    /**
      * Bounded discovery of server-rendered model publication cards.
      * The website's separate infinite-scroll endpoint is not documented by
      * the HTML snapshots: never claim that the first visible 20 are complete.
@@ -457,7 +425,8 @@ object Services {
         password: String,
         root: String,
         progress: suspend (String) -> Unit,
-        onItemResult: suspend (Int, Media, String, String, String) -> Unit = { _, _, _, _, _ -> }
+        onItemResult: suspend (Int, Media, String, String, String) -> Unit = { _, _, _, _, _ -> },
+        foldersPerFile: List<List<String>>? = null
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -466,8 +435,8 @@ object Services {
         var consecutiveNetworkFailures = 0
         var stoppedReason: String? = null
         val failures = mutableListOf<String>()
-        val readyMailFolders = mutableSetOf<Kind>()
-        val documentFoldersByKind = mutableMapOf<Kind, Uri>()
+        val readyMailFolders = mutableSetOf<List<String>>()
+        val documentFoldersByKind = mutableMapOf<List<String>, Uri>()
         val mailAuth = if (target == "Mail WebDAV") Credentials.basic(username, password) else ""
         require(TransferTargets.isSupported(target)) { "Устаревший или неизвестный способ передачи" }
         // A granted tree URI can be revoked while the app is in the background.
@@ -478,6 +447,7 @@ object Services {
             }
         }
 
+        require(foldersPerFile == null || foldersPerFile.size == media.size)
         for ((index, item) in media.withIndex()) {
             coroutineContext.ensureActive()
             var destinationWriteStarted = false
@@ -485,13 +455,14 @@ object Services {
             attempted++
             progress("${index + 1}/${media.size}: ${item.name}")
             try {
-                val folders = Paths.folders(model, date, title, item.kind)
+                val folders = foldersPerFile?.get(index)
+                    ?: Paths.folders(model, date, title, item.kind)
                 if (target == "Mail WebDAV") {
                     val cloudPath = Paths.splitRoot(root) + folders
                     // После успеха не проверяем одни и те же папки перед каждым файлом.
-                    if (item.kind !in readyMailFolders) {
+                    if (folders !in readyMailFolders) {
                         webdavFolders(username, password, cloudPath)
-                        readyMailFolders += item.kind
+                        readyMailFolders += folders
                     }
                     val destination = mailUrl(cloudPath + Paths.clean(item.name))
                     // Пропускаем ранее сохранённый файл до повторного скачивания.
@@ -555,7 +526,7 @@ object Services {
                         local.delete()
                     }
                 } else if (target == "Папка Android") {
-                    val destFolder = documentFoldersByKind.getOrPut(item.kind) {
+                    val destFolder = documentFoldersByKind.getOrPut(folders) {
                         SafDestination.resolveFolder(context, root, folders)
                     }
                     // Check before source download; previously every resume fetched
