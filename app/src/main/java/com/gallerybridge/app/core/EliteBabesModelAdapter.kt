@@ -99,7 +99,9 @@ internal object EliteBabesModelAdapter {
             val dateText = figure.selectFirst(".img-label > span")?.text()?.trim().orEmpty()
             val date = runCatching { LocalDate.parse(dateText).toString() }.getOrDefault("")
             val sourceId = sequenceOf(figure.attr("data-postid"),
-                figure.parent()?.attr("data-postid").orEmpty())
+                figure.parent()?.attr("data-postid").orEmpty(),
+                figure.selectFirst(".img-overlay .simplefavorite-button[data-postid]")
+                    ?.attr("data-postid").orEmpty())
                 .firstOrNull { it.matches(Regex("[0-9]{1,12}")) }.orEmpty()
             val video = figure.selectFirst("i.icon-play, .icon-play, video, [data-av-bridged]") != null ||
                 figure.parent()?.classNames()?.any { it.contains("video", ignoreCase = true) } == true
@@ -154,25 +156,32 @@ internal object EliteBabesModelAdapter {
             "API вернул пустой ответ или заглушку Site Unavailable."
         }
         val trimmed = raw.trim()
-        if (trimmed == "[]") return ApiBatch(emptyList(), true)
-        var html = raw
-        if (trimmed.startsWith("{")) {
-            val json = JSONObject(trimmed)
-            val field = listOf("html", "content", "data", "items", "posts")
-                .firstOrNull(json::has) ?: error("Неизвестный формат API модели.")
-            val value = json.opt(field)
-            html = when (value) {
-                is String -> value
-                is JSONArray -> (0 until value.length()).joinToString("") { index ->
-                    when (val element = value.opt(index)) {
-                        is String -> element
-                        is JSONObject -> element.optString("html")
-                            .ifBlank { element.optString("content") }
-                        else -> ""
-                    }
+        fun htmlFromItems(items: JSONArray): String {
+            return (0 until items.length()).joinToString("") { index ->
+                val item = items.get(index)
+                val fragment = when (item) {
+                    is String -> item
+                    is JSONObject -> sequenceOf(item.opt("html"), item.opt("content"))
+                        .filterIsInstance<String>().firstOrNull { it.isNotBlank() }.orEmpty()
+                    else -> ""
                 }
-                else -> error("Неизвестная структура карточек API модели.")
+                require(fragment.isNotBlank()) { "Неизвестная структура элемента API модели." }
+                fragment
             }
+        }
+        val html = when {
+            trimmed.startsWith("[") -> htmlFromItems(JSONArray(trimmed))
+            trimmed.startsWith("{") -> {
+                val json = JSONObject(trimmed)
+                val field = listOf("html", "content", "data", "items", "posts")
+                    .firstOrNull(json::has) ?: error("Неизвестный формат API модели.")
+                when (val value = json.opt(field)) {
+                    is String -> value
+                    is JSONArray -> htmlFromItems(value)
+                    else -> error("Неизвестная структура карточек API модели.")
+                }
+            }
+            else -> raw
         }
         if (html.isBlank()) return ApiBatch(emptyList(), true)
         require(!isUnavailable(html)) { "Сайт вернул Site Unavailable вместо карточек." }

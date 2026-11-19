@@ -64,6 +64,22 @@ class EliteBabesModelAdapterTest {
         }
     }
 
+    @Test fun gridFragmentsUseTheIdFromTheCardControl() {
+        val fragment = """<li><figure><div class="img-overlay"><p>
+            <a href="/publication/">First at Femjoy</a></p><ul><li>
+            <a class="simplefavorite-button" data-postid="67320"></a>
+            </li></ul></div></figure></li>"""
+        val items = JSONArray().put(JSONObject().put("html", fragment))
+        val batch = EliteBabesModelAdapter.parseApiResponse(items.toString(), api, "Alisa")
+        assertEquals("67320", batch.cards.single().sourceId)
+        assertFalse(batch.end)
+        assertTrue(EliteBabesModelAdapter.parseApiResponse("[ ]", api, "Alisa").end)
+        items.put(JSONObject().put("unexpected", 42))
+        assertThrows(IllegalArgumentException::class.java) {
+            EliteBabesModelAdapter.parseApiResponse(JSONObject().put("items", items).toString(), api, "Alisa")
+        }
+    }
+
     @Test fun diagnosticNinetyPhotosNineVideosAndIdempotentCatalogPlan() {
         val galleries = JSONArray()
         repeat(99) { index ->
