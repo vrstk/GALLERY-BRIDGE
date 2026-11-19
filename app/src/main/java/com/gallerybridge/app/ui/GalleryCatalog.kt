@@ -80,7 +80,7 @@ internal fun GalleryCatalog(
     LazyColumn(
         modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         item(key = "search") {
             OutlinedTextField(
@@ -225,8 +225,8 @@ internal fun GalleryCatalog(
                 ) {
                     val colors = MaterialTheme.colorScheme
                     Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -248,7 +248,7 @@ internal fun GalleryCatalog(
                             // The catalog stores a publication URL, not a verified photo.
                             // Use a clearly decorative placeholder; do not fetch or invent a cover.
                             Box(
-                                modifier = Modifier.size(width = 58.dp, height = 68.dp)
+                                modifier = Modifier.size(width = 52.dp, height = 60.dp)
                                     .background(
                                         Brush.linearGradient(
                                             listOf(colors.primaryContainer, colors.surfaceContainerHigh)
@@ -260,12 +260,12 @@ internal fun GalleryCatalog(
                                 Image(
                                     painter = painterResource(R.drawable.ic_gallery_bridge),
                                     contentDescription = null,
-                                    modifier = Modifier.size(34.dp)
+                                    modifier = Modifier.size(30.dp)
                                 )
                             }
                             Column(
                                 modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 Text(
                                     entry.model.ifBlank { "Без имени" },
@@ -289,27 +289,33 @@ internal fun GalleryCatalog(
                                 }
                             }
                         }
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = if (progress.needsAttention) colors.errorContainer
-                                else colors.surfaceContainerHigh
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                progress.title,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (progress.needsAttention) colors.onErrorContainer
-                                    else colors.onSurface
-                            )
-                        }
-                        if (progress.kind != GalleryCatalogProgress.Kind.SAVED) {
-                            Text(
-                                progress.detail,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = colors.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = if (progress.needsAttention) colors.errorContainer
+                                    else colors.surfaceContainerHigh
+                            ) {
+                                Text(
+                                    progress.title,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (progress.needsAttention) colors.onErrorContainer
+                                        else colors.onSurface
+                                )
+                            }
+                            if (progress.kind != GalleryCatalogProgress.Kind.SAVED) {
+                                Text(
+                                    progress.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                    color = colors.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),

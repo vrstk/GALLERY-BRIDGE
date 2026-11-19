@@ -1975,55 +1975,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        val done = queue.entries.count { it.state == "DONE" }
-        val skipped = queue.entries.count { it.state == "SKIPPED" }
-        val failed = queue.entries.count { it.state == "FAILED" || it.state == "BLOCKED" }
-        val completed = done + skipped
-        val total = queue.entries.size
-        GalleryCard {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(queue.model, style = MaterialTheme.typography.titleMedium)
-                Text(queue.title, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(queue.target, modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Готово: $completed из $total", style = MaterialTheme.typography.titleSmall)
-                }
-                if (total > 0) {
-                    // Custom track avoids Material3's stop-dot at the far end,
-                    // which looks like full completion when progress is zero.
-                    Box(
-                        Modifier.fillMaxWidth().height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                    ) {
-                        Box(
-                            Modifier.fillMaxWidth((completed.toFloat() / total).coerceIn(0f, 1f))
-                                .fillMaxHeight()
-                                .background(MaterialTheme.colorScheme.secondary)
-                        )
-                    }
-                }
-                Text(
-                    (if (queue.target == "Папка Android") "Передано" else "Загружено") +
-                        ": $done · Уже были: $skipped · Ошибки: $failed · Осталось: ${queue.remaining}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (queue.blocked > 0) {
-                    Text("Требуют ручной проверки: ${queue.blocked}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error)
-                }
-                if (queue.target == "Папка Android" && done > 0) {
-                    Text("Синхронизация зависит от выбранного провайдера папки.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+        GalleryQueueSummary(queue)
         if (transferRunning) {
             Text("Передача выполняется в фоне")
             TextButton(onClick = { TransferService.cancel(this@MainActivity); transferStatus = "Остановка запрошена" }) { Text("Остановить передачу") }
@@ -2127,34 +2079,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         history.forEach { record ->
-            GalleryCard {
-                Column(
-                    Modifier.fillMaxWidth().padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(record.model, modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(SimpleDateFormat("dd.MM.yy HH:mm", Locale.getDefault())
-                            .format(Date(record.updatedAt)),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(record.title, maxLines = 2,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("${record.target} · ${record.outcome}",
-                        style = MaterialTheme.typography.bodySmall)
-                    Text("Готово: ${record.uploaded + record.skipped} из ${record.total}" +
-                        " · Осталось: ${record.remaining}",
-                        style = MaterialTheme.typography.labelMedium)
-                    Text("Загружено: ${record.uploaded} · Уже были: ${record.skipped}" +
-                        " · Ошибки: ${record.failed}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            GalleryHistoryCard(record)
         }
     }
 
