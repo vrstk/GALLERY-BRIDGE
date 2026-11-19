@@ -52,6 +52,7 @@ import com.gallerybridge.app.core.*
 import com.gallerybridge.app.network.Services
 import com.gallerybridge.app.network.SafFolderAccess
 import com.gallerybridge.app.network.IntegrityAudit
+import com.gallerybridge.app.network.ReadbackAuditPolicy
 import com.gallerybridge.app.network.ImageQualityProbe
 import com.gallerybridge.app.transfer.TransferService
 import com.gallerybridge.app.transfer.QueueStore
@@ -1060,13 +1061,24 @@ class MainActivity : ComponentActivity() {
         val queue = QueueStore.load(this) ?: run {
             auditReport = "Очередь не найдена"; return
         }
-        if (auditing || transferRunning || queue.remaining != 0) return
+        if (auditing || transferRunning || queue.remaining != 0 ||
+            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false)) return
+        if (queue.target == "Mail WebDAV" &&
+            !ReadbackAuditPolicy.authorizedAccount(queue, email, password)) {
+            auditReport = "Укажите пароль приложения для исходного аккаунта Mail."
+            return
+        }
+        val auditEmail = email.trim()
+        val auditPassword = password
         auditing = true
         auditReport = ""
         auditProgress = "Запуск проверки..."
         scope.launch {
             try {
-                val result = IntegrityAudit.check(this@MainActivity, queue) { i, n, name ->
+                val result = IntegrityAudit.check(
+                    this@MainActivity, queue, auditEmail, auditPassword
+                ) { i, n, name ->
                     withContext(Dispatchers.Main) {
                         auditProgress = "Проверка $i из $n: $name"
                     }
@@ -2042,14 +2054,30 @@ class MainActivity : ComponentActivity() {
                 )
             }
         } else {
-            if (queue.target == "Папка Android") {
+            if (queue.target == "Папка Android" || queue.target == "Mail WebDAV") {
+                if (queue.target == "Mail WebDAV") {
+                    OutlinedTextField(email, ::changeMailAccount,
+                        label={ Text("Аккаунт Mail для проверки") },
+                        modifier=Modifier.fillMaxWidth())
+                    if (password.isBlank()) {
+                        OutlinedTextField(password, { password=it },
+                            label={ Text("Пароль приложения Mail") },
+                            visualTransformation=PasswordVisualTransformation(),
+                            modifier=Modifier.fillMaxWidth())
+                    }
+                }
                 OutlinedButton(
                     onClick=::auditQueue,
                     enabled=!auditing,
                     modifier=Modifier.fillMaxWidth()
-                ) { Text(if (auditing) "Проверка выполняется..." else "Проверить SHA-256 и размеры") }
+                ) { Text(if (auditing) "Проверка выполняется..." else "Проверить SHA-256 сохранённых файлов") }
                 Text(
-                    "Сверка повторно скачивает исходники и читает файлы из выбранной папки. До 32 МиБ на файл.",
+                    if (queue.target == "Папка Android")
+                        "Сверяются сохранённые SHA-256 и байты Android-провайдера. " +
+                            "Это не подтверждает облачную синхронизацию. Лимит: 32 МиБ на файл."
+                    else
+                        "Только чтение Mail WebDAV: проверяются сохранённые SHA-256 и реальные байты. " +
+                            "Файлы и очередь не изменяются. Лимит: 32 МиБ на файл.",
                     style=MaterialTheme.typography.bodySmall
                 )
                 if (auditProgress.isNotBlank()) Text(auditProgress, style=MaterialTheme.typography.bodySmall)

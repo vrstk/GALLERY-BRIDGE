@@ -18,6 +18,34 @@ import org.junit.Test
 class QueueReviewTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun completedMailQueueOffersReadOnlySha256Audit() {
+        val id = 352038L
+        val file = Media("https://example.com/verified.jpg", "verified.jpg", Kind.PHOTO, "test")
+        compose.runOnIdle {
+            QueueStore.save(compose.activity, QueueStore.Snapshot(
+                id = id, model = "Тест", title = "Проверка Mail", date = "",
+                target = "Mail WebDAV", root = "Models", account = "audit@example.com",
+                entries = listOf(QueueStore.Entry(file, "DONE", contentSha256 = "a".repeat(64)))
+            ))
+        }
+        try {
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithTag("nav-downloads").performClick()
+            compose.onNodeWithContentDescription("Открыть очередь").performClick()
+            compose.onNodeWithText("Проверить SHA-256 сохранённых файлов")
+                .performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(
+                "Только чтение Mail WebDAV: проверяются сохранённые SHA-256 и реальные байты. " +
+                    "Файлы и очередь не изменяются. Лимит: 32 МиБ на файл."
+            ).assertIsDisplayed()
+            compose.runOnIdle {
+                assertEquals("DONE", QueueStore.load(compose.activity)!!.entries.single().state)
+            }
+        } finally {
+            compose.runOnIdle { QueueStore.clearIfId(compose.activity, id) }
+        }
+    }
+
     @Test fun failedPhotoRetryNeedsConfirmationAndCancellationKeepsQueue() {
         val id = 352036L
         val failed = Media("https://example.com/retry-a.jpg", "retry-a.jpg", Kind.PHOTO, "test")

@@ -10,8 +10,8 @@ android {
         applicationId = "com.gallerybridge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 67
-        versionName = "0.67.0"
+        versionCode = 68
+        versionName = "0.68.0"
         manifestPlaceholders["appLabel"] = "Gallery Bridge"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -42,7 +42,7 @@ android {
             isMinifyEnabled = false
             if (providers.gradleProperty("galleryBridgePreview").orNull == "true") {
                 applicationIdSuffix = ".preview.signed"
-                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.67"
+                manifestPlaceholders["appLabel"] = "Gallery Bridge Signed Preview 0.68"
                 if (previewKeyFile != null) {
                     signingConfig = signingConfigs.getByName("previewPersistent")
                 }
