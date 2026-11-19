@@ -1607,11 +1607,12 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true)
         OutlinedTextField(title, { title = it }, label = { Text("Название публикации") },
             modifier = Modifier.fillMaxWidth(), enabled = enabled)
-        OutlinedTextField(date, { date = it }, label = { Text("Дата ГГГГ-ММ-ДД") },
-            modifier = Modifier.fillMaxWidth(), enabled = enabled, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-            isError = !GalleryKeys.validDate(date.trim()),
-            supportingText = if (GalleryKeys.validDate(date.trim())) null else { { Text("Укажите реальную дату") } })
+        GalleryPublicationDateField(
+            value = date,
+            onValueChange = { date = it },
+            enabled = enabled,
+            label = "Дата ГГГГ-ММ-ДД"
+        )
         if (suggestedPublicationDate.isNotBlank() && date.isBlank()) {
             Text("Предполагаемая дата: $suggestedPublicationDate",
                 style = MaterialTheme.typography.bodyMedium)

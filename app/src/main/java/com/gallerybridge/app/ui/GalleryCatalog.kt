@@ -411,11 +411,11 @@ internal fun GalleryCatalog(
                     OutlinedTextField(editTitle, { editTitle = it; saveError = "" },
                         label = { Text("Название галереи") }, modifier = Modifier.fillMaxWidth(),
                         singleLine = true)
-                    OutlinedTextField(editDate, { editDate = it; saveError = "" },
-                        label = { Text("Дата (ГГГГ-ММ-ДД)") },
-                        modifier = Modifier.fillMaxWidth(), singleLine = true,
-                        isError = invalidDate,
-                        supportingText = { Text("Необязательно") })
+                    GalleryPublicationDateField(
+                        value = editDate,
+                        onValueChange = { editDate = it; saveError = "" },
+                        label = "Дата (ГГГГ-ММ-ДД)"
+                    )
                     if (invalidDate) Text("Укажите реальную дату в формате ГГГГ-ММ-ДД.",
                         color = MaterialTheme.colorScheme.error)
                     if (saveError.isNotEmpty()) Text(saveError,
