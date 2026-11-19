@@ -83,7 +83,7 @@ object Services {
             if (!response.isSuccessful) error("Сайт вернул HTTP ${response.code}")
             val type = response.header("Content-Type").orEmpty()
             if (type.startsWith("image/") || type.startsWith("video/"))
-                return@use Scan("Прямой файл", "", listOf(Media(response.request.url.toString(), Paths.clean(response.request.url.pathSegments.last()), if (type.startsWith("video/")) Kind.VIDEO else Kind.PHOTO, "Прямой файл")))
+                return@scanPage Scan("Прямой файл", "", listOf(Media(response.request.url.toString(), Paths.clean(response.request.url.pathSegments.last()), if (type.startsWith("video/")) Kind.VIDEO else Kind.PHOTO, "Прямой файл")))
             require(type.contains("html") || type.isBlank()) { "Не HTML-страница" }
             val html = response.body?.string().orEmpty().take(3_000_000)
             val doc = Jsoup.parse(html, response.request.url.toString())
@@ -94,7 +94,7 @@ object Services {
                 val videoTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
                     ?.ifBlank { doc.title() } ?: doc.title()
                 val videoMetadata = PageMetadata.extract(doc, response.request.url.toString(), videoTitle)
-                return@use Scan(videoTitle.ifBlank { "Без названия" },
+                return@scanPage Scan(videoTitle.ifBlank { "Без названия" },
                     videoMetadata.publishedDate, primary,
                     videoMetadata.model, videoMetadata.modelSource,
                     videoMetadata.dateSource,
@@ -140,7 +140,7 @@ object Services {
             if (gallery != null) {
                 val title = PageMetadata.publicationTitle(doc)
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
-                return@use Scan(
+                return@scanPage Scan(
                     title.ifBlank { "Без названия" },
                     metadata.publishedDate,
                     gallery,
@@ -153,7 +153,7 @@ object Services {
             if (url.host in setOf("elitebabes.com", "www.elitebabes.com")) {
                 val title = PageMetadata.publicationTitle(doc)
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
-                return@use Scan(title.ifBlank { "Без названия" },
+                return@scanPage Scan(title.ifBlank { "Без названия" },
                     metadata.publishedDate, emptyList(), metadata.model,
                     metadata.modelSource, metadata.dateSource)
             }
