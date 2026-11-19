@@ -111,6 +111,15 @@ object Services {
                     metadata.suggestedDate, metadata.suggestedDateSource
                 )
             }
+            // Elite Babes catalog thumbnails (_masonry_400/_600) are not originals.
+            // Without a verified lightbox group, refuse to guess image URLs.
+            if (url.host in setOf("elitebabes.com", "www.elitebabes.com")) {
+                val title = PageMetadata.publicationTitle(doc)
+                val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
+                return@use Scan(title.ifBlank { "Без названия" },
+                    metadata.publishedDate, emptyList(), metadata.model,
+                    metadata.modelSource, metadata.dateSource)
+            }
             val urls = linkedMapOf<String, Media>()
             fun add(rawUrl: String, source: String) {
                 val parsed = rawUrl.toHttpUrlOrNull() ?: return
@@ -243,7 +252,22 @@ object Services {
                             mime.contains("json") || mime.contains("text/plain")) {
                             "Неподдерживаемый тип ответа API."
                         }
-                        val body = r.body?.string().orEmpty()
+                        val payload = ByteArrayOutputStream()
+                        val input = r.body?.byteStream() ?: error("Пустое тело API.")
+                        input.use { stream ->
+                            val block = ByteArray(8192)
+                            while (true) {
+                                coroutineContext.ensureActive()
+                                val n = stream.read(block)
+                                if (n < 0) break
+                                if (n == 0) continue
+                                require(payload.size() + n <= 2_000_000) {
+                                    "Порция API превышает 2 МБ."
+                                }
+                                payload.write(block, 0, n)
+                            }
+                        }
+                        val body = payload.toString(Charsets.UTF_8.name())
                         val batch = EliteBabesModelAdapter.parseApiResponse(body, apiPage, first.model)
                         if (batch.end) {
                             complete = true

@@ -149,7 +149,11 @@ internal object ModelListingCheckpointStore {
 
     @Synchronized fun begin(context: Context, id: String, source: String) {
         require(ModelListingSources.address(source) != null) { "Неподдерживаемая ссылка модели." }
-        write(context, Checkpoint(id, source))
+        val previous = read(context)?.takeIf {
+            it.source == source && (!it.finished || it.capped || it.errors.isNotEmpty())
+        }
+        // A new worker takes ownership of the saved pages; stale jobs cannot write.
+        write(context, Checkpoint(id, source, pages = previous?.pages.orEmpty()))
     }
 
     @Synchronized fun add(context: Context, id: String, page: ModelListingSources.Page) {

@@ -176,7 +176,11 @@ internal object EliteBabesModelAdapter {
         }
         if (html.isBlank()) return ApiBatch(emptyList(), true)
         require(!isUnavailable(html)) { "Сайт вернул Site Unavailable вместо карточек." }
-        val document = Jsoup.parse(html, sourceUrl)
+        // gridapi may return standalone <li> fragments without the surrounding UL.
+        val markup = if (html.trimStart().startsWith("<li", ignoreCase = true))
+            "<ul class=\"list-gallery\">" + html + "</ul>"
+        else html
+        val document = Jsoup.parse(markup, sourceUrl)
         val cards = parseCards(document, model)
         if (cards.isNotEmpty()) return ApiBatch(cards, false)
         if (document.selectFirst(".list-gallery:not(.static)") != null &&
