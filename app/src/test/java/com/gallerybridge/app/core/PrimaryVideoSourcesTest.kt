@@ -38,6 +38,21 @@ class PrimaryVideoSourcesTest {
         assertEquals(page, media.first().referrer)
     }
 
+    @Test fun posterIsJpgAndPreservesExactQuery() {
+        val video = "<figure class='stage media-player'><video id='thisPlayer' " +
+            "poster='https://cdn-media.xerotica.com/poster/a.jpg?token=example'>" +
+            "<source src='https://cdn-media.xerotica.com/videos/a.mp4?ri=2000k&amp;rs=400k'>" +
+            "</video></figure>"
+        val doc = Jsoup.parse(video, page)
+        assertEquals("https://cdn-media.xerotica.com/poster/a.jpg?token=example",
+            PrimaryVideoSources.posterUrl(doc, page))
+        assertEquals("https://cdn-media.xerotica.com/videos/a.mp4?ri=2000k&rs=400k",
+            PrimaryVideoSources.extract(doc, page).single().url)
+        val invalid = Jsoup.parse(video.replace("https://cdn-media.xerotica.com/poster/a.jpg",
+            "http://cdn-media.xerotica.com/poster/a.jpg"), page)
+        assertNull(PrimaryVideoSources.posterUrl(invalid, page))
+    }
+
     @Test fun emptyPlayerDoesNotGuessUrls() {
         val doc = Jsoup.parse("<html><main><video id='thisPlayer'></video></main></html>", page)
         assertTrue(PrimaryVideoSources.isVideoPage(doc, page))

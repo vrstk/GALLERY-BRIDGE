@@ -15,7 +15,7 @@ import java.time.LocalDate
 internal object EliteBabesModelAdapter {
     private const val SOURCE = "elitebabes"
     private val apiPattern = Regex(
-        """(?:(?:https?:)?//(?:www\.)?elitebabes\.com)?/gridapi/\?content=model(?:&|&amp;)nr=[0-9]{1,10}(?:&|&amp;)sort=oldest""",
+        """(?:(?:https?:)?//(?:www\.)?elitebabes\.com)?/gridapi/\?content=model(?:&|&amp;)nr=[0-9]{1,10}(?:&|&amp;)sort=[a-z][a-z0-9-]{0,30}""",
         RegexOption.IGNORE_CASE
     )
     private val unavailable = Regex(
@@ -48,7 +48,7 @@ internal object EliteBabesModelAdapter {
             url.queryParameterNames != setOf("content", "nr", "sort") ||
             url.queryParameter("content") != "model" ||
             url.queryParameter("nr")?.matches(Regex("[0-9]{1,10}")) != true ||
-            url.queryParameter("sort") != "oldest") return null
+            url.queryParameter("sort")?.matches(Regex("[a-z][a-z0-9-]{0,30}")) != true) return null
         return url.toString()
     }
 

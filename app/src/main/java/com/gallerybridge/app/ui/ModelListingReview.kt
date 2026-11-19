@@ -43,12 +43,12 @@ internal fun ModelListingReview(
         verticalArrangement = Arrangement.spacedBy(9.dp)
     ) {
         Text("Галереи модели", style = MaterialTheme.typography.titleLarge)
-        Text("Собрано: \${result.allCards.size} публикаций · Фото: \${photos.size} · Видео: " +
-            "\${maxOf(videoCards.size, result.videos)} · Порций: \${result.loadedPages}",
+        Text("Собрано: ${result.allCards.size} публикаций · Фото: ${photos.size} · Видео: " +
+            "${maxOf(videoCards.size, result.videos)} · Порций: ${result.loadedPages}",
             style = MaterialTheme.typography.bodyMedium)
         result.advertisedCount?.let { Text("На сайте указано: $it.", style = MaterialTheme.typography.bodySmall) }
         if (result.incomplete) {
-            Text("Каталог НЕПОЛНЫЙ: собрано \${result.allCards.size} карточек. " +
+            Text("Каталог НЕПОЛНЫЙ: собрано ${result.allCards.size} карточек. " +
                 "Ошибка или повтор порции не означает конец выдачи.",
                 color = MaterialTheme.colorScheme.error)
         }

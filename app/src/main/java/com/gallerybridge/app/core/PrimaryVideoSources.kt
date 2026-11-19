@@ -20,6 +20,21 @@ object PrimaryVideoSources {
         "video"
     )
 
+    /** Poster is a display asset, never a downloadable video or original gallery photo. */
+    fun posterUrl(doc: Document, pageUrl: String): String? {
+        val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
+            ?: return null
+        val original = pageUrl.toHttpUrlOrNull() ?: return null
+        if (original.scheme != "https") return null
+        val raw = player.absUrl("poster")
+        val poster = raw.toHttpUrlOrNull() ?: return null
+        val ext = poster.pathSegments.lastOrNull()
+            ?.substringAfterLast('.', "")?.lowercase()
+        return poster.toString().takeIf {
+            poster.scheme == "https" && ext in setOf("jpg", "jpeg", "png", "webp")
+        }
+    }
+
     fun extract(doc: Document, pageUrl: String): List<Media> {
         val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
             ?: return emptyList()

@@ -367,6 +367,48 @@ object Services {
         ModelListingSources.combine(pages, errors, capped)
     }
 
+    /** Refresh only the same MP4 quality from its actual player, preserving new URL queries. */
+    private fun freshVideo(media: Media): Media {
+        if (media.kind != Kind.VIDEO || media.source != PrimaryVideoSources.SOURCE) return media
+        val page = media.referrer.toHttpUrlOrNull()
+            ?: error("Неизвестна страница исходного видеоплеера.")
+        require(page.scheme == "https" && page.port == 443 &&
+            (page.host == "xerotica.com" || page.host.endsWith(".xerotica.com") ||
+                page.host == "elitebabes.com" || page.host.endsWith(".elitebabes.com"))) {
+            "Недопустимая страница исходного видеоплеера."
+        }
+        val original = media.url.toHttpUrlOrNull() ?: error("Неверный адрес MP4.")
+        http.newCall(request(page.toString())).execute().use { response ->
+            require(response.code == 200 && response.request.url.toString() == page.toString()) {
+                "Не удалось обновить адрес видеоплеера."
+            }
+            val mime = response.header("Content-Type").orEmpty().lowercase()
+            require(mime.isBlank() || mime.contains("html")) { "Видеоплеер вернул не HTML." }
+            val output = ByteArrayOutputStream()
+            val stream = response.body?.byteStream() ?: error("Страница видеоплеера пуста.")
+            stream.use { input ->
+                val block = ByteArray(8192)
+                while (true) {
+                    val n = input.read(block)
+                    if (n < 0) break
+                    if (n == 0) continue
+                    require(output.size() + n <= 2_000_000) {
+                        "Страница видеоплеера превышает 2 МБ."
+                    }
+                    output.write(block, 0, n)
+                }
+            }
+            val body = output.toString(Charsets.UTF_8.name())
+            require(!EliteBabesModelAdapter.isUnavailable(body)) {
+                "Вместо видеоплеера получена заглушка."
+            }
+            return PrimaryVideoSources.extract(Jsoup.parse(body, page.toString()),
+                page.toString()).firstOrNull {
+                it.url.toHttpUrlOrNull()?.encodedPath == original.encodedPath
+            } ?: error("Исходный вариант MP4 больше не найден в плеере.")
+        }
+    }
+
     private fun download(context: Context, media: Media): Pair<File, String> {
         val file = File(context.cacheDir, "gb_${UUID.randomUUID()}.part")
         try {
@@ -382,19 +424,42 @@ object Services {
                 require(file.length() > 0L) { "Локальный файл пустой" }
                 return file to mime
             }
+            val currentMedia = freshVideo(media)
             val sourceRequest = BrowserSessionHeaders.withContext(
-                request(media.url).newBuilder(), media, context
+                request(currentMedia.url).newBuilder(), currentMedia, context
             ).build()
             http.newCall(sourceRequest).execute().use { r ->
                 if (!r.isSuccessful) throw SourceDownloadFailure.HttpError(r.code)
+                if (media.kind == Kind.VIDEO && r.code != 200) {
+                    error("HTTP ${r.code}: не подтверждено скачивание целого MP4.")
+                }
                 val mime = r.header("Content-Type")?.substringBefore(';').orEmpty()
                 if (mime.startsWith("text/") || mime.contains("html")) error("Вместо файла получен текст")
                 val body = r.body ?: error("Пустой файл")
                 val expected = body.contentLength()
+                if (media.kind == Kind.VIDEO) {
+                    require(mime.equals("video/mp4", ignoreCase = true) &&
+                        expected > 0 && r.header("Content-Range") == null) {
+                        "Невозможно проверить целый MP4 по ответу сервера."
+                    }
+                }
                 if (expected > 0 && context.cacheDir.usableSpace < expected + 20_000_000) error("Недостаточно памяти")
                 body.byteStream().use { input -> file.outputStream().use { output -> input.copyTo(output) } }
                 if (file.length() == 0L || expected >= 0 && file.length() != expected) error("Неполный файл")
                 if (media.kind == Kind.PHOTO) PhotoSourceValidation.verifyFile(file, mime)
+                if (media.kind == Kind.VIDEO) {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(file.absolutePath)
+                        require((retriever.extractMetadata(
+                            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+                        )?.toLongOrNull() ?: 0L) > 0L) {
+                            "MP4 не содержит подтверждённой длительности."
+                        }
+                    } finally {
+                        retriever.release()
+                    }
+                }
                 return file to (mime.ifBlank { "application/octet-stream" })
             }
         } catch (e: Exception) { file.delete(); throw e }
