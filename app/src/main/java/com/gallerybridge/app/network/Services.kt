@@ -222,6 +222,64 @@ object Services {
             attempted.add(first.address.number)
             onPage(first)
         }
+        val apiUrl = pages.firstOrNull()?.apiUrl.orEmpty()
+        if (apiUrl.isNotBlank()) {
+            val first = pages.first()
+            val seen = pages.flatMap { it.photos + it.videoCards }.mapTo(mutableSetOf()) {
+                if (it.sourceId.isNotBlank()) "elitebabes:" + it.sourceId else GalleryKeys.canonical(it.url) ?: it.url
+            }
+            var complete = false
+            val start = (pages.maxOfOrNull { it.address.number } ?: 1) + 1
+            for (number in start..ModelListingSources.MAX_PAGES) {
+                coroutineContext.ensureActive()
+                val apiPage = EliteBabesModelAdapter.nextUrl(apiUrl, number)
+                try {
+                    listingClient.newCall(request(apiPage)).execute().use { r ->
+                        require(r.code == 200 && r.request.url.toString() == apiPage) {
+                            "API вернул HTTP ${r.code} или перенаправление."
+                        }
+                        val mime = r.header("Content-Type").orEmpty().lowercase()
+                        require(mime.isBlank() || mime.contains("html") ||
+                            mime.contains("json") || mime.contains("text/plain")) {
+                            "Неподдерживаемый тип ответа API."
+                        }
+                        val body = r.body?.string().orEmpty()
+                        val batch = EliteBabesModelAdapter.parseApiResponse(body, apiPage, first.model)
+                        if (batch.end) {
+                            complete = true
+                        } else {
+                            var fresh = 0
+                            batch.cards.forEach {
+                                val key = if (it.sourceId.isNotBlank()) "elitebabes:" + it.sourceId
+                                    else GalleryKeys.canonical(it.url) ?: it.url
+                                if (seen.add(key)) fresh++
+                            }
+                            require(fresh > 0) {
+                                "API повторил карточки на странице №$number; конец не подтверждён."
+                            }
+                            val page = ModelListingSources.Page(
+                                ModelListingSources.Address(expected.slug, number), first.model,
+                                batch.cards.filter { it.type == "photo" },
+                                batch.cards.count { it.type == "video" }, batch.cards.size,
+                                mapOf(number to (raw.trimEnd('/') + "/mpage/$number")),
+                                true, first.advertisedCount, apiUrl,
+                                batch.cards.filter { it.type == "video" })
+                            pages.add(page)
+                            onPage(page)
+                        }
+                    }
+                    progress(pages.size, ModelListingSources.MAX_PAGES)
+                    if (complete) break
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    errors.add("Ошибка API на порции №$number: ${e.message ?: "нет ответа"}.")
+                    break
+                }
+            }
+            return@withContext ModelListingSources.combine(
+                pages, errors, capped = !complete, apiConfirmedComplete = complete)
+        }
         pages.forEach { page ->
             page.pages.forEach { (number, link) ->
                 if (number !in attempted && ModelListingSources.address(link)?.slug == expected.slug)

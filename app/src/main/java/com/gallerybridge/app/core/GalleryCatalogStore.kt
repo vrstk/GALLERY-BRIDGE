@@ -19,7 +19,14 @@ data class CatalogGallery(
     val target: String = "",
     val outcome: String = "",
     val completed: Int = 0,
-    val total: Int = 0
+    val total: Int = 0,
+    val source: String = "",
+    val sourceId: String = "",
+    val originalCaption: String = "",
+    val studio: String = "",
+    val displayedDate: String = "",
+    val type: String = "photo",
+    val previewUrl: String = ""
 )
 
 object GalleryCatalogStore {
@@ -47,7 +54,16 @@ object GalleryCatalogStore {
                         target = item.optString("target").take(60),
                         outcome = item.optString("outcome").take(80),
                         completed = item.optInt("completed").coerceAtLeast(0),
-                        total = item.optInt("total").coerceAtLeast(0)
+                        total = item.optInt("total").coerceAtLeast(0),
+                        source = item.optString("source").take(40),
+                        sourceId = item.optString("sourceId").take(30),
+                        originalCaption = item.optString("originalCaption").take(250),
+                        studio = item.optString("studio").take(130),
+                        displayedDate = item.optString("displayedDate").take(10),
+                        type = item.optString("type", "photo").takeIf {
+                            it == "photo" || it == "video"
+                        } ?: "photo",
+                        previewUrl = item.optString("previewUrl").take(2048)
                     ))
                 }
             }.fold(emptyList<CatalogGallery>()) { list, entry -> merge(list, entry) }
@@ -62,22 +78,44 @@ object GalleryCatalogStore {
                 .put("title", entry.title).put("date", entry.date)
                 .put("updatedAt", entry.updatedAt).put("target", entry.target)
                 .put("outcome", entry.outcome)
-                .put("completed", entry.completed).put("total", entry.total))
+                .put("completed", entry.completed).put("total", entry.total)
+                .put("source", entry.source).put("sourceId", entry.sourceId)
+                .put("originalCaption", entry.originalCaption)
+                .put("studio", entry.studio).put("displayedDate", entry.displayedDate)
+                .put("type", entry.type).put("previewUrl", entry.previewUrl))
         }
         return arr.toString()
     }
+
+    /** Source-scoped ID is primary when present; canonical URL is the fallback. */
+    internal fun identity(entry: CatalogGallery): String =
+        if (entry.source.isNotBlank() && entry.sourceId.isNotBlank())
+            entry.source.lowercase(Locale.ROOT) + ":" + entry.sourceId
+        else GalleryKeys.canonical(entry.url).orEmpty()
 
     /** The most recent label wins; editing a label never loses prior transfer info. */
     internal fun merge(existing: List<CatalogGallery>, incoming: CatalogGallery): List<CatalogGallery> {
         val url = GalleryKeys.canonical(incoming.url) ?: return existing
         if (!GalleryKeys.validDate(incoming.date)) return existing
-        val old = existing.firstOrNull { GalleryKeys.same(it.url, url) }
+        val old = existing.firstOrNull {
+            GalleryKeys.same(it.url, url) ||
+                (incoming.source.isNotBlank() && incoming.sourceId.isNotBlank() &&
+                    identity(it) == identity(incoming))
+        }
         val hasTransfer = incoming.target.isNotBlank()
         val nextModel = incoming.model.trim().take(130)
         val nextTitle = incoming.title.trim().take(250)
         val nextDate = incoming.date.trim().take(10)
         val entry = incoming.copy(
-            url = url,
+            url = if (old != null && incoming.sourceId.isNotBlank() &&
+                identity(old) == identity(incoming)) old.url else url,
+            source = incoming.source.ifBlank { old?.source.orEmpty() },
+            sourceId = incoming.sourceId.ifBlank { old?.sourceId.orEmpty() },
+            originalCaption = incoming.originalCaption.ifBlank { old?.originalCaption.orEmpty() },
+            studio = incoming.studio.ifBlank { old?.studio.orEmpty() },
+            displayedDate = incoming.displayedDate.ifBlank { old?.displayedDate.orEmpty() },
+            type = if (incoming.source.isNotBlank()) incoming.type else old?.type ?: incoming.type,
+            previewUrl = incoming.previewUrl.ifBlank { old?.previewUrl.orEmpty() },
             // A transfer refreshes progress, never the labels that the user already edited.
             model = if (hasTransfer) old?.model?.takeIf { it.isNotBlank() } ?: nextModel
                 else nextModel.ifBlank { old?.model.orEmpty() },
@@ -90,7 +128,11 @@ object GalleryCatalogStore {
             total = if (hasTransfer) incoming.total.coerceAtLeast(0) else old?.total ?: 0,
             updatedAt = maxOf(incoming.updatedAt, old?.updatedAt ?: 0)
         )
-        return (existing.filterNot { GalleryKeys.same(it.url, url) } + entry)
+        return (existing.filterNot {
+            GalleryKeys.same(it.url, url) ||
+                (incoming.sourceId.isNotBlank() && incoming.source.isNotBlank() &&
+                    identity(it) == identity(incoming))
+        } + entry)
             .sortedWith(compareByDescending<CatalogGallery> { it.updatedAt }.thenBy { it.url })
             .take(LIMIT)
     }

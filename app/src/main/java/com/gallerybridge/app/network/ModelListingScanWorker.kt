@@ -85,7 +85,10 @@ internal class ModelListingScanWorker(context: Context, params: WorkerParameters
                     setProgress(workDataOf(LOADED to
                         (ModelListingCheckpointStore.read(applicationContext)?.pages?.size ?: 0)))
                 })
-            ModelListingCheckpointStore.finish(applicationContext, id.toString(), result)
+            ModelListingCheckpointStore.finish(applicationContext, id.toString(), result,
+                apiComplete = !result.incomplete && result.errors.isEmpty() &&
+                    ModelListingCheckpointStore.read(applicationContext)?.pages
+                        ?.any { it.apiUrl.isNotBlank() } == true)
             return Result.success()
         } catch (e: CancellationException) {
             throw e

@@ -1290,7 +1290,7 @@ class MainActivity : ComponentActivity() {
                         setGalleryUrl(gallery.url)
                         model = gallery.model
                         title = gallery.title
-                        date = gallery.date
+                        date = if (gallery.source == "elitebabes") "" else gallery.date
                         screen = GalleryPage.HOME
                     },
                     onRemove = { gallery ->

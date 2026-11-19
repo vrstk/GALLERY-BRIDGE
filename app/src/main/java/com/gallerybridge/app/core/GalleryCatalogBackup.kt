@@ -55,8 +55,15 @@ object GalleryCatalogBackup {
 
     /** Never overwrite newer labels or completed transfers in an existing installation. */
     fun plan(current: List<CatalogGallery>, incoming: List<CatalogGallery>): Plan {
-        val existingUrls = current.mapTo(HashSet()) { it.url }
-        val missing = incoming.filter { it.url !in existingUrls }
+        val existingUrls = current.mapTo(HashSet()) { GalleryKeys.canonical(it.url) }
+        val existingIds = current.mapTo(HashSet()) { GalleryCatalogStore.identity(it) }
+        val unique = mutableSetOf<String>()
+        val missing = incoming.filter {
+            val canonical = GalleryKeys.canonical(it.url)
+            canonical != null && canonical !in existingUrls &&
+                GalleryCatalogStore.identity(it) !in existingIds &&
+                unique.add(GalleryCatalogStore.identity(it))
+        }
         val free = (GalleryCatalogStore.LIMIT - current.size).coerceAtLeast(0)
         val added = missing.take(free)
         return Plan(

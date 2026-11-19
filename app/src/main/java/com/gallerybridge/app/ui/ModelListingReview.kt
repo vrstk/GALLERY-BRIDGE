@@ -29,7 +29,7 @@ internal fun ModelListingReview(
     onBack: () -> Unit
 ) {
     val saved = existing.mapTo(HashSet()) { GalleryKeys.canonical(it.url) }
-    val available = result.photos.count { GalleryKeys.canonical(it.url) !in saved }
+    val available = result.allCards.count { GalleryKeys.canonical(it.url) !in saved }
     Column(
         modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -38,7 +38,7 @@ internal fun ModelListingReview(
         Text("Публикации модели", style = MaterialTheme.typography.titleLarge)
         Text(
             "Обнаружено фотопубликаций: ${result.photos.size}; видеокарточек: ${result.videos}. " +
-                "Загружено HTML-карточек: ${result.cards} на ${result.loadedPages} страницах.",
+                "Обработано карточек: ${result.cards} на ${result.loadedPages} страницах.",
             style = MaterialTheme.typography.bodyMedium
         )
         if (result.advertisedCount != null) {
@@ -47,9 +47,8 @@ internal fun ModelListingReview(
         }
         if (result.incomplete) {
             Text(
-                "Неполный список: сайт подгружает дополнительные карточки при прокрутке. " +
-                    "Приложение пока обработало только доступные в HTML данные; " +
-                    "отсутствующие публикации не считаются найденными.",
+                "Список не подтверждён полностью: проверьте ошибки API или " +
+                    "импортируйте JSON из Soul. Повтор порции не означает конец списка.",
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -60,9 +59,10 @@ internal fun ModelListingReview(
         }
         if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
         Text(
-            "Ранее сохранено: ${result.photos.size - available}. " +
+            "Ранее сохранено: ${result.allCards.size - available}. " +
                 "Доступно новых: $available. Выбор — максимум 100 за раз. " +
-                "Сохранение не запускает передачу и не изменяет очередь.",
+                "Сохранение не запускает передачу и не изменяет очередь. " +
+                "Дата показана сайтом, а не проверена на странице публикации.",
             style = MaterialTheme.typography.bodySmall
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -78,7 +78,7 @@ internal fun ModelListingReview(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 24.dp)
         ) {
-            items(result.photos, key = { it.url }) { publication ->
+            items(result.allCards, key = { it.url }) { publication ->
                 val already = GalleryKeys.canonical(publication.url) in saved
                 OutlinedCard {
                     Row(
@@ -91,16 +91,19 @@ internal fun ModelListingReview(
                             onCheckedChange = { onSelect(publication.url, it) }
                         )
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(publication.title, maxLines = 2,
+                            Text(publication.title.ifBlank { "Без названия" }, maxLines = 2,
                                 overflow = TextOverflow.Ellipsis)
-                            Text(publication.date.ifBlank { "Дата не указана" } +
+                            Text((if (publication.type == "video") "Видео · " else "Фото · ") +
+                                publication.displayedDate.ifBlank { "Дата не указана" } +
                                 if (already) " · Уже в каталоге" else "",
                                 style = MaterialTheme.typography.bodySmall)
                             Text(publication.url, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.labelSmall)
                         }
-                        TextButton(onClick = { onOpen(publication) }) { Text("Открыть") }
+                        TextButton(onClick = { onOpen(publication) }) {
+                            Text(if (publication.type == "video") "Страница" else "Открыть")
+                        }
                     }
                 }
             }

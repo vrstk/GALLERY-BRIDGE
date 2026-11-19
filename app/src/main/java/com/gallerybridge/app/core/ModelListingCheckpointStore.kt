@@ -20,10 +20,11 @@ internal object ModelListingCheckpointStore {
         val pages: List<ModelListingSources.Page> = emptyList(),
         val finished: Boolean = false,
         val capped: Boolean = false,
-        val errors: List<String> = emptyList()
+        val errors: List<String> = emptyList(),
+        val apiComplete: Boolean = false
     ) {
         fun result(): ModelListingSources.Result =
-            ModelListingSources.combine(pages, errors, capped || !finished)
+            ModelListingSources.combine(pages, errors, capped || !finished, apiComplete)
     }
 
     internal fun encode(s: Checkpoint): String {
@@ -34,9 +35,20 @@ internal object ModelListingCheckpointStore {
             val photos = JSONArray()
             page.photos.take(ModelListingSources.MAX_CARDS_PER_PAGE).forEach { p ->
                 photos.put(JSONObject().put("url", p.url).put("title", p.title)
-                    .put("date", p.date).put("model", p.model))
+                    .put("date", p.date).put("model", p.model)
+                    .put("sourceId", p.sourceId).put("caption", p.caption)
+                    .put("studio", p.studio).put("displayedDate", p.displayedDate)
+                    .put("type", p.type).put("previewUrl", p.previewUrl))
             }
-            pages.put(JSONObject()
+            val videos = JSONArray()
+            page.videoCards.forEach { p ->
+                videos.put(JSONObject().put("url", p.url).put("title", p.title)
+                    .put("date", p.date).put("model", p.model).put("sourceId", p.sourceId)
+                    .put("caption", p.caption).put("studio", p.studio)
+                    .put("displayedDate", p.displayedDate).put("type", "video")
+                    .put("previewUrl", p.previewUrl))
+            }
+            pages.put(JSONObject().put("apiUrl", page.apiUrl).put("videoCards", videos)
                 .put("source", page.pages[page.address.number])
                 .put("model", page.model).put("photos", photos)
                 .put("videos", page.videos).put("cards", page.cardCount)
@@ -46,6 +58,7 @@ internal object ModelListingCheckpointStore {
         return JSONObject().put("format", 1).put("id", s.requestId)
             .put("source", s.source).put("finished", s.finished)
             .put("capped", s.capped).put("errors", JSONArray(s.errors))
+            .put("apiComplete", s.apiComplete)
             .put("pages", pages).toString()
     }
 
@@ -75,28 +88,40 @@ internal object ModelListingCheckpointStore {
             }
             links[addressPage.number] = pageUrl
             val photos = mutableListOf<ModelListingSources.Publication>()
+            fun parseItem(item: JSONObject): ModelListingSources.Publication? {
+                val link = ModelListingSources.publicationUrl(item.optString("url")) ?: return null
+                return ModelListingSources.Publication(link, item.optString("title").take(250),
+                    item.optString("date").take(10), item.optString("model").take(130),
+                    item.optString("sourceId").take(20), item.optString("caption").take(250),
+                    item.optString("studio").take(130),
+                    item.optString("displayedDate").take(10),
+                    item.optString("type", "photo"), item.optString("previewUrl").take(2048))
+            }
             val array = p.getJSONArray("photos")
             require(array.length() <= ModelListingSources.MAX_CARDS_PER_PAGE)
             for (j in 0 until array.length()) {
                 val item = array.getJSONObject(j)
-                val link = item.getString("url")
-                val verified = ModelListingSources.publicationUrl(link) ?: continue
-                photos.add(ModelListingSources.Publication(
-                    verified, item.optString("title").take(250),
-                    item.optString("date").take(10),
-                    item.optString("model").take(130)))
+                parseItem(item)?.let(photos::add)
+            }
+            val videoCards = mutableListOf<ModelListingSources.Publication>()
+            val videoJson = p.optJSONArray("videoCards") ?: JSONArray()
+            require(videoJson.length() <= ModelListingSources.MAX_CARDS_PER_PAGE)
+            for (j in 0 until videoJson.length()) {
+                parseItem(videoJson.getJSONObject(j))?.let(videoCards::add)
             }
             pages.add(ModelListingSources.Page(
                 addressPage, p.optString("model").take(130), photos,
                 p.optInt("videos").coerceIn(0, ModelListingSources.MAX_CARDS_PER_PAGE),
                 p.optInt("cards").coerceIn(0, ModelListingSources.MAX_CARDS_PER_PAGE),
-                links, p.optBoolean("loader"), p.optInt("advertised").takeIf { it > 0 }))
+                links, p.optBoolean("loader"), p.optInt("advertised").takeIf { it > 0 },
+                EliteBabesModelAdapter.validatedApiUrl(p.optString("apiUrl")).orEmpty(), videoCards))
         }
         require(pages.map { it.address.number }.distinct().size == pages.size)
         val errors = objectRoot.optJSONArray("errors")
         Checkpoint(id, source, pages, objectRoot.optBoolean("finished"),
             objectRoot.optBoolean("capped"),
-            (0 until (errors?.length() ?: 0)).take(100).map { errors!!.optString(it).take(250) })
+            (0 until (errors?.length() ?: 0)).take(100).map { errors!!.optString(it).take(250) },
+            objectRoot.optBoolean("apiComplete"))
     }.getOrNull()
 
     @Synchronized fun read(context: Context): Checkpoint? = runCatching {
@@ -138,14 +163,15 @@ internal object ModelListingCheckpointStore {
     }
 
     @Synchronized fun finish(context: Context, id: String,
-                              result: ModelListingSources.Result) {
+                              result: ModelListingSources.Result, apiComplete: Boolean = false) {
         val current = read(context) ?: return
         if (current.requestId != id) return
         write(context, current.copy(
             finished = true,
             errors = result.errors.take(100),
             // Preserve every incomplete condition, including the hard page cap.
-            capped = result.incomplete
+            capped = result.incomplete && !apiComplete,
+            apiComplete = apiComplete
         ))
     }
 }

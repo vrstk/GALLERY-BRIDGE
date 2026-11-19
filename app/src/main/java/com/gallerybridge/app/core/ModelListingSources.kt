@@ -13,17 +13,25 @@ object ModelListingSources {
     const val MAX_CARDS_PER_PAGE = 750
 
     data class Address(val slug: String, val number: Int)
-    data class Publication(val url: String, val title: String, val date: String, val model: String)
+    data class Publication(
+        val url: String, val title: String, val date: String, val model: String,
+        val sourceId: String = "", val caption: String = "", val studio: String = "",
+        val displayedDate: String = "", val type: String = "photo",
+        val previewUrl: String = ""
+    )
     data class Page(
         val address: Address, val model: String, val photos: List<Publication>,
         val videos: Int, val cardCount: Int, val pages: Map<Int, String>,
-        val infiniteLoader: Boolean, val advertisedCount: Int?
+        val infiniteLoader: Boolean, val advertisedCount: Int?,
+        val apiUrl: String = "", val videoCards: List<Publication> = emptyList()
     )
     data class Result(
         val photos: List<Publication>, val videos: Int, val cards: Int,
         val loadedPages: Int, val advertisedCount: Int?, val incomplete: Boolean,
-        val errors: List<String>
-    )
+        val errors: List<String>, val videoCards: List<Publication> = emptyList()
+    ) {
+        val allCards: List<Publication> get() = photos + videoCards
+    }
 
     private val route = Regex(
         """^/model/([a-z0-9-]+)(?:/sort/oldest(?:/mpage/([1-9][0-9]*))?)?/?$"""
@@ -55,6 +63,7 @@ object ModelListingSources {
 
     fun parse(doc: Document, pageUrl: String): Page? {
         val source = address(pageUrl) ?: return null
+        EliteBabesModelAdapter.parseFirst(doc, pageUrl)?.let { return it }
         val model = doc.selectFirst("main#content article.module-model h1")
             ?.text()?.trim()?.take(130).orEmpty()
         val gallery = doc.selectFirst("main#content > ul.list-gallery.has-mobile-menu")
@@ -120,20 +129,29 @@ object ModelListingSources {
     }
 
     fun combine(
-        pages: List<Page>, errors: List<String> = emptyList(), capped: Boolean = false
+        pages: List<Page>, errors: List<String> = emptyList(),
+        capped: Boolean = false, apiConfirmedComplete: Boolean = false
     ): Result {
-        val photos = linkedMapOf<String, Publication>()
-        pages.sortedBy { it.address.number }.forEach { page ->
-            page.photos.forEach { photos.putIfAbsent(it.url, it) }
+        val seen = mutableSetOf<String>()
+        val photos = mutableListOf<Publication>()
+        val videos = mutableListOf<Publication>()
+        for (page in pages.sortedBy { it.address.number }) {
+            for (card in page.photos + page.videoCards) {
+                val key = if (card.sourceId.isNotBlank())
+                    "elitebabes:" + card.sourceId
+                else GalleryKeys.canonical(card.url) ?: card.url
+                if (!seen.add(key)) continue
+                if (card.type == "video") videos.add(card) else photos.add(card)
+            }
         }
         val cards = pages.sumOf { it.cardCount }
         val advertised = pages.mapNotNull { it.advertisedCount }.maxOrNull()
         val incomplete = capped || errors.isNotEmpty() ||
-            pages.any { it.infiniteLoader || it.cardCount >= MAX_CARDS_PER_PAGE } ||
-            (advertised != null && cards < advertised)
-        return Result(
-            photos.values.toList(), pages.sumOf { it.videos },
-            cards, pages.size, advertised, incomplete, errors
-        )
+            (pages.any { it.apiUrl.isNotBlank() } && !apiConfirmedComplete) ||
+            pages.any { it.cardCount >= MAX_CARDS_PER_PAGE ||
+                (it.infiniteLoader && it.apiUrl.isBlank()) } ||
+            (advertised != null && photos.size + videos.size < advertised)
+        return Result(photos, pages.sumOf { it.videos }.coerceAtLeast(videos.size),
+            cards, pages.size, advertised, incomplete, errors, videos)
     }
 }
