@@ -519,8 +519,9 @@ class MainActivity : ComponentActivity() {
             WorkManager.getInstance(applicationContext)
                 .getWorkInfosForUniqueWorkFlow(ModelListingScanWorker.UNIQUE)
                 .collect { infos ->
-                    val checkpoint = ModelListingCheckpointStore.read(this@MainActivity)
-                        ?: return@collect
+                    val checkpoint = withContext(Dispatchers.IO) {
+                        ModelListingCheckpointStore.read(applicationContext)
+                    } ?: return@collect
                     if (url != checkpoint.source) return@collect
                     val info = infos.firstOrNull { it.id.toString() == checkpoint.requestId }
                         ?: return@collect
@@ -529,7 +530,7 @@ class MainActivity : ComponentActivity() {
                             scanning = true
                             working = true
                             if (checkpoint.pages.isNotEmpty()) {
-                                modelListing = checkpoint.result()
+                                modelListing = withContext(Dispatchers.Default) { checkpoint.result() }
                             }
                             val n = info.progress.getInt(ModelListingScanWorker.LOADED,
                                 checkpoint.pages.size)
@@ -539,11 +540,16 @@ class MainActivity : ComponentActivity() {
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             scanning = false
-                            working = false
                             if (checkpoint.finished) {
-                                modelListing = checkpoint.result()
+                                // A large catalog import must never block the Android UI.
+                                working = true
+                                status = "Сохраняем найденные публикации в каталог…"
                                 try {
-                                    val imported = modelListing?.allCards.orEmpty().map { pub ->
+                                    val completed = withContext(Dispatchers.Default) {
+                                        checkpoint.result()
+                                    }
+                                    modelListing = completed
+                                    val imported = completed.allCards.map { pub ->
                                         CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
                                             pub.title, pub.displayedDate, System.currentTimeMillis(),
                                             source = "elitebabes", sourceId = pub.sourceId,
@@ -551,16 +557,31 @@ class MainActivity : ComponentActivity() {
                                             displayedDate = pub.displayedDate, type = pub.type,
                                             previewUrl = pub.previewUrl)
                                     }
-                                    GalleryCatalogStore.importMissing(this@MainActivity, imported)
-                                    catalog = GalleryCatalogStore.load(this@MainActivity)
-                                } catch (_: Exception) {
-                                    // The scan stays visible even if catalog storage fails.
+                                    val updated = withContext(Dispatchers.IO) {
+                                        GalleryCatalogStore.importMissing(applicationContext, imported)
+                                        GalleryCatalogStore.load(applicationContext)
+                                    }
+                                    if (url == checkpoint.source) {
+                                        catalog = updated
+                                        status = "Найдено фотопубликаций: ${completed.photos.size}. " +
+                                            if (completed.incomplete)
+                                                "Список может быть неполным, проверьте сообщение ниже."
+                                            else "Обработаны доступные страницы."
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    if (url == checkpoint.source) {
+                                        status = "Публикации найдены, но каталог не удалось " +
+                                            "сохранить: ${e.message ?: "ошибка хранилища"}."
+                                    }
+                                } finally {
+                                    working = false
                                 }
-                                status = "Найдено фотопубликаций: ${modelListing?.photos?.size ?: 0}. " +
-                                    if (modelListing?.incomplete == true)
-                                        "Список может быть неполным, проверьте сообщение ниже."
-                                    else "Обработаны доступные страницы."
-                            } else status = "Не удалось сохранить результат поиска."
+                            } else {
+                                working = false
+                                status = "Не удалось сохранить результат поиска."
+                            }
                         }
                         WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
                             scanning = false
@@ -839,27 +860,40 @@ class MainActivity : ComponentActivity() {
     /** Explicit import only; existing labels, history, queue and credentials remain intact. */
     private fun saveListingSelection() {
         val discovered = modelListing ?: return
+        if (working || scanning || transferRunning) return
         val chosen = discovered.allCards.filter { it.url in modelListingSelected }.take(100)
-        val current = GalleryCatalogStore.load(this)
-        val additions = chosen.filterNot { GalleryCatalogStore.contains(current, it.url) }
-            .map { pub ->
-                CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
-                    pub.title, pub.displayedDate, System.currentTimeMillis(),
-                    source = "elitebabes", sourceId = pub.sourceId,
-                    originalCaption = pub.caption, studio = pub.studio,
-                    displayedDate = pub.displayedDate, type = pub.type,
-                    previewUrl = pub.previewUrl)
+        if (chosen.isEmpty()) return
+        working = true
+        status = "Сохраняем выбранные публикации…"
+        scope.launch {
+            try {
+                val (plan, updatedCatalog) = withContext(Dispatchers.IO) {
+                    val current = GalleryCatalogStore.load(applicationContext)
+                    val additions = chosen.filterNot {
+                        GalleryCatalogStore.contains(current, it.url)
+                    }.map { pub ->
+                        CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
+                            pub.title, pub.displayedDate, System.currentTimeMillis(),
+                            source = "elitebabes", sourceId = pub.sourceId,
+                            originalCaption = pub.caption, studio = pub.studio,
+                            displayedDate = pub.displayedDate, type = pub.type,
+                            previewUrl = pub.previewUrl)
+                    }
+                    val plan = GalleryCatalogStore.importMissing(applicationContext, additions)
+                    plan to GalleryCatalogStore.load(applicationContext)
+                }
+                catalog = updatedCatalog
+                modelListingSelected = emptySet()
+                status = "Сохранено новых публикаций: ${plan.added}; " +
+                    "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                status = "Не удалось сохранить публикации: ${e.message ?: "ошибка"}"
+            } finally {
+                working = false
             }
-        val plan = try {
-            GalleryCatalogStore.importMissing(this, additions)
-        } catch (e: Exception) {
-            status = "Не удалось сохранить публикации: ${e.message}"
-            return
         }
-        catalog = GalleryCatalogStore.load(this)
-        modelListingSelected = emptySet()
-        status = "Сохранено новых публикаций: ${plan.added}; " +
-            "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
     }
 
     private fun queueSelectedModelGalleries() {
