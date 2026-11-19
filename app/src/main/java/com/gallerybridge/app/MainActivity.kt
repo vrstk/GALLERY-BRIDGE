@@ -534,9 +534,7 @@ class MainActivity : ComponentActivity() {
                             }
                             val n = info.progress.getInt(ModelListingScanWorker.LOADED,
                                 checkpoint.pages.size)
-                            val total = info.progress.getInt(ModelListingScanWorker.TOTAL, 0)
-                            status = if (total > 0) "Чтение страниц каталога: $n из $total."
-                                else "Поиск публикаций продолжается в фоне. Страниц: $n."
+                            status = "Идёт сбор публикаций. Обработано порций: $n."
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             scanning = false
@@ -861,17 +859,14 @@ class MainActivity : ComponentActivity() {
     private fun saveListingSelection() {
         val discovered = modelListing ?: return
         if (working || scanning || transferRunning) return
-        val chosen = discovered.allCards.filter { it.url in modelListingSelected }.take(100)
+        val chosen = discovered.allCards.filter { it.url in modelListingSelected }
         if (chosen.isEmpty()) return
         working = true
         status = "Сохраняем выбранные публикации…"
         scope.launch {
             try {
                 val (plan, updatedCatalog) = withContext(Dispatchers.IO) {
-                    val current = GalleryCatalogStore.load(applicationContext)
-                    val additions = chosen.filterNot {
-                        GalleryCatalogStore.contains(current, it.url)
-                    }.map { pub ->
+                    val additions = chosen.map { pub ->
                         CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
                             pub.title, pub.displayedDate, System.currentTimeMillis(),
                             source = "elitebabes", sourceId = pub.sourceId,
@@ -884,8 +879,8 @@ class MainActivity : ComponentActivity() {
                 }
                 catalog = updatedCatalog
                 modelListingSelected = emptySet()
-                status = "Сохранено новых публикаций: ${plan.added}; " +
-                    "не поместилось: ${plan.noSpace}. Передачи и файлы не затронуты."
+                status = "Добавлено: ${plan.added} · Уже в каталоге: ${plan.alreadyPresent}" +
+                    if (plan.noSpace > 0) " · Не поместилось: ${plan.noSpace}" else ""
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -920,6 +915,7 @@ class MainActivity : ComponentActivity() {
         scanJob = scope.launch {
             try {
                 val prepared = mutableListOf<PreparedGallery>()
+                var fileCount = 0
                 for ((index, pub) in chosen.withIndex()) {
                     ensureActive()
                     status = "Открываем фотогалерею ${index + 1} из ${chosen.size}: " +
@@ -929,11 +925,12 @@ class MainActivity : ComponentActivity() {
                     require(photos.isNotEmpty()) {
                         "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» не найдены ссылки на полноразмерные изображения."
                     }
+                    fileCount += photos.size
+                    ModelBatchQueuePlan.checkFileCount(fileCount)
                     prepared += PreparedGallery(pub.url, pub.sourceId, pub.model,
                         pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)
                 }
                 val root = if (target == TransferTargets.FOLDER) treeUri else mailRoot
-                ModelBatchQueuePlan.validate(prepared)
                 TransferService.beginBatch(
                     this@MainActivity, prepared, target, email, password, root)
                 GalleryCatalogStore.importMissing(this@MainActivity,
@@ -1565,13 +1562,11 @@ class MainActivity : ComponentActivity() {
                 destination = target, onDestination = { target = it },
                 onSelect = { link, checked ->
                     modelListingSelected = if (checked) {
-                        if (modelListingSelected.size < ModelBatchQueuePlan.MAX_GALLERIES)
-                            modelListingSelected + link else modelListingSelected
+                        modelListingSelected + link
                     } else modelListingSelected - link
                 },
                 onSelectAllPhotos = {
-                    modelListingSelected = listing.photos.take(ModelBatchQueuePlan.MAX_GALLERIES)
-                        .mapTo(linkedSetOf()) { it.url }
+                    modelListingSelected = listing.photos.mapTo(linkedSetOf()) { it.url }
                 },
                 onClear = { modelListingSelected = emptySet() },
                 onSave = ::saveListingSelection,

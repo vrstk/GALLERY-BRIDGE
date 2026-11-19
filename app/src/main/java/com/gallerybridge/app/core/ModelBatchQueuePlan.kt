@@ -11,12 +11,17 @@ data class PreparedGallery(
 )
 
 object ModelBatchQueuePlan {
-    const val MAX_GALLERIES = 100
     const val MAX_FILES = 10000
 
+    fun checkFileCount(count: Int) {
+        require(count <= MAX_FILES) {
+            "В одной очереди можно передать до $MAX_FILES фотографий. Выберите меньше галерей."
+        }
+    }
+
     fun validate(galleries: List<PreparedGallery>): List<PreparedGallery> {
-        require(galleries.isNotEmpty() && galleries.size <= MAX_GALLERIES) {
-            "Выберите от 1 до 100 фотогалерей."
+        require(galleries.isNotEmpty()) {
+            "Выберите хотя бы одну фотогалерею."
         }
         val seen = mutableSetOf<String>()
         var total = 0
@@ -37,7 +42,7 @@ object ModelBatchQueuePlan {
                 "В галерее есть одинаковые имена файлов — требуется проверка."
             }
             total += group.media.size
-            require(total <= MAX_FILES) { "Слишком много фотографий для одной очереди." }
+            checkFileCount(total)
         }
         return galleries
     }

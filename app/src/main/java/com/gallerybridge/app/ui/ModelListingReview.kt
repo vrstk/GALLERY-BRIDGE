@@ -44,6 +44,7 @@ internal fun ModelListingReview(
     val videoCards = result.videoCards
     val saved = existing.mapTo(HashSet()) { GalleryKeys.canonical(it.url) }
     val chosenPhotos = photos.count { it.url in selected }
+    val chosenVideos = videoCards.count { it.url in selected }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
@@ -79,7 +80,7 @@ internal fun ModelListingReview(
                 result.advertisedCount?.let {
                     Text("На сайте указано: $it.", style = MaterialTheme.typography.bodySmall)
                 }
-                if (result.incomplete) {
+                if (!scanning && result.incomplete) {
                     Text(
                         if (result.advertisedCount == result.allCards.size)
                             "Собраны все ${result.allCards.size} заявленных карточек, " +
@@ -128,7 +129,7 @@ internal fun ModelListingReview(
                 }
                 Text(
                     "Выбрано: фотогалерей $chosenPhotos, видео " +
-                        "${selected.count { chosen -> videoCards.any { it.url == chosen } }}. " +
+                        "$chosenVideos. " +
                         "Даты показаны на карточках сайта, " +
                         "это не подтверждённые даты публикации.",
                     style = MaterialTheme.typography.bodySmall

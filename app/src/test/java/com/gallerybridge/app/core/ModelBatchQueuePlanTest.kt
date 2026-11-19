@@ -19,6 +19,13 @@ class ModelBatchQueuePlanTest {
         assertTrue(ModelBatchQueuePlan.folder(a, Kind.PHOTO).last().contains("123"))
     }
 
+    @Test fun wholeModelFitsWhenItsPhotosFitOneQueue() {
+        val galleries = (1..361).map { gallery(it.toString()) }
+        assertEquals(361, ModelBatchQueuePlan.validate(galleries).size)
+        ModelBatchQueuePlan.checkFileCount(10000)
+        assertThrows(IllegalArgumentException::class.java) { ModelBatchQueuePlan.checkFileCount(10001) }
+    }
+
     @Test fun duplicateGalleryIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             ModelBatchQueuePlan.validate(listOf(gallery("123"), gallery("123")))
