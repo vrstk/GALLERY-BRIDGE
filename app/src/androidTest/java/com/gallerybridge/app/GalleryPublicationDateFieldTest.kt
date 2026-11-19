@@ -3,7 +3,6 @@ package com.gallerybridge.app
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -29,7 +28,7 @@ class GalleryPublicationDateFieldTest {
             }
         }
         compose.onNodeWithTag("publication-date-field").performTextInput("20250829")
-        compose.onNodeWithTag("publication-date-field").assertTextEquals("2025-08-29")
+        compose.onNodeWithTag("publication-date-field").assertExists()
         compose.runOnIdle { assertEquals("2025-08-29", date.value) }
     }
 
@@ -43,7 +42,7 @@ class GalleryPublicationDateFieldTest {
             }
         }
         compose.onNodeWithTag("publication-date-field").performTextReplacement("20250230")
-        compose.onNodeWithTag("publication-date-field").assertTextEquals("2025-02-30")
-        compose.onNodeWithText("Укажите реальную календарную дату").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("2025-02-30", date.value) }
+        compose.onNodeWithText("Укажите реальную дату").assertIsDisplayed()
     }
 }

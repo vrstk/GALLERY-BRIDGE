@@ -118,7 +118,7 @@ internal fun GalleryPublicationDateField(
         supportingText = {
             Text(
                 when {
-                    invalid -> "Укажите реальную календарную дату"
+                    invalid -> "Укажите реальную дату"
                     partial -> "Введите все 8 цифр даты"
                     else -> "Необязательно · формат ГГГГ-ММ-ДД"
                 },
