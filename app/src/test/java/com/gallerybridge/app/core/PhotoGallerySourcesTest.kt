@@ -101,4 +101,66 @@ class PhotoGallerySourcesTest {
             PhotoGallerySources.extract(doc, page)!!.map { it.name })
     }
 
+    @Test fun supportsExplicitImagesGroupWithinMainArticle() {
+        val doc = Jsoup.parse("""
+            <aside><a data-fancybox="images" href="https://cdn.elitebabes.com/ads/ad.jpg">ad</a></aside>
+            <article class="post-content">
+              <a data-fancybox="images" href="https://cdn.elitebabes.com/content/one_1200.jpg">
+                <img src="https://cdn.elitebabes.com/content/one_masonry_400.jpg">
+              </a>
+              <a data-fancybox="images" href="https://cdn.elitebabes.com/content/two_1800.jpg"></a>
+            </article>
+        """, page)
+        assertEquals(listOf("one_1200.jpg", "two_1800.jpg"),
+            PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
+
+    @Test fun legacyFancyAnchorsInArticleAreRealOriginalLinks() {
+        val doc = Jsoup.parse("""
+            <article>
+              <a class="fancy" href="/content/one_1200.jpg">
+                <img src="/content/one_w400.jpg">
+              </a>
+              <a class="fancy" href="/content/two_1800.jpg">Full image</a>
+            </article>
+            <aside><a class="fancy" href="/ads/related.jpg">ad</a></aside>
+        """, page)
+        assertEquals(listOf("one_1200.jpg", "two_1800.jpg"),
+            PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
+
+    @Test fun respectsExplicitFancyboxDataSrcWhenHrefIsPlaceholder() {
+        val doc = Jsoup.parse("""
+            <article>
+              <a data-fancybox="gallery" href="#preview"
+                 data-src="https://cdn.elitebabes.com/content/full_1800.jpg">
+                <img src="https://cdn.elitebabes.com/content/full_masonry_400.jpg">
+              </a>
+            </article>
+        """, page)
+        assertEquals(listOf("full_1800.jpg"),
+            PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
+
+    @Test fun neverConvertsThumbnailsOrExternalAdsToOriginals() {
+        val doc = Jsoup.parse("""
+            <article>
+              <a data-fancybox="gallery" href="/content/a_masonry_400.jpg"></a>
+              <a data-fancybox="gallery" href="/content/b_w400.jpg"></a>
+              <a data-fancybox="gallery" href="https://ads.example.com/big.jpg"></a>
+              <a data-fancybox="gallery" href="http://cdn.elitebabes.com/big.jpg"></a>
+              <img src="https://cdn.elitebabes.com/content/cover_1800.jpg">
+            </article>
+        """, page)
+        assertNull(PhotoGallerySources.extract(doc, page))
+    }
+
+    @Test fun onlyUnrelatedThumbnailGroupsDoNotCreateQueueSources() {
+        val doc = Jsoup.parse("""
+            <main><article><img src="/previews/cover.jpg"></article></main>
+            <nav><a data-fancybox="gallery" href="/content/side_1800.jpg"></a></nav>
+        """, page)
+        assertNull(PhotoGallerySources.extract(doc, page))
+    }
+
 }

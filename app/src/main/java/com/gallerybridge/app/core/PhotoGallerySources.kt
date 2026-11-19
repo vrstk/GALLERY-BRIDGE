@@ -6,8 +6,8 @@ import org.jsoup.nodes.Element
 import java.util.Locale
 
 /**
- * Find explicit full-size gallery links rather than scraping surrounding thumbnails.
- * No URLs are invented. Unrecognized layouts still use generic discovery.
+ * Read explicitly linked gallery originals from the publication page only.
+ * Neither preview <img> sources nor invented CDN file names are downloadable.
  */
 object PhotoGallerySources {
     private val supportingNames = listOf(
@@ -15,6 +15,10 @@ object PhotoGallerySources {
     )
     private val contentNames = setOf(
         "post-content", "entry-content", "post-body", "article-body", "gallery-content"
+    )
+    private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "avif", "bmp")
+    private val thumbnailSuffix = Regex(
+        """(?i)[_-](?:masonry[_-]?[0-9]{2,4}|w(?:[0-8][0-9]{2})|thumb(?:nail)?|preview|small|cover|poster)$"""
     )
 
     private fun supportingArea(anchor: Element): Boolean = anchor.parents().any { parent ->
@@ -40,6 +44,41 @@ object PhotoGallerySources {
             id.startsWith("gallery_", ignoreCase = true)
     }
 
+    private fun galleryGroup(anchor: Element): String? {
+        val modern = anchor.attr("data-fancybox").trim().lowercase(Locale.ROOT)
+        if (galleryId(modern)) return modern
+        // Fancybox also documents image groups and older data-fancybox-group.
+        // Accept these only inside the publication, never from a page-wide ad.
+        if (modern in setOf("images", "photos") && primaryArea(anchor)) return modern
+        val legacy = anchor.attr("data-fancybox-group").trim().lowercase(Locale.ROOT)
+        if (galleryId(legacy) && primaryArea(anchor)) return "legacy:$legacy"
+        // Legacy Fancybox sometimes marks article anchors only by class=fancy.
+        // Do not treat arbitrary image links or standalone cover thumbnails as a gallery.
+        if (anchor.hasClass("fancy") && primaryArea(anchor)) return "article:fancy"
+        return null
+    }
+
+    private fun originalUrl(anchor: Element): String? {
+        // Both href and data-src are first-party, explicit Fancybox source
+        // attributes. img[src], srcset and background-image are NOT evidence.
+        for (attribute in listOf("href", "data-src")) {
+            val url = anchor.absUrl(attribute).toHttpUrlOrNull() ?: continue
+            val filename = url.pathSegments.lastOrNull().orEmpty()
+            val suffix = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)
+            val stem = filename.substringBeforeLast('.', "")
+            if (url.scheme != "https" || url.port != 443 ||
+                (url.host != "elitebabes.com" && !url.host.endsWith(".elitebabes.com")) ||
+                suffix !in imageExtensions || thumbnailSuffix.containsMatchIn(stem) ||
+                url.pathSegments.any {
+                    it.lowercase(Locale.ROOT) in
+                        setOf("thumb", "thumbs", "thumbnail", "thumbnails", "previews", "posters")
+                }
+            ) continue
+            return url.toString()
+        }
+        return null
+    }
+
     fun extract(doc: Document, pageUrl: String): List<Media>? {
         val origin = pageUrl.toHttpUrlOrNull() ?: return null
         val host = origin.host.lowercase(Locale.ROOT)
@@ -47,37 +86,27 @@ object PhotoGallerySources {
             host != "elitebabes.com" && !host.endsWith(".elitebabes.com")
         ) return null
 
-        // Some valid lightboxes omit the CSS class "fancy". Their HTML
-        // data-fancybox association is the meaningful link to the gallery.
-        val groups = doc.select("a[data-fancybox][href]")
-            .filter { galleryId(it.attr("data-fancybox")) && !supportingArea(it) }
-            .filter { isImageUrl(it.absUrl("href")) }
-            .groupBy { it.attr("data-fancybox").trim().lowercase(Locale.ROOT) }
+        val groups = doc.select("a[data-fancybox], a[data-fancybox-group], a.fancy")
+            .filterNot(::supportingArea)
+            .mapNotNull { anchor ->
+                val group = galleryGroup(anchor) ?: return@mapNotNull null
+                val photo = originalUrl(anchor) ?: return@mapNotNull null
+                Triple(group, anchor, photo)
+            }.groupBy { it.first }
 
-        // A smaller gallery in the article beats a larger related carousel.
-        // Within the same location, choose the largest explicitly linked group.
-        val anchors = groups.values.maxWithOrNull(
-            compareBy<List<Element>>({ group -> group.count(::primaryArea) },
-                { group -> group.size })
+        // Never concatenate different groups, related sets and adverts.
+        val chosen = groups.values.maxWithOrNull(
+            compareBy<List<Triple<String, Element, String>>>(
+                { group -> group.count { primaryArea(it.second) } },
+                { group -> group.size }
+            )
         ) ?: return null
-
         val photos = linkedMapOf<String, Media>()
-        for (anchor in anchors) {
-            val resolved = anchor.absUrl("href").toHttpUrlOrNull() ?: continue
-            if (resolved.scheme != "https" || !isImageUrl(resolved.toString())) continue
-            val filename = resolved.pathSegments.lastOrNull().orEmpty()
-            val url = resolved.toString()
+        for ((_, _, url) in chosen) {
+            val filename = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty()
             photos.putIfAbsent(url, Media(url, Paths.clean(filename), Kind.PHOTO, "Ссылка"))
             if (photos.size >= 300) break
         }
         return photos.values.toList().takeIf { it.isNotEmpty() }
-    }
-
-    private fun isImageUrl(raw: String): Boolean {
-        val url = raw.toHttpUrlOrNull() ?: return false
-        val name = url.pathSegments.lastOrNull().orEmpty()
-        return url.scheme == "https" &&
-            name.substringAfterLast('.', "").lowercase(Locale.ROOT) in
-            setOf("jpg", "jpeg", "png", "webp", "gif", "avif", "bmp")
     }
 }
