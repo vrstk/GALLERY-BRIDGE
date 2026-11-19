@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,6 +27,7 @@ import com.gallerybridge.app.core.CatalogGallery
 import com.gallerybridge.app.core.GalleryBatchSelection
 import com.gallerybridge.app.core.GalleryCatalogFilter
 import com.gallerybridge.app.core.GalleryCatalogProgress
+import com.gallerybridge.app.core.GalleryCatalogModels
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.core.GalleryFields
 import com.gallerybridge.app.core.GalleryKeys
@@ -51,6 +53,8 @@ internal fun GalleryCatalog(
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
+    var browseModels by rememberSaveable { mutableStateOf(false) }
+    var chosenModel by rememberSaveable { mutableStateOf<String?>(null) }
     var onlyTransferred by rememberSaveable { mutableStateOf(false) }
     var onlyQueued by rememberSaveable { mutableStateOf(false) }
     var onlyAttention by rememberSaveable { mutableStateOf(false) }
@@ -67,6 +71,13 @@ internal fun GalleryCatalog(
             queue, onlyQueued, onlyAttention
         )
     }
+    val modelGroups = remember(filtered) { GalleryCatalogModels.group(filtered) }
+    val activeGroup = modelGroups.firstOrNull { it.key == chosenModel }
+    // If records change or the search/filter hides a model, show the index instead.
+    val visibleEntries = if (browseModels) {
+        if (chosenModel == null) emptyList()
+        else GalleryCatalogModels.select(modelGroups, chosenModel!!)
+    } else filtered
     val batchCandidates = remember(entries, queue) {
         entries.filter { GalleryBatchSelection.eligible(it, queue) }
     }
@@ -84,13 +95,13 @@ internal fun GalleryCatalog(
     ) {
         item(key = "search") {
             OutlinedTextField(
-                value = query, onValueChange = { query = it },
+                value = query, onValueChange = { query = it; chosenModel = null },
                 label = { Text("Поиск по каталогу") },
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
                 shape = MaterialTheme.shapes.medium,
                 singleLine = true, modifier = Modifier.fillMaxWidth().testTag("catalog-search"),
                 trailingIcon = if (query.isNotEmpty()) {
-                    { TextButton(onClick = { query = "" }) { Text("Сброс") } }
+                    { TextButton(onClick = { query = ""; chosenModel = null }) { Text("Сброс") } }
                 } else null
             )
         }
@@ -100,6 +111,15 @@ internal fun GalleryCatalog(
                     label = { Text("Новые") })
                 FilterChip(selected = alphabetic, onClick = { alphabetic = true },
                     label = { Text("По модели А–Я") })
+                FilterChip(
+                    selected = browseModels,
+                    onClick = {
+                        browseModels = !browseModels
+                        chosenModel = null
+                    },
+                    label = { Text("По моделям") },
+                    modifier = Modifier.testTag("catalog-model-mode")
+                )
             }
         }
         item(key = "status") {
@@ -108,17 +128,26 @@ internal fun GalleryCatalog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "Публикации",
+                    if (browseModels && activeGroup != null) activeGroup.label
+                    else if (browseModels) "Модели" else "Публикации",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    "Показано: ${filtered.size} из ${entries.size}" +
+                    (if (browseModels && chosenModel == null)
+                        "Моделей: ${modelGroups.size} · Публикаций: ${filtered.size}"
+                    else "Показано: ${visibleEntries.size} из ${entries.size}") +
                         if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+        if (browseModels && chosenModel != null) item(key = "model-back") {
+            TextButton(
+                modifier = Modifier.testTag("catalog-model-back"),
+                onClick = { chosenModel = null }
+            ) { Text("Все модели") }
         }
         item(key = "tools") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
@@ -137,14 +166,18 @@ internal fun GalleryCatalog(
         }
         if (showFilters) item(key = "filters") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = onlyTransferred, onClick = { onlyTransferred = !onlyTransferred },
+                FilterChip(selected = onlyTransferred, onClick = {
+                    onlyTransferred = !onlyTransferred; chosenModel = null
+                },
                     label = { Text("С передачами") })
                 FilterChip(selected = onlyQueued, onClick = {
                     onlyQueued = !onlyQueued
+                    chosenModel = null
                     if (onlyQueued) onlyAttention = false
                 }, label = { Text("В очереди") })
                 FilterChip(selected = onlyAttention, onClick = {
                     onlyAttention = !onlyAttention
+                    chosenModel = null
                     if (onlyAttention) onlyQueued = false
                 }, label = { Text("Требуют внимания") })
             }
@@ -204,12 +237,44 @@ internal fun GalleryCatalog(
                     Text("По текущим фильтрам ничего не найдено.")
                     TextButton(onClick = {
                         query = ""; alphabetic = false; onlyTransferred = false
-                        onlyQueued = false; onlyAttention = false
+                        onlyQueued = false; onlyAttention = false; chosenModel = null
                     }) { Text("Сбросить фильтры") }
                 }
             }
+        } else if (browseModels && (chosenModel == null || activeGroup == null)) {
+            items(modelGroups, key = { "model:" + it.key }) { group ->
+                OutlinedCard(
+                    onClick = { chosenModel = group.key },
+                    modifier = Modifier.fillMaxWidth().testTag("catalog-model-row"),
+                    shape = MaterialTheme.shapes.medium,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    )
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            group.label,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${group.count} галерей",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    }
+                }
+            }
         } else {
-            items(filtered, key = { it.url }) { entry ->
+            items(visibleEntries, key = { it.url }) { entry ->
                 val progress = GalleryCatalogProgress.resolve(entry, queue)
                 var menuExpanded by remember(entry.url) { mutableStateOf(false) }
                 OutlinedCard(
