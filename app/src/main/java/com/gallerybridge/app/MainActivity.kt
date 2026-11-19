@@ -539,6 +539,21 @@ class MainActivity : ComponentActivity() {
                             working = false
                             if (checkpoint.finished) {
                                 modelListing = checkpoint.result()
+                                // Store metadata-only cards, including videos, without starting downloads.
+                                try {
+                                    val imported = modelListing?.allCards.orEmpty().map { pub ->
+                                        CatalogGallery(pub.url, pub.model.ifBlank { "Без имени" },
+                                            pub.title, pub.displayedDate, System.currentTimeMillis(),
+                                            source = "elitebabes", sourceId = pub.sourceId,
+                                            originalCaption = pub.caption, studio = pub.studio,
+                                            displayedDate = pub.displayedDate, type = pub.type,
+                                            previewUrl = pub.previewUrl)
+                                    }
+                                    GalleryCatalogStore.importMissing(this@MainActivity, imported)
+                                    catalog = GalleryCatalogStore.load(this@MainActivity)
+                                } catch (_: Exception) {
+                                    // The scan result stays visible even if catalog storage fails.
+                                }
                                 status = "Найдено фотопубликаций: ${modelListing?.photos?.size ?: 0}. " +
                                     if (modelListing?.incomplete == true)
                                         "Список может быть неполным, проверьте сообщение ниже."
@@ -862,6 +877,7 @@ class MainActivity : ComponentActivity() {
             status = "Настройте Mail WebDAV перед созданием очереди."
             return
         }
+        val previousQueueId = QueueStore.load(this)?.id
         working = true
         scanning = true
         scanJob = scope.launch {
@@ -900,7 +916,16 @@ class MainActivity : ComponentActivity() {
                 status = "Подготовка остановлена. Существующая очередь не изменена."
                 throw e
             } catch (e: Exception) {
-                status = "Очередь не создана: ${e.message ?: "ошибка источника"}"
+                val created = QueueStore.load(this@MainActivity)?.takeIf {
+                    it.id != previousQueueId && it.entries.any { item -> item.galleryUrl.isNotBlank() }
+                }
+                if (created != null) {
+                    savedQueue = created
+                    screen = GalleryPage.QUEUE
+                    transferStatus = "Очередь сохранена; требуется проверить состояние: ${e.message}"
+                } else {
+                    status = "Очередь не создана: ${e.message ?: "ошибка источника"}"
+                }
             } finally {
                 working = false
                 scanning = false
@@ -1493,6 +1518,8 @@ class MainActivity : ComponentActivity() {
                 onClear = { modelListingSelected = emptySet() },
                 onSave = ::saveListingSelection,
                 onQueueSelected = ::queueSelectedModelGalleries,
+                destination = target,
+                onDestinationChange = { target = it },
                 onStop = ::stopSearch,
                 onContinue = ::scan,
                 onOpen = ::openListingPublication,

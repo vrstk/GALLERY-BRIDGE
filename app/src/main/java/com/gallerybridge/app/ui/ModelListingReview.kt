@@ -31,7 +31,9 @@ internal fun ModelListingReview(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onOpen: (ModelListingSources.Publication) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    destination: String = "Папка Android",
+    onDestinationChange: (String) -> Unit = {}
 ) {
     val photos = result.photos
     val videoCards = result.videoCards
@@ -72,6 +74,15 @@ internal fun ModelListingReview(
         }
         Text("Выбрано фотогалерей: $chosenPhotos. Даты показаны на карточках сайта, " +
             "это не подтверждённые даты публикации.", style = MaterialTheme.typography.bodySmall)
+        Text("Назначение: $destination", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(selected = destination == "Папка Android",
+                onClick = { onDestinationChange("Папка Android") }, enabled = !busy,
+                label = { Text("Папка Android / Drive") })
+            FilterChip(selected = destination == "Mail WebDAV",
+                onClick = { onDestinationChange("Mail WebDAV") }, enabled = !busy,
+                label = { Text("Mail") })
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Button(onClick = onQueueSelected, enabled = chosenPhotos > 0 && !busy) {
                 Text("В очередь ($chosenPhotos)")

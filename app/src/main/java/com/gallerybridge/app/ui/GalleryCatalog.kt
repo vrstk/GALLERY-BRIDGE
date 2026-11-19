@@ -18,6 +18,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import com.gallerybridge.app.core.Kind
+import com.gallerybridge.app.core.Media
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -310,23 +313,31 @@ internal fun GalleryCatalog(
                                         batchSelection.size < GalleryBatchSelection.LIMIT
                                 )
                             }
-                            // The catalog stores a publication URL, not a verified photo.
-                            // Use a clearly decorative placeholder; do not fetch or invent a cover.
-                            Box(
-                                modifier = Modifier.size(width = 52.dp, height = 60.dp)
-                                    .background(
-                                        Brush.linearGradient(
-                                            listOf(colors.primaryContainer, colors.surfaceContainerHigh)
-                                        ),
-                                        MaterialTheme.shapes.small
-                                    ).testTag("catalog-publication-preview"),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(R.drawable.ic_gallery_bridge),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(30.dp)
+                            // Only the explicit catalog cover; never pass it to the queue.
+                            if (entry.source == "elitebabes" &&
+                                entry.previewUrl.startsWith("https://cdn.elitebabes.com/")) {
+                                CachedGalleryImage(
+                                    media = Media(entry.previewUrl,
+                                        entry.title.ifBlank { "Обложка" },
+                                        Kind.PHOTO, "Обложка каталога"),
+                                    modifier = Modifier.size(width = 52.dp, height = 60.dp),
+                                    contentScale = ContentScale.Crop
                                 )
+                            } else {
+                                Box(
+                                    modifier = Modifier.size(width = 52.dp, height = 60.dp)
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(colors.primaryContainer,
+                                                    colors.surfaceContainerHigh)
+                                            ), MaterialTheme.shapes.small
+                                        ).testTag("catalog-publication-preview"),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(painter = painterResource(R.drawable.ic_gallery_bridge),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(30.dp))
+                                }
                             }
                             Column(
                                 modifier = Modifier.weight(1f),
