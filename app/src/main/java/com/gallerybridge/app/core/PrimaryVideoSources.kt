@@ -62,6 +62,10 @@ object PrimaryVideoSources {
         return poster.toString().takeIf { ext in setOf("jpg", "jpeg", "png", "webp") }.orEmpty()
     }
 
+    /** Nullable poster accessor retained for existing parser checks. */
+    fun posterUrl(doc: Document, pageUrl: String): String? =
+        poster(doc, pageUrl).takeIf { it.isNotBlank() }
+
     fun isVideoPage(doc: Document, pageUrl: String): Boolean {
         val path = pageUrl.toHttpUrlOrNull()?.encodedPath.orEmpty()
         return doc.selectFirst("figure.stage.media-player, video#thisPlayer") != null ||
