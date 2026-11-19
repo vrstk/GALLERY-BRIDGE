@@ -127,4 +127,25 @@ class ModelListingSourcesTest {
         assertTrue(result.incomplete)
         assertEquals(1,result.errors.size)
     }
+    @Test fun completeDeclaredListingRequiresContiguousFullBatchesAndUniqueFinalRemainder() {
+        val pages = (1..22).map { n ->
+            val cards = (1..(if (n == 22) 12 else 20)).map { k ->
+                val id = (n - 1) * 20 + k
+                ModelListingSources.Publication("https://www.elitebabes.com/gallery-$id/",
+                    "Happy", "", "Example", sourceId = id.toString(),
+                    type = if (id <= 361) "photo" else "video")
+            }
+            val videos = cards.filter { it.type == "video" }
+            ModelListingSources.Page(ModelListingSources.Address("example", n), "Example",
+                cards.filter { it.type == "photo" }, videos.size, cards.size, emptyMap(),
+                true, 432, "https://www.elitebabes.com/gridapi/?content=model&nr=1&sort=oldest", videos)
+        }
+        assertTrue(ModelListingSources.coversDeclaredListing(pages))
+        assertFalse(ModelListingSources.combine(pages).incomplete)
+        assertFalse(ModelListingSources.coversDeclaredListing(pages.dropLast(1)))
+        assertFalse(ModelListingSources.coversDeclaredListing(pages.reversed()))
+        val last = pages.last()
+        assertFalse(ModelListingSources.coversDeclaredListing(pages.dropLast(1) +
+            last.copy(videoCards = List(12) { last.videoCards.first() })))
+    }
 }

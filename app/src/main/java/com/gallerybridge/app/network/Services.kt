@@ -70,7 +70,11 @@ object Services {
     private fun kind(path: String) = if (Regex("\\.(mp4|m4v|mov|webm)$", RegexOption.IGNORE_CASE).containsMatchIn(path)) Kind.VIDEO else Kind.PHOTO
     private fun request(url: String) = Request.Builder().url(url).header("User-Agent", "GalleryBridge/0.1").build()
 
-    suspend fun scan(raw: String): Scan = withContext(Dispatchers.IO) {
+    suspend fun scan(raw: String): Scan = scanPageSource(raw, photoOnly = false)
+
+    suspend fun scanPhotoPublication(raw: String): Scan = scanPageSource(raw, photoOnly = true)
+
+    private suspend fun scanPageSource(raw: String, photoOnly: Boolean): Scan = withContext(Dispatchers.IO) {
         val url = raw.trim().toHttpUrlOrNull() ?: error("Неверный URL")
         require(url.scheme == "https") { "Нужна HTTPS-ссылка" }
         if (url.host in setOf("elitebabes.com", "www.elitebabes.com") &&
@@ -95,6 +99,13 @@ object Services {
             val doc = Jsoup.parse(html, response.request.url.toString())
             // Single-video pages must use only the main player's sources.
             // Do not attach sidebar recommendations, ad clips or unrelated MP4s.
+            val gallery = PhotoGallerySources.extract(doc, response.request.url.toString())
+            if (photoOnly) {
+                val title = PageMetadata.publicationTitle(doc)
+                val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
+                return@scanPage Scan(title, metadata.publishedDate, gallery.orEmpty(),
+                    metadata.model, metadata.modelSource, metadata.dateSource)
+            }
             val primary = PrimaryVideoSources.extract(doc, response.request.url.toString())
             if (PrimaryVideoSources.isVideoPage(doc, response.request.url.toString())) {
                 val videoTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
@@ -142,7 +153,6 @@ object Services {
             }
             // Prefer the real gallery lightbox when the site has a stable
             // gallery structure. Do not mix related sets, ads or site icons.
-            val gallery = PhotoGallerySources.extract(doc, response.request.url.toString())
             if (gallery != null) {
                 val title = PageMetadata.publicationTitle(doc)
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
@@ -284,6 +294,7 @@ object Services {
             val start = (pages.maxOfOrNull { it.address.number } ?: 1) + 1
             for (number in start..ModelListingSources.MAX_PAGES) {
                 coroutineContext.ensureActive()
+                if (ModelListingSources.coversDeclaredListing(pages)) break
                 val apiPage = EliteBabesModelAdapter.nextUrl(apiUrl, number)
                 try {
                     listingClient.newCall(request(apiPage)).execute().use { r ->
@@ -345,7 +356,8 @@ object Services {
                 }
             }
             return@withContext ModelListingSources.combine(
-                pages, errors, capped = !complete, apiConfirmedComplete = complete)
+                pages, errors, capped = !complete && !ModelListingSources.coversDeclaredListing(pages),
+                apiConfirmedComplete = complete)
         }
         pages.forEach { page ->
             page.pages.forEach { (number, link) ->

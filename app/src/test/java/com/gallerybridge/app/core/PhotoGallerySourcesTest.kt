@@ -163,4 +163,14 @@ class PhotoGallerySourcesTest {
         assertNull(PhotoGallerySources.extract(doc, page))
     }
 
+    @Test fun followsExplicitFullImagePairedWithItsOwnThumbnail() {
+        val doc = Jsoup.parse("""
+            <main id="content"><article>
+              <a href="/content/set/001_1200.jpg"><img src="/content/set/001_w400.jpg"></a>
+              <a href="/content/set/unrelated.jpg"><img src="/content/set/002_w400.jpg"></a>
+              <aside><a href="/content/set/003_1200.jpg"><img src="/content/set/003_w400.jpg"></a></aside>
+            </article></main>
+        """, page)
+        assertEquals(listOf("001_1200.jpg"), PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
 }

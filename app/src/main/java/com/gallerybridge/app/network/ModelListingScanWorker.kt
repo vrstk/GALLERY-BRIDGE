@@ -88,7 +88,8 @@ internal class ModelListingScanWorker(context: Context, params: WorkerParameters
             ModelListingCheckpointStore.finish(applicationContext, id.toString(), result,
                 apiComplete = !result.incomplete && result.errors.isEmpty() &&
                     ModelListingCheckpointStore.read(applicationContext)?.pages
-                        ?.any { it.apiUrl.isNotBlank() } == true)
+                        ?.let { pages -> pages.any { it.apiUrl.isNotBlank() } &&
+                            !com.gallerybridge.app.core.ModelListingSources.coversDeclaredListing(pages) } == true)
             return Result.success()
         } catch (e: CancellationException) {
             throw e

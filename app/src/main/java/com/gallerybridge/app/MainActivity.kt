@@ -924,10 +924,10 @@ class MainActivity : ComponentActivity() {
                     ensureActive()
                     status = "Открываем фотогалерею ${index + 1} из ${chosen.size}: " +
                         pub.title.ifBlank { pub.sourceId }
-                    val scan = Services.scan(pub.url)
+                    val scan = Services.scanPhotoPublication(pub.url)
                     val photos = scan.media.filter { it.kind == Kind.PHOTO }
                     require(photos.isNotEmpty()) {
-                        "Галерея ${pub.sourceId.ifBlank { pub.url }}: реальные фотографии не найдены."
+                        "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» не найдены ссылки на полноразмерные изображения."
                     }
                     prepared += PreparedGallery(pub.url, pub.sourceId, pub.model,
                         pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)

@@ -79,6 +79,22 @@ object PhotoGallerySources {
         return null
     }
 
+    private fun linkedPhotoGroup(anchor: Element, photo: String): String? {
+        val full = photo.toHttpUrlOrNull() ?: return null
+        val image = anchor.selectFirst("img") ?: return null
+        val base = full.encodedPath.substringBeforeLast('.')
+        val stem = base.replace(Regex("""_[1-9][0-9]{2,4}$"""), "")
+        for (attribute in listOf("data-src", "src")) {
+            val thumb = image.absUrl(attribute).toHttpUrlOrNull() ?: continue
+            val small = thumb.encodedPath.substringBeforeLast('.')
+            if (thumb.host == full.host && thumbnailSuffix.containsMatchIn(small) &&
+                small.replace(thumbnailSuffix, "") == stem) {
+                return "linked:" + stem.substringBeforeLast('/')
+            }
+        }
+        return null
+    }
+
     fun extract(doc: Document, pageUrl: String): List<Media>? {
         val origin = pageUrl.toHttpUrlOrNull() ?: return null
         val host = origin.host.lowercase(Locale.ROOT)
@@ -86,11 +102,19 @@ object PhotoGallerySources {
             host != "elitebabes.com" && !host.endsWith(".elitebabes.com")
         ) return null
 
-        val groups = doc.select("a[data-fancybox], a[data-fancybox-group], a.fancy")
+        val groups = doc.select("a[data-fancybox], a[data-fancybox-group], a.fancy, " +
+            "article .gallery a[href], article .wp-block-gallery a[href], article a[rel~=^lightbox], main#content a[href]:has(img), article a[href]:has(img)")
             .filterNot(::supportingArea)
             .mapNotNull { anchor ->
-                val group = galleryGroup(anchor) ?: return@mapNotNull null
                 val photo = originalUrl(anchor) ?: return@mapNotNull null
+                val group = galleryGroup(anchor) ?: run {
+                    if (anchor.selectFirst("img") == null) return@mapNotNull null
+                    val container = anchor.closest(".gallery, .wp-block-gallery")
+                    if (container != null) "container:" + container.cssSelector()
+                    else if (anchor.attr("rel").matches(Regex("""lightbox(?:\[[\w-]+\])?""")))
+                        "rel:" + anchor.attr("rel")
+                    else linkedPhotoGroup(anchor, photo) ?: return@mapNotNull null
+                }
                 Triple(group, anchor, photo)
             }.groupBy { it.first }
 

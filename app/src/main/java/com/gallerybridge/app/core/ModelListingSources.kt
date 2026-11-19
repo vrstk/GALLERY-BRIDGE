@@ -128,6 +128,29 @@ object ModelListingSources {
         return if (address(next) == Address(expected, number)) number to next else null
     }
 
+    // A short final batch corroborates the advertised count. Require the entire
+    // sequence and distinct publication URLs, including on a resumed scan.
+    fun coversDeclaredListing(pages: List<Page>): Boolean {
+        val first = pages.firstOrNull() ?: return false
+        val expected = first.advertisedCount ?: return false
+        if (pages.size < 2 || first.apiUrl.isBlank() || expected <= 0 ||
+            pages.sumOf { it.cardCount } != expected ||
+            pages.last().cardCount !in 1 until first.cardCount) return false
+        val urls = mutableSetOf<String>()
+        val ids = mutableSetOf<String>()
+        return pages.withIndex().all { (index, page) ->
+            page.address == Address(first.address.slug, index + 1) &&
+                page.apiUrl == first.apiUrl && page.advertisedCount == expected &&
+                (index == pages.lastIndex || page.cardCount == first.cardCount) &&
+                page.cardCount == page.photos.size + page.videoCards.size &&
+                (page.photos + page.videoCards).all { card ->
+                    val url = GalleryKeys.canonical(card.url)
+                    url != null && urls.add(url) &&
+                        (card.sourceId.isBlank() || ids.add(card.sourceId))
+                }
+        }
+    }
+
     fun combine(
         pages: List<Page>, errors: List<String> = emptyList(),
         capped: Boolean = false, apiConfirmedComplete: Boolean = false
@@ -147,7 +170,7 @@ object ModelListingSources {
         val cards = pages.sumOf { it.cardCount }
         val advertised = pages.mapNotNull { it.advertisedCount }.maxOrNull()
         val incomplete = capped || errors.isNotEmpty() ||
-            (pages.any { it.apiUrl.isNotBlank() } && !apiConfirmedComplete) ||
+            (pages.any { it.apiUrl.isNotBlank() } && !apiConfirmedComplete && !coversDeclaredListing(pages)) ||
             pages.any { it.cardCount >= MAX_CARDS_PER_PAGE ||
                 (it.infiniteLoader && it.apiUrl.isBlank()) } ||
             (advertised != null && photos.size + videos.size < advertised)
