@@ -47,7 +47,7 @@ class GalleryCatalogStoreTest {
 
     @Test fun largeUniqueCatalogKeepsFieldsAndSortedOrder() {
         val entries = (0 until 432).map { i ->
-            CatalogGallery("https://www.elitebabes.com/test-gallery-$i/",
+            CatalogGallery("https://www.elitebabes.com/test-gallery-$i",
                 "Модель", "Галерея $i", "", i.toLong(),
                 source = "elitebabes", sourceId = i.toString(),
                 previewUrl = "https://cdn.elitebabes.com/previews/$i.jpg")
