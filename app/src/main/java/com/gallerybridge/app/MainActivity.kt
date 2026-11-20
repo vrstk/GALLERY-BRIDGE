@@ -1002,6 +1002,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun catalogMediaType(link: String): String? {
+        if (ModelListingSources.publicationUrl(link) == null) return null
+        return catalog.firstOrNull { it.source == "elitebabes" && GalleryKeys.same(it.url, link) }?.type
+    }
+
     private fun scan() {
         if (working || transferRunning || imageProbeRunning || url.isBlank()) return
         val requestedUrl = url
@@ -1038,8 +1043,10 @@ class MainActivity : ComponentActivity() {
         }
         scanJob = scope.launch {
             try {
-                val scan = Services.scan(requestedUrl)
-                val photos = scan.media.filter { it.kind == Kind.PHOTO }
+                val expectedType = catalogMediaType(requestedUrl)
+                val scan = if (expectedType == "photo") Services.scanPhotoPublication(requestedUrl)
+                    else Services.scan(requestedUrl)
+                val photos = scan.media.filter { it.kind == Kind.PHOTO && expectedType != "video" }
                 val recommended = withContext(Dispatchers.Default) {
                     QualitySelector.recommended(photos)
                 }
@@ -1072,6 +1079,8 @@ class MainActivity : ComponentActivity() {
                     photos.isNotEmpty() -> "Найдено фотографий: ${photos.size}"
                     videos.isNotEmpty() -> "Найдено вариантов видео: ${videos.size}. " +
                         "Видео будут загружаться только после выбора."
+                    expectedType == "photo" -> "В фотогалерее «${title.ifBlank { "Без названия" }}» не найдены ссылки на полноразмерные фотографии."
+                    expectedType == "video" -> "На странице «${title.ifBlank { "Без названия" }}» не найден доступный видеофайл плеера."
                     else -> "По этой ссылке не найдены подтверждённые медиафайлы."
                 }
             } catch (e: CancellationException) {
@@ -1596,7 +1605,11 @@ class MainActivity : ComponentActivity() {
                 GalleryLinkField(url, ::setGalleryUrl, searchAllowed, startSearch)
                 FindMediaButton(
                     searchAllowed && url.isNotBlank(), startSearch,
-                    if (ModelListingSources.accepts(url)) "Собрать галереи" else "Найти фотографии"
+                    when {
+                        ModelListingSources.accepts(url) -> "Собрать галереи"
+                        catalogMediaType(url) == "video" -> "Найти видео"
+                        else -> "Найти фотографии"
+                    }
                 )
                 OutlinedButton(onClick = ::pickLocalMedia, enabled = searchAllowed,
                     modifier = Modifier.fillMaxWidth()) {
@@ -1799,6 +1812,7 @@ class MainActivity : ComponentActivity() {
     private fun BatchReviewControls() {
         GalleryBatchReviewBar(
             position = batchReviewIndex, total = batchReviewUrls.size,
+            publicationTitle = title,
             canAdvance = !working && !scanning && !transferRunning && !imageProbeRunning &&
                 (savedQueue?.remaining ?: 0) == 0,
             onNext = ::batchNext,

@@ -13,7 +13,8 @@ internal fun GalleryBatchReviewBar(
     total: Int,
     canAdvance: Boolean,
     onNext: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    publicationTitle: String = ""
 ) {
     if (total == 0) return
     OutlinedCard(Modifier.fillMaxWidth()) {
@@ -21,6 +22,7 @@ internal fun GalleryBatchReviewBar(
             verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Пакетный просмотр: ${position + 1} из $total",
                 style = MaterialTheme.typography.titleSmall)
+            if (publicationTitle.isNotBlank()) Text(publicationTitle, style = MaterialTheme.typography.titleMedium)
             Text("Каждую публикацию проверяйте отдельно. Загрузка файлов не запускается автоматически.",
                 style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -173,4 +173,14 @@ class PhotoGallerySourcesTest {
         """, page)
         assertEquals(listOf("001_1200.jpg"), PhotoGallerySources.extract(doc, page)!!.map { it.name })
     }
+    @Test fun legacyFancyboxRelGroupsStaySeparateFromSidebarAndPreviews() {
+        val doc = Jsoup.parse("""
+            <article><a class="fancybox" rel="set-a" href="/content/a1.jpg"></a>
+            <a class="fancybox" rel="set-a" href="/content/a2.jpg"></a>
+            <a class="fancybox" rel="set-b" href="/content/b.jpg"></a>
+            <a class="fancybox" rel="set-a" href="/content/a3_w400.jpg"></a></article>
+            <aside><a class="fancybox" rel="set-a" href="/other.jpg"></a></aside>
+        """, page)
+        assertEquals(listOf("a1.jpg", "a2.jpg"), PhotoGallerySources.extract(doc, page)!!.map { it.name })
+    }
 }

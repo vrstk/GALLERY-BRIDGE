@@ -54,6 +54,9 @@ object PhotoGallerySources {
         if (galleryId(legacy) && primaryArea(anchor)) return "legacy:$legacy"
         // Legacy Fancybox sometimes marks article anchors only by class=fancy.
         // Do not treat arbitrary image links or standalone cover thumbnails as a gallery.
+        if (anchor.hasClass("fancybox") && primaryArea(anchor)) {
+            return "article:fancybox:" + anchor.attr("rel")
+        }
         if (anchor.hasClass("fancy") && primaryArea(anchor)) return "article:fancy"
         return null
     }
@@ -102,7 +105,7 @@ object PhotoGallerySources {
             host != "elitebabes.com" && !host.endsWith(".elitebabes.com")
         ) return null
 
-        val groups = doc.select("a[data-fancybox], a[data-fancybox-group], a.fancy, " +
+        val groups = doc.select("a[data-fancybox], a[data-fancybox-group], a.fancy, a.fancybox, " +
             "article .gallery a[href], article .wp-block-gallery a[href], article a[rel~=^lightbox], main#content a[href]:has(img), article a[href]:has(img)")
             .filterNot(::supportingArea)
             .mapNotNull { anchor ->

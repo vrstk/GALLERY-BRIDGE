@@ -104,7 +104,8 @@ object Services {
                 val title = PageMetadata.publicationTitle(doc)
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
                 return@scanPage Scan(title, metadata.publishedDate, gallery.orEmpty(),
-                    metadata.model, metadata.modelSource, metadata.dateSource)
+                    metadata.model, metadata.modelSource, metadata.dateSource,
+                    metadata.suggestedDate, metadata.suggestedDateSource)
             }
             val primary = PrimaryVideoSources.extract(doc, response.request.url.toString())
             if (PrimaryVideoSources.isVideoPage(doc, response.request.url.toString())) {
