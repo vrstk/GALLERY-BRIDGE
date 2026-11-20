@@ -895,7 +895,8 @@ class MainActivity : ComponentActivity() {
         val listing = modelListing ?: return
         val chosen = listing.photos.filter { it.url in modelListingSelected }
         if (working || transferRunning || chosen.isEmpty()) return
-        if ((QueueStore.load(this)?.remaining ?: 0) > 0) {
+        val previousQueue = QueueStore.load(this)
+        if ((previousQueue?.remaining ?: 0) > 0) {
             status = "Сначала завершите или закройте сохранённую очередь."
             return
         }
@@ -909,32 +910,44 @@ class MainActivity : ComponentActivity() {
             status = "Настройте Mail WebDAV перед созданием очереди."
             return
         }
-        val previousQueueId = QueueStore.load(this)?.id
+        val previousQueueId = previousQueue?.id
         working = true
         scanning = true
         scanJob = scope.launch {
             try {
-                val prepared = mutableListOf<PreparedGallery>()
-                var fileCount = 0
-                for ((index, pub) in chosen.withIndex()) {
+                val existing = withContext(Dispatchers.IO) { GalleryCatalogStore.load(applicationContext) }
+                val preparation = ModelBatchQueuePlan.prepareAvailable(chosen) { index, pub ->
                     ensureActive()
                     status = "Открываем фотогалерею ${index + 1} из ${chosen.size}: " +
                         pub.title.ifBlank { pub.sourceId }
+                    check(GalleryTransferGuard.assess(pub.url, existing, previousQueue) ==
+                        GalleryTransferGuard.Decision.CLEAR) {
+                        "повторную передачу можно подтвердить в карточке"
+                    }
                     val scan = Services.scanPhotoPublication(pub.url)
                     val photos = scan.media.filter { it.kind == Kind.PHOTO }
                     require(photos.isNotEmpty()) {
                         "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» не найдены ссылки на полноразмерные изображения."
                     }
-                    fileCount += photos.size
-                    ModelBatchQueuePlan.checkFileCount(fileCount)
-                    prepared += PreparedGallery(pub.url, pub.sourceId, pub.model,
+                    PreparedGallery(pub.url, pub.sourceId, pub.model,
                         pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)
+                }
+                ensureActive()
+                val prepared = preparation.galleries
+                val skipped = preparation.skipped
+                val summary = if (skipped.isEmpty()) "" else
+                    " Пропущено галерей: ${skipped.size}. " + skipped.values.take(3).joinToString(" · ")
+                if (prepared.isEmpty()) {
+                    status = "Очередь не создана." + summary
+                    return@launch
                 }
                 val root = if (target == TransferTargets.FOLDER) treeUri else mailRoot
                 TransferService.beginBatch(
                     this@MainActivity, prepared, target, email, password, root)
+                modelListingSelected = (modelListingSelected - prepared.map { it.sourceUrl }.toSet())
+                status = "Передано в очередь галерей: ${prepared.size}." + summary
                 GalleryCatalogStore.importMissing(this@MainActivity,
-                    chosen.map { pub -> CatalogGallery(
+                    chosen.filterNot { it.url in skipped }.map { pub -> CatalogGallery(
                         pub.url, pub.model, pub.title, pub.displayedDate,
                         System.currentTimeMillis(), source = "elitebabes",
                         sourceId = pub.sourceId, originalCaption = pub.caption,
@@ -945,7 +958,7 @@ class MainActivity : ComponentActivity() {
                 transferRunning = true
                 screen = GalleryPage.QUEUE
                 transferStatus = "Создана очередь: ${prepared.size} галерей, " +
-                    "${prepared.sumOf { it.media.size }} фотографий."
+                    "${prepared.sumOf { it.media.size }} фотографий." + summary
             } catch (e: CancellationException) {
                 status = "Подготовка остановлена. Существующая очередь не изменена."
                 throw e

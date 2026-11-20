@@ -26,6 +26,19 @@ class ModelBatchQueuePlanTest {
         assertThrows(IllegalArgumentException::class.java) { ModelBatchQueuePlan.checkFileCount(10001) }
     }
 
+    @Test fun oneUnavailablePageDoesNotDiscardOtherGalleries() = kotlinx.coroutines.runBlocking {
+        val cards = (1..3).map {
+            ModelListingSources.Publication(gallery(it.toString()).sourceUrl, "Gallery $it",
+                "2018-11-15", "Alisa", sourceId = it.toString())
+        }
+        val result = ModelBatchQueuePlan.prepareAvailable(cards) { index, card ->
+            if (index == 1) throw java.io.IOException("HTTP 404")
+            gallery(card.sourceId)
+        }
+        assertEquals(listOf("1", "3"), result.galleries.map { it.sourceId })
+        assertEquals(setOf(cards[1].url), result.skipped.keys)
+    }
+
     @Test fun duplicateGalleryIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             ModelBatchQueuePlan.validate(listOf(gallery("123"), gallery("123")))

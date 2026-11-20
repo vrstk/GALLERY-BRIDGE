@@ -13,6 +13,35 @@ data class PreparedGallery(
 object ModelBatchQueuePlan {
     const val MAX_FILES = 10000
 
+    data class Preparation(
+        val galleries: List<PreparedGallery>,
+        val skipped: Map<String, String>
+    )
+
+    suspend fun prepareAvailable(
+        publications: List<ModelListingSources.Publication>,
+        prepare: suspend (Int, ModelListingSources.Publication) -> PreparedGallery
+    ): Preparation {
+        val ready = mutableListOf<PreparedGallery>()
+        val skipped = linkedMapOf<String, String>()
+        var files = 0
+        for ((index, publication) in publications.withIndex()) {
+            val gallery = try {
+                prepare(index, publication).also { validate(listOf(it)) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                skipped[publication.url] = publication.title.ifBlank { publication.sourceId } +
+                    " — " + (failure.message ?: "ошибка страницы").take(180)
+                continue
+            }
+            files += gallery.media.size
+            checkFileCount(files)
+            ready += gallery
+        }
+        return Preparation(ready, skipped)
+    }
+
     fun checkFileCount(count: Int) {
         require(count <= MAX_FILES) {
             "В одной очереди можно передать до $MAX_FILES фотографий. Выберите меньше галерей."
