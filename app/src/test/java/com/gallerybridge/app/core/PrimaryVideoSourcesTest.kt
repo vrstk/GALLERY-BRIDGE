@@ -53,6 +53,25 @@ class PrimaryVideoSourcesTest {
         assertNull(PrimaryVideoSources.posterUrl(invalid, page))
     }
 
+    @Test fun plainElitePlayerRetainsThreeSourcesAndItsOwnPoster() {
+        val publication = "https://www.elitebabes.com/example-44189"
+        val mediaRoot = "https://media.elitebabes.com/video/"
+        val poster = "https://cdn.elitebabes.com/example.jpg"
+        val doc = Jsoup.parse("""<aside><video src="${mediaRoot}suggested.mp4"></video></aside>
+            <main><video poster="$poster">
+              <source src="${mediaRoot}a.mp4?q=1&amp;r=2" type="video/mp4">
+              <source src="${mediaRoot}b.mp4?q=2" type="video/mp4">
+              <source src="${mediaRoot}c.mp4?q=3" type="video/mp4">
+            </video></main>""", publication)
+        assertTrue(PrimaryVideoSources.isVideoPage(doc, publication))
+        val sources = PrimaryVideoSources.extract(doc, publication)
+        assertEquals(listOf("${mediaRoot}a.mp4?q=1&r=2", "${mediaRoot}b.mp4?q=2",
+            "${mediaRoot}c.mp4?q=3"), sources.map { it.url })
+        assertEquals(poster, PrimaryVideoSources.poster(doc, publication))
+        doc.select("main").remove()
+        assertFalse(PrimaryVideoSources.isVideoPage(doc, publication))
+    }
+
     @Test fun emptyPlayerDoesNotGuessUrls() {
         val doc = Jsoup.parse("<html><main><video id='thisPlayer'></video></main></html>", page)
         assertTrue(PrimaryVideoSources.isVideoPage(doc, page))

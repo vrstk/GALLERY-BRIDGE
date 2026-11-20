@@ -20,12 +20,31 @@ object PrimaryVideoSources {
         "video"
     )
 
+    private fun elitePage(pageUrl: String): Boolean =
+        pageUrl.toHttpUrlOrNull()?.host in setOf("elitebabes.com", "www.elitebabes.com")
+
+    private fun player(doc: Document, pageUrl: String): Element? {
+        if (!elitePage(pageUrl)) return playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
+        val candidates = doc.select("video").filter { video ->
+            video.closest("aside, nav, footer, .list-gallery, .related, .recommendations, .advertisement") == null
+        }
+        val marked = candidates.filter { it.id() == "thisPlayer" || it.closest("figure.stage.media-player") != null }
+        if (marked.isNotEmpty()) return marked.singleOrNull()
+        // A publication can use a plain video element with only nested sources.
+        return candidates.filter { video ->
+            (listOf(video) + video.select("source[src]")).any { element ->
+                val src = element.absUrl("src").toHttpUrlOrNull()
+                src != null && src.scheme == "https" && src.host == "media.elitebabes.com" &&
+                    src.encodedPath.endsWith(".mp4", ignoreCase = true)
+            }
+        }.singleOrNull()
+    }
+
     fun extract(doc: Document, pageUrl: String): List<Media> {
         if (XeroticaBridge.acceptsWatchPage(pageUrl) &&
             doc.selectFirst("video#thisPlayer, figure.stage.media-player video") == null)
             return emptyList()
-        val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
-            ?: return emptyList()
+        val player = player(doc, pageUrl) ?: return emptyList()
         val origin = pageUrl.toHttpUrlOrNull() ?: return emptyList()
         if (origin.scheme != "https") return emptyList()
         val referer = origin.newBuilder().fragment(null).build().toString()
@@ -55,7 +74,7 @@ object PrimaryVideoSources {
     fun poster(doc: Document, pageUrl: String): String {
         val origin = pageUrl.toHttpUrlOrNull() ?: return ""
         if (origin.scheme != "https") return ""
-        val player = playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) } ?: return ""
+        val player = player(doc, pageUrl) ?: return ""
         val poster = player.absUrl("poster").toHttpUrlOrNull() ?: return ""
         if (poster.scheme != "https" || poster.port != 443) return ""
         val ext = poster.encodedPath.substringAfterLast('.', "").lowercase()
@@ -67,6 +86,7 @@ object PrimaryVideoSources {
         poster(doc, pageUrl).takeIf { it.isNotBlank() }
 
     fun isVideoPage(doc: Document, pageUrl: String): Boolean {
+        if (elitePage(pageUrl)) return player(doc, pageUrl) != null
         val path = pageUrl.toHttpUrlOrNull()?.encodedPath.orEmpty()
         return doc.selectFirst("figure.stage.media-player, video#thisPlayer") != null ||
             path.contains("/video/", ignoreCase = true)
