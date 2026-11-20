@@ -8,6 +8,19 @@ class XeroticaBridgeTest {
     private val elite = "https://www.elitebabes.com/example-video/"
     private val watch = "https://www.xerotica.com/video/example-video-41839.html"
 
+    @Test fun modelCardRetainsTheWatchTargetOfItsOwnBridgeLink() {
+        val profile = "https://www.elitebabes.com/model/example/sort/oldest/"
+        val bridge = "https://www.xerotica.com/av_bridge.php?to=%2Fvideo%2Fexample-video-41839.html"
+        val doc = Jsoup.parse("""<ul class="list-gallery"><li><figure>
+            <a data-av-bridged="1" href="$bridge"></a>
+            <div class="img-overlay"><p><a href="$elite">Example at Studio</a></p></div>
+            </figure></li></ul>""", profile)
+        val card = EliteBabesModelAdapter.parseCards(doc, "Example").single()
+        assertEquals(elite, card.url)
+        assertEquals(watch, card.watchUrl)
+        assertNull(XeroticaBridge.watchTarget(bridge.replace("%2Fvideo%2F", "%2F%2Fother.example%2Fvideo%2F")))
+    }
+
     @Test fun explicitArticleLinkOnly() {
         val html = """<main><article><div class="post-content">
             <a href="$watch">Смотреть публикацию</a>

@@ -107,7 +107,9 @@ internal object EliteBabesModelAdapter {
                 figure.parent()?.classNames()?.any { it.contains("video", ignoreCase = true) } == true
             val card = ModelListingSources.Publication(
                 url, title, date, model, sourceId, caption, studio, date,
-                if (video) "video" else "photo", preview(figure))
+                if (video) "video" else "photo", preview(figure),
+                if (video) XeroticaBridge.watchTarget(figure.selectFirst("figure > a[href]")
+                    ?.absUrl("href").orEmpty()).orEmpty() else "")
             cards.putIfAbsent(identity(card), card)
         }
         return cards.values.toList()

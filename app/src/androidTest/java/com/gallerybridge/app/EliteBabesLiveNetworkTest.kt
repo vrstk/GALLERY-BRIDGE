@@ -16,6 +16,26 @@ import org.junit.Test
 class EliteBabesLiveNetworkTest {
     private val source = "https://www.elitebabes.com/model/alisa-i/sort/oldest/"
 
+    @Test fun naughtyInBedWatchSource() = runBlocking {
+        val publication = "https://www.elitebabes.com/a-flirty-and-playful-babe-rubbing-her-sweet-vagina-in-the-bedroom-44189"
+        try {
+            val direct = Services.scanVideoPublication(publication, "")
+            if (direct.media.any { it.kind == com.gallerybridge.app.core.Kind.VIDEO }) return@runBlocking
+            val profile = Services.scanModelIndex("https://www.elitebabes.com/model/leona-mia/sort/oldest/",
+                progress = { _, _ -> })
+            val card = profile.videoCards.firstOrNull { it.url.trimEnd('/') == publication }
+            Assume.assumeTrue("Видеокарточка с адресом плеера недоступна", !card?.watchUrl.isNullOrBlank())
+            val scan = Services.scanVideoPublication(publication, requireNotNull(card).watchUrl)
+            assertTrue("Связанный плеер не вернул видео",
+                scan.media.any { it.kind == com.gallerybridge.app.core.Kind.VIDEO })
+        } catch (e: org.junit.internal.AssumptionViolatedException) {
+            throw e
+        } catch (e: Exception) {
+            Assume.assumeNoException("Живая проверка недоступна из эмулятора", e)
+        }
+        Unit
+    }
+
     @Test fun modelToGalleryUsingApplicationOkHttp() = runBlocking {
         try {
             withTimeout(150_000L) {

@@ -17,7 +17,7 @@ object ModelListingSources {
         val url: String, val title: String, val date: String, val model: String,
         val sourceId: String = "", val caption: String = "", val studio: String = "",
         val displayedDate: String = "", val type: String = "photo",
-        val previewUrl: String = ""
+        val previewUrl: String = "", val watchUrl: String = ""
     )
     data class Page(
         val address: Address, val model: String, val photos: List<Publication>,

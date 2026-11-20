@@ -26,7 +26,7 @@ data class CatalogGallery(
     val studio: String = "",
     val displayedDate: String = "",
     val type: String = "photo",
-    val previewUrl: String = ""
+    val previewUrl: String = "", val watchUrl: String = ""
 )
 
 object GalleryCatalogStore {
@@ -63,7 +63,8 @@ object GalleryCatalogStore {
                         type = item.optString("type", "photo").takeIf {
                             it == "photo" || it == "video"
                         } ?: "photo",
-                        previewUrl = item.optString("previewUrl").take(2048)
+                        previewUrl = item.optString("previewUrl").take(2048),
+                        watchUrl = XeroticaBridge.watchTarget(item.optString("watchUrl")).orEmpty()
                     ))
                 }
             }.let { entries ->
@@ -99,7 +100,7 @@ object GalleryCatalogStore {
                 .put("source", entry.source).put("sourceId", entry.sourceId)
                 .put("originalCaption", entry.originalCaption)
                 .put("studio", entry.studio).put("displayedDate", entry.displayedDate)
-                .put("type", entry.type).put("previewUrl", entry.previewUrl))
+                .put("type", entry.type).put("previewUrl", entry.previewUrl).put("watchUrl", entry.watchUrl))
         }
         return arr.toString()
     }
@@ -132,6 +133,7 @@ object GalleryCatalogStore {
             studio = incoming.studio.ifBlank { old?.studio.orEmpty() },
             displayedDate = incoming.displayedDate.ifBlank { old?.displayedDate.orEmpty() },
             type = if (incoming.source.isNotBlank()) incoming.type else old?.type ?: incoming.type,
+            watchUrl = incoming.watchUrl.ifBlank { old?.watchUrl.orEmpty() },
             previewUrl = incoming.previewUrl.ifBlank { old?.previewUrl.orEmpty() },
             // A transfer refreshes progress, never the labels that the user already edited.
             model = if (hasTransfer) old?.model?.takeIf { it.isNotBlank() } ?: nextModel
@@ -220,10 +222,17 @@ object GalleryCatalogStore {
 
     /** Merge only missing backup entries and commit the new catalog synchronously. */
     @Synchronized fun importMissing(
-        context: Context, imported: List<CatalogGallery>
+        context: Context, imported: List<CatalogGallery>, refreshWatchLinks: Boolean = false
     ): GalleryCatalogBackup.Plan {
-        val planned = GalleryCatalogBackup.plan(load(context), imported)
-        if (planned.added > 0) {
+        val current = load(context)
+        val links = if (refreshWatchLinks) imported.filter { it.type == "video" && it.watchUrl.isNotBlank() }
+            .associate { GalleryKeys.canonical(it.url) to it.watchUrl } else emptyMap()
+        val refreshed = if (links.isEmpty()) current else current.map { old ->
+            val link = links[GalleryKeys.canonical(old.url)]
+            if (link != null && old.type == "video") old.copy(watchUrl = link) else old
+        }
+        val planned = GalleryCatalogBackup.plan(refreshed, imported)
+        if (planned.added > 0 || refreshed != current) {
             check(write(context, planned.records)) { "Не удалось сохранить каталог" }
         }
         return planned

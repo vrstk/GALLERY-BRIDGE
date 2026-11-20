@@ -553,10 +553,10 @@ class MainActivity : ComponentActivity() {
                                             source = "elitebabes", sourceId = pub.sourceId,
                                             originalCaption = pub.caption, studio = pub.studio,
                                             displayedDate = pub.displayedDate, type = pub.type,
-                                            previewUrl = pub.previewUrl)
+                                            previewUrl = pub.previewUrl, watchUrl = pub.watchUrl)
                                     }
                                     val updated = withContext(Dispatchers.IO) {
-                                        GalleryCatalogStore.importMissing(applicationContext, imported)
+                                        GalleryCatalogStore.importMissing(applicationContext, imported, refreshWatchLinks = true)
                                         GalleryCatalogStore.load(applicationContext)
                                     }
                                     if (url == checkpoint.source) {
@@ -872,7 +872,7 @@ class MainActivity : ComponentActivity() {
                             source = "elitebabes", sourceId = pub.sourceId,
                             originalCaption = pub.caption, studio = pub.studio,
                             displayedDate = pub.displayedDate, type = pub.type,
-                            previewUrl = pub.previewUrl)
+                            previewUrl = pub.previewUrl, watchUrl = pub.watchUrl)
                     }
                     val plan = GalleryCatalogStore.importMissing(applicationContext, additions)
                     plan to GalleryCatalogStore.load(applicationContext)
@@ -952,7 +952,7 @@ class MainActivity : ComponentActivity() {
                         System.currentTimeMillis(), source = "elitebabes",
                         sourceId = pub.sourceId, originalCaption = pub.caption,
                         studio = pub.studio, displayedDate = pub.displayedDate,
-                        type = pub.type, previewUrl = pub.previewUrl) })
+                        type = pub.type, previewUrl = pub.previewUrl, watchUrl = pub.watchUrl) })
                 catalog = GalleryCatalogStore.load(this@MainActivity)
                 savedQueue = QueueStore.load(this@MainActivity)
                 transferRunning = true
@@ -1045,7 +1045,10 @@ class MainActivity : ComponentActivity() {
             try {
                 val expectedType = catalogMediaType(requestedUrl)
                 val scan = if (expectedType == "photo") Services.scanPhotoPublication(requestedUrl)
-                    else Services.scan(requestedUrl)
+                    else if (expectedType == "video") {
+                        val watch = catalog.firstOrNull { GalleryKeys.same(it.url, requestedUrl) }?.watchUrl.orEmpty()
+                        Services.scanVideoPublication(requestedUrl, watch)
+                    } else Services.scan(requestedUrl)
                 val photos = scan.media.filter { it.kind == Kind.PHOTO && expectedType != "video" }
                 val recommended = withContext(Dispatchers.Default) {
                     QualitySelector.recommended(photos)

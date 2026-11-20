@@ -74,7 +74,10 @@ object Services {
 
     suspend fun scanPhotoPublication(raw: String): Scan = scanPageSource(raw, photoOnly = true)
 
-    private suspend fun scanPageSource(raw: String, photoOnly: Boolean): Scan = withContext(Dispatchers.IO) {
+    suspend fun scanVideoPublication(raw: String, watchUrl: String): Scan =
+        scanPageSource(raw, photoOnly = false, catalogWatchUrl = watchUrl)
+
+    private suspend fun scanPageSource(raw: String, photoOnly: Boolean, catalogWatchUrl: String = ""): Scan = withContext(Dispatchers.IO) {
         val url = raw.trim().toHttpUrlOrNull() ?: error("Неверный URL")
         require(url.scheme == "https") { "Нужна HTTPS-ссылка" }
         if (url.host in setOf("elitebabes.com", "www.elitebabes.com") &&
@@ -108,7 +111,10 @@ object Services {
                     metadata.suggestedDate, metadata.suggestedDateSource)
             }
             val primary = PrimaryVideoSources.extract(doc, response.request.url.toString())
-            if (PrimaryVideoSources.isVideoPage(doc, response.request.url.toString())) {
+            val linkedVideo = XeroticaBridge.externalPage(doc, response.request.url.toString())
+                ?: XeroticaBridge.watchTarget(catalogWatchUrl)
+            if (PrimaryVideoSources.isVideoPage(doc, response.request.url.toString()) &&
+                (primary.isNotEmpty() || linkedVideo == null)) {
                 val videoTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
                     ?.ifBlank { doc.title() } ?: doc.title()
                 val videoMetadata = PageMetadata.extract(doc, response.request.url.toString(), videoTitle)
@@ -120,7 +126,6 @@ object Services {
             }
             // Follow only an explicitly linked XErotica watch page inside the
             // selected Elite Babes publication, not an unrelated cover or advert.
-            val linkedVideo = XeroticaBridge.externalPage(doc, response.request.url.toString())
             if (linkedVideo != null) {
                 val externalClient = http.newBuilder()
                     .followRedirects(false).followSslRedirects(false)

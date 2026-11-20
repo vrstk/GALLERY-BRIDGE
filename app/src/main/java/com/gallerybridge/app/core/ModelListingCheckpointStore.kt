@@ -38,7 +38,7 @@ internal object ModelListingCheckpointStore {
                     .put("date", p.date).put("model", p.model)
                     .put("sourceId", p.sourceId).put("caption", p.caption)
                     .put("studio", p.studio).put("displayedDate", p.displayedDate)
-                    .put("type", p.type).put("previewUrl", p.previewUrl))
+                    .put("type", p.type).put("previewUrl", p.previewUrl).put("watchUrl", p.watchUrl))
             }
             val videos = JSONArray()
             page.videoCards.forEach { p ->
@@ -46,7 +46,7 @@ internal object ModelListingCheckpointStore {
                     .put("date", p.date).put("model", p.model).put("sourceId", p.sourceId)
                     .put("caption", p.caption).put("studio", p.studio)
                     .put("displayedDate", p.displayedDate).put("type", "video")
-                    .put("previewUrl", p.previewUrl))
+                    .put("previewUrl", p.previewUrl).put("watchUrl", p.watchUrl))
             }
             pages.put(JSONObject().put("apiUrl", page.apiUrl).put("videoCards", videos)
                 .put("source", page.pages[page.address.number])
@@ -95,7 +95,8 @@ internal object ModelListingCheckpointStore {
                     item.optString("sourceId").take(20), item.optString("caption").take(250),
                     item.optString("studio").take(130),
                     item.optString("displayedDate").take(10),
-                    item.optString("type", "photo"), item.optString("previewUrl").take(2048))
+                    item.optString("type", "photo"), item.optString("previewUrl").take(2048),
+                    XeroticaBridge.watchTarget(item.optString("watchUrl")).orEmpty())
             }
             val array = p.getJSONArray("photos")
             require(array.length() <= ModelListingSources.MAX_CARDS_PER_PAGE)
