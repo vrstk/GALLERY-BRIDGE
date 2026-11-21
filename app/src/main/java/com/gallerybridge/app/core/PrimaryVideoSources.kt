@@ -23,6 +23,17 @@ object PrimaryVideoSources {
     private fun elitePage(pageUrl: String): Boolean =
         pageUrl.toHttpUrlOrNull()?.host in setOf("elitebabes.com", "www.elitebabes.com")
 
+    fun supportsTransfer(media: Media): Boolean {
+        if (media.kind != Kind.VIDEO || media.source != SOURCE) return false
+        val page = media.referrer.toHttpUrlOrNull() ?: return false
+        val file = media.url.toHttpUrlOrNull() ?: return false
+        if (listOf(page, file).any { it.scheme != "https" || it.port != 443 ||
+                it.username.isNotEmpty() || it.password.isNotEmpty() }) return false
+        if (XeroticaBridge.acceptsWatchPage(media.referrer)) return true
+        return elitePage(media.referrer) && file.host == "media.elitebabes.com" &&
+            file.encodedPath.endsWith(".mp4", ignoreCase = true)
+    }
+
     private fun player(doc: Document, pageUrl: String): Element? {
         if (!elitePage(pageUrl)) return playerSelectors.firstNotNullOfOrNull { doc.selectFirst(it) }
         val candidates = doc.select("video").filter { video ->

@@ -67,6 +67,8 @@ class PrimaryVideoSourcesTest {
         val sources = PrimaryVideoSources.extract(doc, publication)
         assertEquals(listOf("${mediaRoot}a.mp4?q=1&r=2", "${mediaRoot}b.mp4?q=2",
             "${mediaRoot}c.mp4?q=3"), sources.map { it.url })
+        assertTrue(sources.all(PrimaryVideoSources::supportsTransfer))
+        assertFalse(PrimaryVideoSources.supportsTransfer(sources.first().copy(url = "https://example.org/video.mp4")))
         assertEquals(poster, PrimaryVideoSources.poster(doc, publication))
         doc.select("main").remove()
         assertFalse(PrimaryVideoSources.isVideoPage(doc, publication))

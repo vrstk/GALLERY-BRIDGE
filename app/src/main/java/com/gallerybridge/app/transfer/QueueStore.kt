@@ -167,7 +167,8 @@ object QueueStore {
             throw CheckpointFailure("Очередь изменилась во время передачи; результат не записан.")
         }
         val after = applyItemResult(before, entryIndex, media, state, reason, contentSha256)
-        if (after == before) {
+        // Rejected transitions return the original instance. A repeated failure can have identical fields.
+        if (after === before) {
             throw CheckpointFailure("Элемент очереди изменился; повторная запись результата заблокирована.")
         }
         save(context, after)

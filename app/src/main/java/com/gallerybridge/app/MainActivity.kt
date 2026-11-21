@@ -1122,10 +1122,8 @@ class MainActivity : ComponentActivity() {
             val chosen = items.filter { it.url in selected }
             require(chosen.isNotEmpty()) { "Выберите файлы для передачи" }
             require(chosen.none { it.kind == Kind.VIDEO } ||
-                (chosen.size == 1 && chosen.single().source == PrimaryVideoSources.SOURCE &&
-                    com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(
-                        chosen.single().referrer))) {
-                "Видео разрешено добавлять только по одному из подтверждённого плеера XErotica."
+                (chosen.size == 1 && PrimaryVideoSources.supportsTransfer(chosen.single()))) {
+                "Выберите один вариант видео из плеера Elite Babes или XErotica."
             }
             if (target == "Папка Android") {
                 val access = SafFolderAccess.inspect(this, treeUri)
@@ -1163,9 +1161,7 @@ class MainActivity : ComponentActivity() {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
             require(queue.entries.filter { it.state != "DONE" && it.state != "SKIPPED" }
                 .all { it.media.kind == Kind.PHOTO ||
-                    (it.media.source == PrimaryVideoSources.SOURCE &&
-                        com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(
-                            it.media.referrer)) }) {
+                    PrimaryVideoSources.supportsTransfer(it.media) }) {
                 "Очередь содержит неподтверждённое видео из прежней версии."
             }
             if (queue.target == "Папка Android") {
@@ -1280,8 +1276,7 @@ class MainActivity : ComponentActivity() {
         }
         if (queue.entries.any { it.state != "DONE" && it.state != "SKIPPED" &&
                 it.media.kind == Kind.VIDEO &&
-                (it.media.source != PrimaryVideoSources.SOURCE ||
-                    !com.gallerybridge.app.core.XeroticaBridge.acceptsWatchPage(it.media.referrer)) }) {
+                !PrimaryVideoSources.supportsTransfer(it.media) }) {
             transferStatus = "Сохранённая очередь содержит неподтверждённое видео прежней версии."
             return
         }

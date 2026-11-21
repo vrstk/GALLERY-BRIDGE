@@ -429,8 +429,7 @@ object Services {
     }
 
     private fun freshPrimaryVideoSource(media: Media): Media {
-        if (media.kind != Kind.VIDEO || media.source != PrimaryVideoSources.SOURCE ||
-            !XeroticaBridge.acceptsWatchPage(media.referrer)) return media
+        if (!PrimaryVideoSources.supportsTransfer(media)) return media
         val page = media.referrer
         val client = http.newBuilder().followRedirects(false).followSslRedirects(false)
             .callTimeout(25L, TimeUnit.SECONDS).build()
@@ -566,6 +565,11 @@ object Services {
             coroutineContext.ensureActive()
             var destinationWriteStarted = false
             var existingNeedsVerification = false
+            var readingSource = false
+            fun readSource(): Pair<File, String> {
+                readingSource = true
+                return download(context, item).also { readingSource = false }
+            }
             attempted++
             progress("${index + 1}/${media.size}: ${item.name}")
             try {
@@ -585,7 +589,7 @@ object Services {
                         // Presence alone is not evidence that the remote bytes match.
                         // Never overwrite an existing file on a mismatch.
                         existingNeedsVerification = true
-                        val (local, _) = download(context, item)
+                        val (local, _) = readSource()
                         try {
                             mailCall(Request.Builder().url(destination)
                                 .header("Authorization", mailAuth).get().build()).use { response ->
@@ -611,7 +615,7 @@ object Services {
                         }
                         continue
                     }
-                    val (local, mime) = download(context, item)
+                    val (local, mime) = readSource()
                     try {
                         val sourceDigest = PhotoContentDigest.sha256(local)
                         coroutineContext.ensureActive()
@@ -648,7 +652,7 @@ object Services {
                     val existingUri = SafDestination.fileForRead(context, destFolder, item.name)
                     if (existingUri != null) {
                         existingNeedsVerification = true
-                        val (local, _) = download(context, item)
+                        val (local, _) = readSource()
                         try {
                             val existing = context.contentResolver.openInputStream(existingUri)
                                 ?: throw ExistingFileVerifier.Unverified(
@@ -662,7 +666,7 @@ object Services {
                             local.delete()
                         }
                     } else {
-                        val (local, mime) = download(context, item)
+                        val (local, mime) = readSource()
                         try {
                             val sourceDigest = PhotoContentDigest.sha256(local)
                             coroutineContext.ensureActive()
@@ -706,9 +710,9 @@ object Services {
                     destinationWriteStarted ->
                         "Результат начатой передачи не подтверждён; проверьте файл в назначении."
                     e is SourceDownloadFailure.HttpError ->
-                        "Источник вернул HTTP " + e.statusCode + "; проверьте доступность фотографии."
+                        "Источник вернул HTTP " + e.statusCode + "; проверьте доступность файла."
                     isTemporaryNetworkFailure(e) ->
-                        "Нет связи с источником или облаком; повторите позже."
+                        if (readingSource) "Прервано соединение с источником при чтении файла." else "Нет связи с назначением ($target)."
                     else -> "Ошибка до записи в назначение: " + e.javaClass.simpleName
                 }
                 failed++
