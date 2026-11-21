@@ -11,11 +11,18 @@ object QualitySelector {
     private val suffix = Regex(
         "(?i)_(?:w)?(400|640|800|960|1024|1200|1280|1440|1600|1800|1920|2000|2400|2560|3000|3200|3840|4000)$"
     )
+    private val dimensions = Regex("(?i)(?:[-_])(\\d{2,4})x(\\d{2,4})$")
+    private val previewWord = Regex("(?i)(?:[-_])(?:thumb|thumbnail|small|preview)$")
     private val descriptor = Regex("(?i)\\b(\\d{3,4})w\\b")
+    private val videoSuffix = Regex("(?i)_(180|240|360|480|540|720|1080|1440|2160|4320)$")
+    private fun videoHeight(media: Media): Int? =
+        if (media.kind == Kind.VIDEO) videoSuffix.find(media.name.substringBeforeLast('.', media.name))
+            ?.groupValues?.get(1)?.toIntOrNull() else null
 
     private fun fileStem(media: Media): String {
         val name = media.name.substringBeforeLast('.', media.name)
-        return name.replace(suffix, "")
+        return if (media.kind == Kind.VIDEO) name.replace(videoSuffix, "")
+        else name.replace(suffix, "").replace(dimensions, "").replace(previewWord, "")
     }
 
     fun groupKey(media: Media): String {
@@ -28,12 +35,18 @@ object QualitySelector {
     private fun suggestedWidth(media: Media): Int? {
         val name = media.name.substringBeforeLast('.', media.name)
         val fromName = suffix.find(name)?.groupValues?.get(1)?.toIntOrNull()
+        val fromDimensions = dimensions.find(name)?.groupValues?.get(1)?.toIntOrNull()
         val fromSrcset = descriptor.find(media.source)?.groupValues?.get(1)?.toIntOrNull()
-        return listOfNotNull(fromName, fromSrcset).maxOrNull()
+        return listOfNotNull(fromName, fromDimensions, fromSrcset).maxOrNull()
     }
 
     /** Score only published URL / HTML hints; no invented URLs. */
     fun rank(media: Media): Int {
+        videoHeight(media)?.let { return 5000 + it }
+        if (media.kind == Kind.VIDEO) return 4100
+        // Explicit small previews are not promoted over the original link.
+        val stem = media.name.substringBeforeLast('.', media.name)
+        if (previewWord.containsMatchIn(stem)) return 900
         val width = suggestedWidth(media)
         if (width != null) return if (width <= 640) 1000 + width else 3000 + width
         return when {
@@ -45,6 +58,9 @@ object QualitySelector {
     }
 
     fun hint(media: Media): String {
+        if (media.kind == Kind.VIDEO) return videoHeight(media)?.let {
+            "Вариант ${it}p (по имени, качество не проверено)"
+        } ?: "Разрешение видео неизвестно"
         val width = suggestedWidth(media)
         return if (width != null) {
             "Ориентир: " + width + " px (по ссылке/HTML, без проверки)"

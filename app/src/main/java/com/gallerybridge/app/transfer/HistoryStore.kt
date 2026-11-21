@@ -1,6 +1,7 @@
 package com.gallerybridge.app.transfer
 
 import android.content.Context
+import com.gallerybridge.app.core.GalleryCatalogStore
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -52,7 +53,20 @@ object HistoryStore {
         }
     }
 
-    @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String) {
+    /** Import only absent history rows. Preserve original records and their outcomes. */
+    @Synchronized fun importMissing(
+        context: Context, imported: List<Record>
+    ): PortableHistoryBackup.Plan {
+        val planned = PortableHistoryBackup.plan(load(context), imported)
+        if (planned.added > 0) {
+            val saved = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .putString(KEY, PortableHistoryBackup.encode(planned.records).toString()).commit()
+            check(saved) { "Не удалось сохранить историю" }
+        }
+        return planned
+    }
+
+    @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String): Boolean {
         val now = System.currentTimeMillis()
         val list = listOf(
             Record(
@@ -65,7 +79,7 @@ object HistoryStore {
                 total = queue.entries.size,
                 uploaded = queue.entries.count { it.state == "DONE" },
                 skipped = queue.entries.count { it.state == "SKIPPED" },
-                failed = queue.entries.count { it.state == "FAILED" },
+                failed = queue.entries.count { it.state == "FAILED" || it.state == "BLOCKED" },
                 outcome = outcome
             )
         ) + load(context).filterNot { it.id == queue.id }
@@ -79,7 +93,12 @@ object HistoryStore {
                 .put("skipped", it.skipped).put("failed", it.failed)
                 .put("outcome", it.outcome))
         }
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+        val persisted = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString(KEY, arr.toString()).commit()
+        // The catalog is supplementary: its failure must not invalidate durable history.
+        if (persisted && queue.sourceUrl.isNotBlank()) {
+            runCatching { GalleryCatalogStore.recordTransfer(context, queue, outcome) }
+        }
+        return persisted
     }
 }

@@ -54,6 +54,46 @@ class PageMetadataTest {
         assertEquals("", PageMetadata.extract(doc, site, "Brunette Sweetheart Stuns Us").model)
     }
 
+    @Test fun visibleHeadingBeatsLongSeoTitle() {
+        val doc = Jsoup.parse(
+            """<html><head><title>Leona Mia Nude in Class Act - Free Sex Art Picture Gallery at Elite Babes</title></head>
+            <body><header id="top"><h1>Leona Mia in Sex Art set Class Act</h1></header></body></html>""",
+            site
+        )
+        assertEquals("Leona Mia in Sex Art set Class Act", PageMetadata.publicationTitle(doc))
+        assertEquals("Leona Mia", PageMetadata.extract(doc, site, PageMetadata.publicationTitle(doc)).model)
+    }
+
+    @Test fun photoFolderDateIsClearlyUnverifiedHint() {
+        val html = """<header id="top"><h1>Leona Mia in Sex Art set Class Act</h1></header>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/0027-01_1200.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/0027-02_1800.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/0027-03_1200.jpg"></a>"""
+        val doc = Jsoup.parse(html, site)
+        val f = PageMetadata.extract(doc, site, PageMetadata.publicationTitle(doc))
+        assertEquals("", f.publishedDate)
+        assertEquals("2020-12-31", f.suggestedDate)
+        assertTrue(f.suggestedDateSource.contains("не подтверждена"))
+    }
+
+    @Test fun directoryDateNeverOverridesExplicitPublishedDate() {
+        val html = """<meta property="article:published_time" content="2021-01-02">
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/a.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/b.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/c.jpg"></a>"""
+        val f = PageMetadata.extract(Jsoup.parse(html, site), site, "Leona Mia in Sex Art set Class Act")
+        assertEquals("2021-01-02", f.publishedDate)
+        assertEquals("", f.suggestedDate)
+    }
+
+    @Test fun unrelatedOrInconsistentFolderIdsDoNotBecomeDates() {
+        val html = """<a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/a.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201231/b.jpg"></a>
+            <a class="fancy" data-fancybox="gallery-01" href="https://cdn.elitebabes.com/content/201230/c.jpg"></a>"""
+        val f = PageMetadata.extract(Jsoup.parse(html, site), site, "Leona Mia in Sex Art set Class Act")
+        assertEquals("", f.suggestedDate)
+    }
+
     @Test fun anotherSiteTitlePatternIsSupportedForEliteBabes() {
         val title = "Leona Mia in Sex Art set Opening Up - Elite Babes"
         assertEquals("Leona Mia", PageMetadata.extract(Jsoup.parse(""), site, title).model)
