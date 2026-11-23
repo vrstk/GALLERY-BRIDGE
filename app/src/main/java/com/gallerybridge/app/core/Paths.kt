@@ -2,7 +2,7 @@ package com.gallerybridge.app.core
 
 enum class Kind { PHOTO, VIDEO }
 data class Media(val url: String, val name: String, val kind: Kind, val source: String, val referrer: String = "")
-data class Scan(val title: String, val date: String, val media: List<Media>, val suggestedModel: String = "", val modelSource: String = "", val dateSource: String = "", val suggestedDate: String = "", val suggestedDateSource: String = "", val posterUrl: String = "")
+data class Scan(val title: String, val date: String, val media: List<Media>, val suggestedModel: String = "", val modelSource: String = "", val dateSource: String = "", val suggestedDate: String = "", val suggestedDateSource: String = "", val posterUrl: String = "", val photoDiagnostic: String = "")
 
 object Paths {
     fun clean(s: String): String = s.replace(Regex("[\\u0000-\\u001f/\\\\<>:\"|?*]"), " ").replace(Regex("\\s+"), " ").trim(' ', '.').take(130).ifBlank { "Без названия" }

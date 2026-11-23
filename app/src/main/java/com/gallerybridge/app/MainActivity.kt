@@ -927,7 +927,10 @@ class MainActivity : ComponentActivity() {
                     val scan = Services.scanPhotoPublication(pub.url)
                     val photos = scan.media.filter { it.kind == Kind.PHOTO }
                     require(photos.isNotEmpty()) {
-                        "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» не найдены ссылки на полноразмерные изображения."
+                        scan.photoDiagnostic.ifBlank {
+                            "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» " +
+                                "не найдены ссылки на полноразмерные изображения."
+                        }
                     }
                     PreparedGallery(pub.url, pub.sourceId, pub.model,
                         pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)
@@ -1082,9 +1085,10 @@ class MainActivity : ComponentActivity() {
                     photos.isNotEmpty() -> "Найдено фотографий: ${photos.size}"
                     videos.isNotEmpty() -> "Найдено вариантов видео: ${videos.size}. " +
                         "Видео будут загружаться только после выбора."
-                    expectedType == "photo" -> "В фотогалерее «${title.ifBlank { "Без названия" }}» не найдены ссылки на полноразмерные фотографии."
+                    expectedType == "photo" -> "В фотогалерее «${title.ifBlank { "Без названия" }}» " +
+                        "нет подтверждённых полноразмерных фотографий. ${scan.photoDiagnostic}"
                     expectedType == "video" -> "На странице «${title.ifBlank { "Без названия" }}» не найден доступный видеофайл плеера."
-                    else -> "По этой ссылке не найдены подтверждённые медиафайлы."
+                    else -> "По этой ссылке не найдены подтверждённые медиафайлы. " + scan.photoDiagnostic
                 }
             } catch (e: CancellationException) {
                 throw e

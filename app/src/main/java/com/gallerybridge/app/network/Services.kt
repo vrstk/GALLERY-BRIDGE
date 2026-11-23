@@ -108,7 +108,10 @@ object Services {
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
                 return@scanPage Scan(title, metadata.publishedDate, gallery.orEmpty(),
                     metadata.model, metadata.modelSource, metadata.dateSource,
-                    metadata.suggestedDate, metadata.suggestedDateSource)
+                    metadata.suggestedDate, metadata.suggestedDateSource,
+                    photoDiagnostic = if (gallery.isNullOrEmpty())
+                        PhotoGalleryDiagnosis.inspect(doc, response.request.url.toString()).summary()
+                    else "")
             }
             val primary = PrimaryVideoSources.extract(doc, response.request.url.toString())
             val linkedVideo = XeroticaBridge.externalPage(doc, response.request.url.toString())
@@ -177,7 +180,9 @@ object Services {
                 val metadata = PageMetadata.extract(doc, response.request.url.toString(), title)
                 return@scanPage Scan(title.ifBlank { "Без названия" },
                     metadata.publishedDate, emptyList(), metadata.model,
-                    metadata.modelSource, metadata.dateSource)
+                    metadata.modelSource, metadata.dateSource,
+                    photoDiagnostic = PhotoGalleryDiagnosis
+                        .inspect(doc, response.request.url.toString()).summary())
             }
             val urls = linkedMapOf<String, Media>()
             fun add(rawUrl: String, source: String) {
