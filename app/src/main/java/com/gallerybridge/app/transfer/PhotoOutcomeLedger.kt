@@ -84,7 +84,10 @@ internal object PhotoOutcomeLedger {
         if (queue == null) return emptyList()
         return queue.entries.mapNotNull { entry ->
             if (entry.state !in setOf("DONE", "SKIPPED")) return@mapNotNull null
-            fingerprint(queue.sourceUrl, queue.target, queue.root, queue.account, entry.media)
+            // Batch entries use their own gallery URL. Missing source scope must
+            // never be interpreted as permission to repeat earlier transfers.
+            fingerprint(entry.galleryUrl.ifBlank { queue.sourceUrl },
+                queue.target, queue.root, queue.account, entry.media)
                 ?.let { Record(it, entry.state, at,
                     entry.contentSha256.takeIf(QueueStore::validContentHash).orEmpty()) }
         }.distinctBy { it.token }

@@ -15,8 +15,20 @@ object ModelBatchQueuePlan {
 
     data class Preparation(
         val galleries: List<PreparedGallery>,
-        val skipped: Map<String, String>
+        val skipped: Map<String, String>,
+        val needsReview: Map<String, String> = emptyMap()
+    ) {
+        val photoCount: Int get() = galleries.sumOf { it.media.size }
+    }
+
+    /** Ephemeral preparation; the durable queue is created only after confirmation. */
+    data class Preview(
+        val selectedUrls: Set<String>, val target: String, val root: String,
+        val account: String, val previousQueueId: Long?,
+        val preparation: Preparation
     )
+
+    class ReviewRequired(message: String) : IllegalStateException(message)
 
     suspend fun prepareAvailable(
         publications: List<ModelListingSources.Publication>,
@@ -24,12 +36,17 @@ object ModelBatchQueuePlan {
     ): Preparation {
         val ready = mutableListOf<PreparedGallery>()
         val skipped = linkedMapOf<String, String>()
+        val needsReview = linkedMapOf<String, String>()
         var files = 0
         for ((index, publication) in publications.withIndex()) {
             val gallery = try {
                 prepare(index, publication).also { validate(listOf(it)) }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
+            } catch (review: ReviewRequired) {
+                needsReview[publication.url] = publication.title.ifBlank { publication.sourceId } +
+                    " — " + (review.message ?: "требуется проверка").take(180)
+                continue
             } catch (failure: Exception) {
                 skipped[publication.url] = publication.title.ifBlank { publication.sourceId } +
                     " — " + (failure.message ?: "ошибка страницы").take(180)
@@ -39,7 +56,7 @@ object ModelBatchQueuePlan {
             checkFileCount(files)
             ready += gallery
         }
-        return Preparation(ready, skipped)
+        return Preparation(ready, skipped, needsReview)
     }
 
     fun checkFileCount(count: Int) {

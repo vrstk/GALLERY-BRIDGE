@@ -153,7 +153,15 @@ class TransferService : Service() {
                 "Сначала завершите или вручную закройте прежнюю очередь."
             }
             val catalog = GalleryCatalogStore.load(context)
+            val evidence = PhotoOutcomeLedger.load(context)
+            val account = if (target == "Mail WebDAV") email.trim() else ""
             approved.forEach { gallery ->
+                require(PhotoOutcomeLedger.matchedUrls(
+                    evidence, gallery.sourceUrl, target, root, account,
+                    gallery.media, current).isEmpty()) {
+                    "Для ${gallery.title} уже отмечены обработанные фотографии. " +
+                        "Проверьте прежнюю передачу перед повтором."
+                }
                 when (GalleryTransferGuard.assess(gallery.sourceUrl, catalog, current, false)) {
                     GalleryTransferGuard.Decision.BLOCKED ->
                         error("Для ${gallery.title} есть незавершённая очередь.")

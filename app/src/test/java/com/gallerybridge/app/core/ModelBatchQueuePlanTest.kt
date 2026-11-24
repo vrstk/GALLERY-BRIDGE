@@ -39,6 +39,39 @@ class ModelBatchQueuePlanTest {
         assertEquals(setOf(cards[1].url), result.skipped.keys)
     }
 
+    @Test fun preflightSeparatesUnavailableAndReviewWithoutWritingQueue() =
+        kotlinx.coroutines.runBlocking {
+            val cards = (1..4).map { index ->
+                ModelListingSources.Publication(gallery(index.toString()).sourceUrl,
+                    "Gallery $index", "", "Alisa", sourceId = index.toString())
+            }
+            val result = ModelBatchQueuePlan.prepareAvailable(cards) { index, card ->
+                when (index) {
+                    1 -> throw ModelBatchQueuePlan.ReviewRequired("Предыдущая передача")
+                    2 -> throw java.io.IOException("HTTP 404")
+                }
+                gallery(card.sourceId)
+            }
+            assertEquals(listOf("1", "4"), result.galleries.map { it.sourceId })
+            assertEquals(2, result.photoCount)
+            assertEquals(setOf(cards[1].url), result.needsReview.keys)
+            assertEquals(setOf(cards[2].url), result.skipped.keys)
+        }
+
+    @Test fun preflightCancellationStopsRatherThanSkipping() =
+        kotlinx.coroutines.runBlocking {
+            val card = ModelListingSources.Publication(gallery("5").sourceUrl,
+                "Gallery", "", "Alisa")
+            try {
+                ModelBatchQueuePlan.prepareAvailable(listOf(card)) { _, _ ->
+                    throw kotlinx.coroutines.CancellationException("Отмена")
+                }
+                fail("Cancellation must propagate")
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                // User cancellation is not a missing-source failure.
+            }
+        }
+
     @Test fun duplicateGalleryIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             ModelBatchQueuePlan.validate(listOf(gallery("123"), gallery("123")))

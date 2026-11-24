@@ -23,6 +23,27 @@ class PhotoOutcomeLedgerTest {
         assertEquals("SKIPPED", PhotoOutcomeLedger.fromQueue(queue("SKIPPED"), 1L).single().state)
     }
 
+    @Test fun batchOutcomesAreScopedToIndividualSourcePages() {
+        val secondUrl = "https://example.org/gallery/two"
+        val other = media.copy(url = "https://cdn.example.org/two.jpg",
+            name = "Two.jpg")
+        val batch = queue(source = "").copy(entries = listOf(
+            QueueStore.Entry(media, "DONE", galleryUrl = page),
+            QueueStore.Entry(other, "SKIPPED", galleryUrl = secondUrl)
+        ))
+        val records = PhotoOutcomeLedger.fromQueue(batch, 3L)
+        assertEquals(2, records.size)
+        assertEquals(setOf(media.url), PhotoOutcomeLedger.matchedUrls(
+            records, page, batch.target, batch.root, batch.account,
+            listOf(media, other), null))
+        assertEquals(setOf(other.url), PhotoOutcomeLedger.matchedUrls(
+            records, secondUrl, batch.target, batch.root, batch.account,
+            listOf(media, other), null))
+        assertEquals(setOf(media.url), PhotoOutcomeLedger.matchedUrls(
+            emptyList(), page, batch.target, batch.root, batch.account,
+            listOf(media, other), batch))
+    }
+
     @Test fun storedMetadataContainsNoPrivateFileNamesUrlsOrAccount() {
         val entries = PhotoOutcomeLedger.fromQueue(queue(), 1L)
         val raw = PhotoOutcomeLedger.encode(entries)
