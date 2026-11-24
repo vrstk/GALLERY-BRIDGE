@@ -4,8 +4,6 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.gallerybridge.app.core.Kind
-import com.gallerybridge.app.core.LocalMediaImport
-import com.gallerybridge.app.core.Media
 import com.gallerybridge.app.core.Paths
 import com.gallerybridge.app.transfer.QueueStore
 import kotlinx.coroutines.CancellationException
@@ -28,7 +26,6 @@ import kotlin.coroutines.coroutineContext
  */
 object IntegrityAudit {
     private const val LIMIT = 32L * 1024 * 1024
-    private val sourceHttp = OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build()
     // Authorization must never follow a redirect outside the trusted WebDAV origin.
     private val mailHttp = OkHttpClient.Builder()
         .followRedirects(false).followSslRedirects(false)
@@ -40,12 +37,17 @@ object IntegrityAudit {
         val total: Int, val matched: Int, val different: Int,
         val unavailable: Int, val oversized: Int,
         val dimensions: List<String>, val issues: List<String>,
-        val target: String
+        val target: String, val missingDigest: Int = 0
     ) {
         fun summary(): String = buildString {
             append("Принято по очереди: $total. Проверено по SHA-256: $matched из $total.")
-            append("\nРазличаются: $different; недоступно для проверки: $unavailable;" +
-                " больше лимита: $oversized.")
+            append("\nРазличаются: $different; недоступно: $unavailable;" +
+                " больше лимита: $oversized; нет исходного SHA-256: $missingDigest.")
+            if (missingDigest > 0) append(
+                "\nДля старых записей без хеша, сохранённого во время передачи, " +
+                    "невозможно надёжно подтвердить исходные байты. " +
+                    "Повторное скачивание источника не считается доказательством."
+            )
             if (dimensions.isNotEmpty()) {
                 append("\nРазмеры доступных изображений:")
                 dimensions.take(6).forEach { append("\n• " + it) }
@@ -84,34 +86,6 @@ object IntegrityAudit {
         return Digest(length, md.digest().joinToString("") {
             "%02x".format(it.toInt() and 255)
         })
-    }
-
-    /** Only legacy entries without a stored content digest need another source read. */
-    private suspend fun sourceHash(context: Context, media: Media): String {
-        val uri = Uri.parse(media.url)
-        if (uri.scheme == "content" && media.source == LocalMediaImport.SOURCE) {
-            val stream = context.contentResolver.openInputStream(uri)
-                ?: error("Локальный источник недоступен.")
-            return hash(stream).sha256
-        }
-        require(uri.scheme == "https") { "Источник должен быть HTTPS." }
-        val req = BrowserSessionHeaders.withContext(
-            Request.Builder().url(media.url).header("User-Agent", "GalleryBridge/0.1"),
-            media, context
-        ).build()
-        return sourceHttp.newCall(req).execute().use { response ->
-            require(response.isSuccessful) { "Источник HTTP " + response.code }
-            require(response.request.url.scheme == "https") {
-                "Источник перенаправил на HTTP."
-            }
-            val type = response.header("Content-Type").orEmpty().lowercase()
-            require(!type.startsWith("text/") && !type.contains("html")) {
-                "Источник вернул текст вместо фотографии."
-            }
-            val body = response.body ?: error("Источник вернул пустой ответ.")
-            if (body.contentLength() > LIMIT) throw TooLarge()
-            hash(body.byteStream()).sha256
-        }
     }
 
     /**
@@ -184,6 +158,7 @@ object IntegrityAudit {
         var different = 0
         var unavailable = 0
         var oversized = 0
+        var missingDigest = 0
         val dimensions = mutableListOf<String>()
         val issues = mutableListOf<String>()
         for ((i, entry) in queue.entries.withIndex()) {
@@ -192,17 +167,25 @@ object IntegrityAudit {
             progress(i + 1, queue.entries.size, item.name)
             try {
                 require(item.kind == Kind.PHOTO) { "Проверка видео не поддерживается." }
-                // Source bytes might have changed or vanished since transfer.
-                // Prefer the SHA-256 recorded with the durable queue checkpoint.
+                // NEVER re-download the origin to fabricate missing transfer-time
+                // evidence. The upstream content may have changed since upload.
                 val expected = ReadbackAuditPolicy.storedDigest(entry)
-                    ?: sourceHash(context, item)
-                val path = Paths.folders(queue.model, queue.date, queue.title, item.kind)
+                if (expected == null) {
+                    missingDigest++
+                    if (issues.size < 12) issues.add(
+                        item.name + ": нет SHA-256, сохранённого при передаче; " +
+                            "файл не может быть подтверждён."
+                    )
+                    continue
+                }
+                // Use EXACTLY the same per-gallery path as Services.transfer.
+                val path = ReadbackAuditPolicy.folders(queue, entry)
                 val destination: Digest
                 val reportedSize: Long?
                 var safUri: Uri? = null
                 if (queue.target == "Mail WebDAV") {
                     val result = mailReadback(
-                        Paths.splitRoot(queue.root) + path + Paths.clean(item.name),
+                        ReadbackAuditPolicy.remoteSegments(queue, entry),
                         authorization
                     )
                     destination = result.first
@@ -240,11 +223,11 @@ object IntegrityAudit {
                 unavailable++
                 // Don't expose URLs, private provider paths or auth data in reports.
                 if (issues.size < 12) issues.add(
-                    item.name + ": источник или сохранённый файл недоступен для безопасной проверки."
+                    item.name + ": сохранённый файл недоступен для безопасной проверки."
                 )
             }
         }
         Result(queue.entries.size, matched, different, unavailable, oversized,
-            dimensions, issues, queue.target)
+            dimensions, issues, queue.target, missingDigest)
     }
 }

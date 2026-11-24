@@ -1,5 +1,6 @@
 package com.gallerybridge.app.network
 
+import com.gallerybridge.app.core.Paths
 import com.gallerybridge.app.transfer.QueueStore
 
 /**
@@ -16,6 +17,20 @@ internal object ReadbackAuditPolicy {
             email.isNotBlank() && password.isNotBlank() &&
             (queue.account.isBlank() || queue.account == email.trim())
 
+    /** Match the exact per-file routing used by Services.transfer().
+     * For batch queues, QueueStore.foldersFor reconstructs the publication-specific
+     * folder including its stable identity, not the queue's generic title.
+     */
+    fun folders(queue: QueueStore.Snapshot, entry: QueueStore.Entry): List<String> =
+        QueueStore.foldersFor(entry, queue)
+
+    /** Used for remote WebDAV reads; the SAF provider uses folders() only. */
+    fun remoteSegments(queue: QueueStore.Snapshot, entry: QueueStore.Entry): List<String> =
+        Paths.splitRoot(queue.root) + folders(queue, entry) + Paths.clean(entry.media.name)
+
+    /** A later read of the source cannot replace missing transfer-time evidence.
+     * Legacy DONE/SKIPPED entries without SHA-256 must remain unverified.
+     */
     fun storedDigest(entry: QueueStore.Entry): String? =
         entry.contentSha256.takeIf(QueueStore::validContentHash)
 

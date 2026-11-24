@@ -53,4 +53,69 @@ class ReadbackAuditPolicyTest {
             snapshot(target = "Папка Android"), "mail@example.com", "app-password"
         ))
     }
+    @Test fun readbackUsesExactSingleGalleryDestination() {
+        val q = snapshot()
+        val entry = q.entries.single()
+        assertEquals(
+            com.gallerybridge.app.core.Paths.folders(
+                q.model, q.date, q.title, media.kind),
+            ReadbackAuditPolicy.folders(q, entry)
+        )
+        assertEquals(
+            com.gallerybridge.app.core.Paths.splitRoot(q.root) +
+                com.gallerybridge.app.core.Paths.folders(
+                    q.model, q.date, q.title, media.kind) + media.name,
+            ReadbackAuditPolicy.remoteSegments(q, entry)
+        )
+    }
+
+    @Test fun batchReadbackSeparatesTwoGalleriesWithSameFilename() {
+        val first = QueueStore.Entry(media, "DONE", contentSha256 = digest,
+            galleryUrl = "https://www.elitebabes.com/gallery-one/",
+            gallerySourceId = "101", galleryModel = "Alice", galleryTitle = "Session",
+            galleryDate = "2026-01-01")
+        val second = first.copy(
+            galleryUrl = "https://www.elitebabes.com/gallery-two/",
+            gallerySourceId = "202", galleryModel = "Bob")
+        val batch = snapshot().copy(model = "Wrong queue-level model",
+            title = "Wrong queue-level title", date = "2026-11-24",
+            root = "Archive/Models", sourceUrl = "",
+            entries = listOf(first, second))
+        val firstFolders = ReadbackAuditPolicy.folders(batch, first)
+        val secondFolders = ReadbackAuditPolicy.folders(batch, second)
+        assertNotEquals(firstFolders, secondFolders)
+        assertTrue(firstFolders.joinToString("/").contains("101"))
+        assertTrue(secondFolders.joinToString("/").contains("202"))
+        assertTrue(firstFolders.joinToString("/").contains("Alice"))
+        assertTrue(secondFolders.joinToString("/").contains("Bob"))
+        assertFalse(firstFolders.joinToString("/").contains("Wrong queue-level"))
+        val remote = ReadbackAuditPolicy.remoteSegments(batch, second)
+        assertEquals(listOf("Archive", "Models"), remote.take(2))
+        assertEquals("a.jpg", remote.last())
+        assertEquals(secondFolders, remote.drop(2).dropLast(1))
+        assertEquals(com.gallerybridge.app.transfer.QueueStore.foldersFor(second, batch),
+            secondFolders)
+    }
+
+    @Test fun missingTransferTimeDigestCannotBeReconstructedFromCurrentSource() {
+        val missing = snapshot().entries.single().copy(contentSha256 = "")
+        assertNull(ReadbackAuditPolicy.storedDigest(missing))
+        assertFalse(ReadbackAuditPolicy.matches(
+            missing.contentSha256, digest, 10L))
+        // Invalid old queue content hashes are also not accepted as evidence.
+        assertNull(ReadbackAuditPolicy.storedDigest(
+            missing.copy(contentSha256 = "not-a-sha256")))
+    }
+
+    @Test fun auditReadbackReportDoesNotClaimCloudSynchronization() {
+        val report = IntegrityAudit.Result(
+            total = 2, matched = 1, different = 0, unavailable = 0,
+            oversized = 0, dimensions = emptyList(), issues = emptyList(),
+            target = "Папка Android", missingDigest = 1
+        ).summary()
+        assertTrue(report.contains("нет исходного SHA-256: 1"))
+        assertTrue(report.contains("Синхронизация с удалённым облаком не подтверждена"))
+        assertTrue(report.contains("не считается доказательством"))
+    }
+
 }
