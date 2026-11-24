@@ -110,4 +110,33 @@ class GalleryCatalogStatusTest {
         compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Требует проверки").performScrollTo().assertIsDisplayed()
     }
+    @Test fun statusFiltersDistinguishUntransferredAndFailedGallery() {
+        val fresh = CatalogGallery("https://example.com/gallery/fresh",
+            "Новая модель", "Без передачи", "", 2L)
+        val failed = CatalogGallery("https://example.com/gallery/failed",
+            "Модель ошибка", "Сетевая ошибка", "", 1L,
+            "Mail WebDAV", "Ошибка подключения", 0, 3)
+        var opens = 0
+        compose.setContent {
+            MaterialTheme {
+                GalleryCatalog(
+                    entries = listOf(fresh, failed), queue = null,
+                    onQueue = {}, onBatchReview = {}, onOpen = { opens++ },
+                    onRemove = {}, onEdit = { _, _ -> true },
+                    onExport = {}, onImport = {}, backupStatus = "", historyCount = 0
+                )
+            }
+        }
+        compose.onNodeWithText("Фильтры").performClick()
+        compose.onNodeWithTag("catalog-status-filter-new").performClick()
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Без передачи").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("catalog-status-filter-errors").performClick()
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Ошибка передачи").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("catalog-status-filter-transferred").performClick()
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
+        compose.runOnIdle { assertTrue(opens == 0) }
+    }
+
 }

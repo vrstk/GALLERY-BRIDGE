@@ -58,9 +58,8 @@ internal fun GalleryCatalog(
     var alphabetic by rememberSaveable { mutableStateOf(false) }
     var browseModels by rememberSaveable { mutableStateOf(false) }
     var chosenModel by rememberSaveable { mutableStateOf<String?>(null) }
-    var onlyTransferred by rememberSaveable { mutableStateOf(false) }
-    var onlyQueued by rememberSaveable { mutableStateOf(false) }
-    var onlyAttention by rememberSaveable { mutableStateOf(false) }
+    // Exactly one status filter is active; sorting and filtering are separate.
+    var statusFilter by rememberSaveable { mutableStateOf(GalleryCatalogProgress.Filter.ALL.name) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var showBatchTools by rememberSaveable { mutableStateOf(false) }
     var showBackupTools by rememberSaveable { mutableStateOf(false) }
@@ -68,11 +67,21 @@ internal fun GalleryCatalog(
     var showBatchConfirmation by remember { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<CatalogGallery?>(null) }
     var pendingEdit by remember { mutableStateOf<CatalogGallery?>(null) }
-    val filtered = remember(entries, queue, query, alphabetic, onlyTransferred, onlyQueued, onlyAttention) {
-        GalleryCatalogProgress.filter(
-            GalleryCatalogFilter.apply(entries, query, alphabetic, onlyTransferred),
-            queue, onlyQueued, onlyAttention
-        )
+    // Batch queues may hold thousands of files. Build the per-publication
+    // index only when the queue changes to avoid quadratic Compose filtering.
+    val queueIndex = remember(queue) { GalleryCatalogProgress.index(queue) }
+    val statuses = remember(entries, queueIndex) {
+        entries.associate { it.url to GalleryCatalogProgress.resolve(it, queueIndex) }
+    }
+    val activeStatusFilter = GalleryCatalogProgress.Filter.entries.firstOrNull {
+        it.name == statusFilter
+    } ?: GalleryCatalogProgress.Filter.ALL
+    val filtered = remember(entries, statuses, query, alphabetic, activeStatusFilter) {
+        GalleryCatalogFilter.apply(entries, query, alphabetic, false).filter { entry ->
+            statuses[entry.url]?.let {
+                GalleryCatalogProgress.matches(entry, it, activeStatusFilter)
+            } == true
+        }
     }
     val modelGroups = remember(filtered) { GalleryCatalogModels.group(filtered) }
     val activeGroup = modelGroups.firstOrNull { it.key == chosenModel }
@@ -87,9 +96,8 @@ internal fun GalleryCatalog(
     val selectedBatch = remember(entries, queue, batchSelection) {
         GalleryBatchSelection.plan(entries, batchSelection, queue)
     }
-    val attentionCount = remember(entries, queue) {
-        entries.count { GalleryCatalogProgress.resolve(it, queue).needsAttention }
-    }
+    val attentionCount = remember(statuses) { statuses.values.count { it.needsAttention } }
+    val errorCount = remember(statuses) { statuses.values.count { it.hasErrors } }
 
     LazyColumn(
         modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
@@ -111,7 +119,7 @@ internal fun GalleryCatalog(
         item(key = "sorting") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(selected = !alphabetic, onClick = { alphabetic = false },
-                    label = { Text("Новые") })
+                    label = { Text("Недавно добавлены") })
                 FilterChip(selected = alphabetic, onClick = { alphabetic = true },
                     label = { Text("По модели А–Я") })
                 FilterChip(
@@ -140,7 +148,8 @@ internal fun GalleryCatalog(
                     (if (browseModels && chosenModel == null)
                         "Моделей: ${modelGroups.size} · Публикаций: ${filtered.size}"
                     else "Показано: ${visibleEntries.size} из ${entries.size}") +
-                        if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "",
+                        (if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "") +
+                        (if (errorCount > 0) " · Ошибки: $errorCount" else ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -168,21 +177,34 @@ internal fun GalleryCatalog(
             }
         }
         if (showFilters) item(key = "filters") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = onlyTransferred, onClick = {
-                    onlyTransferred = !onlyTransferred; chosenModel = null
-                },
-                    label = { Text("С передачами") })
-                FilterChip(selected = onlyQueued, onClick = {
-                    onlyQueued = !onlyQueued
-                    chosenModel = null
-                    if (onlyQueued) onlyAttention = false
-                }, label = { Text("В очереди") })
-                FilterChip(selected = onlyAttention, onClick = {
-                    onlyAttention = !onlyAttention
-                    chosenModel = null
-                    if (onlyAttention) onlyQueued = false
-                }, label = { Text("Требуют внимания") })
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        GalleryCatalogProgress.Filter.ALL to "Все",
+                        GalleryCatalogProgress.Filter.NEW to "Без передач",
+                        GalleryCatalogProgress.Filter.TRANSFERRED to "Передавались",
+                        GalleryCatalogProgress.Filter.QUEUED to "В очереди",
+                        GalleryCatalogProgress.Filter.REVIEW to "Требуют внимания",
+                        GalleryCatalogProgress.Filter.ERRORS to "Ошибки"
+                    ).forEach { (filter, label) ->
+                        FilterChip(
+                            selected = activeStatusFilter == filter,
+                            onClick = {
+                                statusFilter = filter.name
+                                chosenModel = null
+                            },
+                            label = { Text(label) },
+                            modifier = Modifier.testTag(
+                                "catalog-status-filter-${filter.name.lowercase()}")
+                        )
+                    }
+                }
+                Text(
+                    "Статусы основаны на локальной очереди и истории. " +
+                        "«Передавались» не означает завершённую синхронизацию облака.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         if (showBackupTools || backupStatus.isNotBlank()) item(key = "backup") {
@@ -239,8 +261,9 @@ internal fun GalleryCatalog(
                 Column {
                     Text("По текущим фильтрам ничего не найдено.")
                     TextButton(onClick = {
-                        query = ""; alphabetic = false; onlyTransferred = false
-                        onlyQueued = false; onlyAttention = false; chosenModel = null
+                        query = ""; alphabetic = false
+                        statusFilter = GalleryCatalogProgress.Filter.ALL.name
+                        chosenModel = null
                     }) { Text("Сбросить фильтры") }
                 }
             }
@@ -278,7 +301,8 @@ internal fun GalleryCatalog(
             }
         } else {
             items(visibleEntries, key = { it.url }) { entry ->
-                val progress = GalleryCatalogProgress.resolve(entry, queue)
+                val progress = statuses[entry.url]
+                    ?: GalleryCatalogProgress.resolve(entry, queueIndex)
                 var menuExpanded by remember(entry.url) { mutableStateOf(false) }
                 OutlinedCard(
                     onClick = { onOpen(entry) },
