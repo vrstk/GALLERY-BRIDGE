@@ -35,6 +35,7 @@ internal class GallerySessionState(application: Application) : AndroidViewModel(
     var scanning by mutableStateOf(false)
     var modelListing by mutableStateOf<ModelListingSources.Result?>(null)
     var modelListingSelected by mutableStateOf<Set<String>>(emptySet())
+    var pendingModelBatch by mutableStateOf<ModelBatchQueuePlan.Preview?>(null)
     var status by mutableStateOf("Вставьте HTTPS-ссылку на фотогалерею.")
     var items by mutableStateOf<List<Media>>(emptyList())
     var selected by mutableStateOf<Set<String>>(emptySet())

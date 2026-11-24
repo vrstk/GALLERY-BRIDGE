@@ -129,6 +129,9 @@ class MainActivity : ComponentActivity() {
     private var modelListingSelected
         get() = session.modelListingSelected
         set(value) { session.modelListingSelected = value }
+    private var pendingModelBatch
+        get() = session.pendingModelBatch
+        set(value) { session.pendingModelBatch = value }
 
     private var status
         get() = session.status
@@ -821,6 +824,7 @@ class MainActivity : ComponentActivity() {
         videoPosterUrl = ""
         modelListing = null
         modelListingSelected = emptySet()
+        pendingModelBatch = null
         recommendedUrls = emptySet()
         imageProbeResults = emptyMap()
         imageProbeStatus = ""
@@ -891,10 +895,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Stage 1: inspect original photo links without touching the durable queue. */
     private fun queueSelectedModelGalleries() {
         val listing = modelListing ?: return
         val chosen = listing.photos.filter { it.url in modelListingSelected }
-        if (working || transferRunning || chosen.isEmpty()) return
+        if (working || scanning || transferRunning || chosen.isEmpty()) return
         val previousQueue = QueueStore.load(this)
         if ((previousQueue?.remaining ?: 0) > 0) {
             status = "Сначала завершите или закройте сохранённую очередь."
@@ -910,76 +915,160 @@ class MainActivity : ComponentActivity() {
             status = "Настройте Mail WebDAV перед созданием очереди."
             return
         }
-        val previousQueueId = previousQueue?.id
+        val selectedTarget = target
+        val selectedRoot = if (target == TransferTargets.FOLDER) treeUri else mailRoot
+        val selectedAccount = if (target == TransferTargets.MAIL) email.trim() else ""
+        pendingModelBatch = null
         working = true
         scanning = true
         scanJob = scope.launch {
             try {
-                val existing = withContext(Dispatchers.IO) { GalleryCatalogStore.load(applicationContext) }
+                val (existing, evidence) = withContext(Dispatchers.IO) {
+                    GalleryCatalogStore.load(applicationContext) to
+                        PhotoOutcomeLedger.load(applicationContext)
+                }
                 val preparation = ModelBatchQueuePlan.prepareAvailable(chosen) { index, pub ->
                     ensureActive()
-                    status = "Открываем фотогалерею ${index + 1} из ${chosen.size}: " +
+                    status = "Проверяем фотогалерею ${index + 1} из ${chosen.size}: " +
                         pub.title.ifBlank { pub.sourceId }
-                    check(GalleryTransferGuard.assess(pub.url, existing, previousQueue) ==
-                        GalleryTransferGuard.Decision.CLEAR) {
-                        "повторную передачу можно подтвердить в карточке"
+                    when (GalleryTransferGuard.assess(pub.url, existing, previousQueue)) {
+                        GalleryTransferGuard.Decision.BLOCKED ->
+                            throw ModelBatchQueuePlan.ReviewRequired(
+                                "Есть незавершённая передача. Проверьте очередь.")
+                        GalleryTransferGuard.Decision.REVIEW ->
+                            throw ModelBatchQueuePlan.ReviewRequired(
+                                "Возможно, публикация уже передавалась. Требуется проверка повтора.")
+                        else -> Unit
                     }
                     val scan = Services.scanPhotoPublication(pub.url)
                     val photos = scan.media.filter { it.kind == Kind.PHOTO }
                     require(photos.isNotEmpty()) {
                         scan.photoDiagnostic.ifBlank {
-                            "В фотогалерее «${pub.title.ifBlank { pub.sourceId }}» " +
-                                "не найдены ссылки на полноразмерные изображения."
+                            "Подтверждённые оригиналы фотографий не найдены."
                         }
+                    }
+                    val matched = PhotoOutcomeLedger.matchedUrls(
+                        evidence, pub.url, selectedTarget, selectedRoot,
+                        selectedAccount, photos, previousQueue)
+                    if (matched.isNotEmpty()) {
+                        throw ModelBatchQueuePlan.ReviewRequired(
+                            "Ранее отмечено обработанных файлов: ${matched.size}. " +
+                                "Это не подтверждает синхронизацию с облаком.")
                     }
                     PreparedGallery(pub.url, pub.sourceId, pub.model,
                         pub.title.ifBlank { "Без названия" }, pub.displayedDate, photos)
                 }
                 ensureActive()
-                val prepared = preparation.galleries
-                val skipped = preparation.skipped
-                val summary = if (skipped.isEmpty()) "" else
-                    " Пропущено галерей: ${skipped.size}. " + skipped.values.take(3).joinToString(" · ")
-                if (prepared.isEmpty()) {
-                    status = "Очередь не создана." + summary
-                    return@launch
-                }
-                val root = if (target == TransferTargets.FOLDER) treeUri else mailRoot
-                TransferService.beginBatch(
-                    this@MainActivity, prepared, target, email, password, root)
-                modelListingSelected = (modelListingSelected - prepared.map { it.sourceUrl }.toSet())
-                status = "Передано в очередь галерей: ${prepared.size}." + summary
-                GalleryCatalogStore.importMissing(this@MainActivity,
-                    chosen.filterNot { it.url in skipped }.map { pub -> CatalogGallery(
-                        pub.url, pub.model, pub.title, pub.displayedDate,
-                        System.currentTimeMillis(), source = "elitebabes",
-                        sourceId = pub.sourceId, originalCaption = pub.caption,
-                        studio = pub.studio, displayedDate = pub.displayedDate,
-                        type = pub.type, previewUrl = pub.previewUrl, watchUrl = pub.watchUrl) })
-                catalog = GalleryCatalogStore.load(this@MainActivity)
-                savedQueue = QueueStore.load(this@MainActivity)
-                transferRunning = true
-                screen = GalleryPage.QUEUE
-                transferStatus = "Создана очередь: ${prepared.size} галерей, " +
-                    "${prepared.sumOf { it.media.size }} фотографий." + summary
+                pendingModelBatch = ModelBatchQueuePlan.Preview(
+                    chosen.mapTo(linkedSetOf()) { it.url },
+                    selectedTarget, selectedRoot, selectedAccount,
+                    previousQueue?.id, preparation)
+                status = "Предварительная проверка завершена. " +
+                    "Очередь ещё не создана; подтвердите результат."
             } catch (e: CancellationException) {
-                status = "Подготовка остановлена. Существующая очередь не изменена."
+                status = "Проверка отменена. Сохранённая очередь не изменена."
                 throw e
             } catch (e: Exception) {
-                val created = QueueStore.load(this@MainActivity)?.takeIf {
-                    it.id != previousQueueId && it.entries.any { item -> item.galleryUrl.isNotBlank() }
-                }
-                if (created != null) {
-                    savedQueue = created
-                    screen = GalleryPage.QUEUE
-                    transferStatus = "Очередь сохранена; проверьте состояние: ${e.message}"
-                } else {
-                    status = "Очередь не создана: ${e.message ?: "ошибка источника"}"
-                }
+                status = "Очередь не создана: ${e.message ?: "ошибка проверки"}"
             } finally {
                 working = false
                 scanning = false
                 scanJob = null
+            }
+        }
+    }
+
+    /** Stage 2: recheck destination, queue and photo evidence before one batch. */
+    private fun confirmModelBatchPreview() {
+        val draft = pendingModelBatch ?: return
+        if (working || scanning || transferRunning) return
+        val currentRoot = if (target == TransferTargets.FOLDER) treeUri else mailRoot
+        val currentAccount = if (target == TransferTargets.MAIL) email.trim() else ""
+        val selectedNow = modelListing?.photos
+            ?.filter { it.url in modelListingSelected }
+            ?.mapTo(linkedSetOf()) { it.url }.orEmpty()
+        pendingModelBatch = null
+        if (draft.preparation.galleries.isEmpty() ||
+            selectedNow != draft.selectedUrls ||
+            draft.target != target || draft.root != currentRoot ||
+            draft.account != currentAccount) {
+            status = "Выбор или хранилище изменились. Повторите проверку очереди."
+            return
+        }
+        working = true
+        status = "Проверяем состояние очереди перед передачей…"
+        val ready = draft.preparation.galleries
+        val savedEmail = email
+        val savedPassword = password
+        scope.launch {
+            try {
+                val updated = withContext(Dispatchers.IO) {
+                    val currentQueue = QueueStore.load(applicationContext)
+                    require(currentQueue?.id == draft.previousQueueId &&
+                        (currentQueue?.remaining ?: 0) == 0) {
+                        "Сохранённая очередь изменилась. Повторите проверку."
+                    }
+                    val currentCatalog = GalleryCatalogStore.load(applicationContext)
+                    val evidence = PhotoOutcomeLedger.load(applicationContext)
+                    ready.forEach { gallery ->
+                        require(GalleryTransferGuard.assess(gallery.sourceUrl,
+                            currentCatalog, currentQueue) ==
+                                GalleryTransferGuard.Decision.CLEAR) {
+                            "Статус ${gallery.title} изменился. Повторите проверку."
+                        }
+                        require(PhotoOutcomeLedger.matchedUrls(
+                            evidence, gallery.sourceUrl, draft.target, draft.root,
+                            draft.account, gallery.media, currentQueue).isEmpty()) {
+                            "Обнаружена предыдущая передача ${gallery.title}. " +
+                                "Повторите проверку."
+                        }
+                    }
+                    TransferService.beginBatch(applicationContext, ready,
+                        draft.target, savedEmail, savedPassword, draft.root)
+                    QueueStore.load(applicationContext)
+                        ?: error("Служба запущена, но очередь недоступна.")
+                }
+                savedQueue = updated
+                modelListingSelected = modelListingSelected -
+                    ready.mapTo(HashSet()) { it.sourceUrl }
+                transferRunning = true
+                screen = GalleryPage.QUEUE
+                transferStatus = "Подтверждена очередь: ${ready.size} фотогалерей, " +
+                    "${draft.preparation.photoCount} фотографий. " +
+                    "На проверку: ${draft.preparation.needsReview.size}, " +
+                    "недоступно: ${draft.preparation.skipped.size}."
+                status = transferStatus
+                try {
+                    catalog = withContext(Dispatchers.IO) {
+                        GalleryCatalogStore.importMissing(applicationContext,
+                            ready.map { gallery ->
+                                CatalogGallery(gallery.sourceUrl, gallery.model,
+                                    gallery.title, gallery.displayedDate,
+                                    System.currentTimeMillis(), source = "elitebabes",
+                                    sourceId = gallery.sourceId)
+                            })
+                        GalleryCatalogStore.load(applicationContext)
+                    }
+                } catch (e: Exception) {
+                    status = "Очередь создана, но обновить каталог не удалось. " +
+                        "Существующая очередь сохранена."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val current = withContext(Dispatchers.IO) {
+                    QueueStore.load(applicationContext)
+                }
+                if (current != null && current.id != draft.previousQueueId &&
+                    current.entries.any { it.galleryUrl.isNotBlank() }) {
+                    savedQueue = current
+                    screen = GalleryPage.QUEUE
+                    transferStatus = "Очередь создана; проверьте её состояние: ${e.message}"
+                } else {
+                    status = "Очередь не создана: ${e.message ?: "ошибка"}"
+                }
+            } finally {
+                working = false
             }
         }
     }
@@ -1012,6 +1101,7 @@ class MainActivity : ComponentActivity() {
 
     private fun scan() {
         if (working || transferRunning || imageProbeRunning || url.isBlank()) return
+        pendingModelBatch = null
         val requestedUrl = url
         screen = GalleryPage.DOWNLOADS
         working = true
@@ -1583,23 +1673,44 @@ class MainActivity : ComponentActivity() {
                 result = listing, existing = catalog,
                 selected = modelListingSelected, message = status,
                 busy = working, scanning = scanning,
-                destination = target, onDestination = { target = it },
+                destination = target, onDestination = {
+                    pendingModelBatch = null
+                    target = it
+                },
                 onSelect = { link, checked ->
+                    pendingModelBatch = null
                     modelListingSelected = if (checked) {
                         modelListingSelected + link
                     } else modelListingSelected - link
                 },
                 onSelectAllPhotos = {
+                    pendingModelBatch = null
                     modelListingSelected = listing.photos.mapTo(linkedSetOf()) { it.url }
                 },
-                onClear = { modelListingSelected = emptySet() },
+                onClear = {
+                    pendingModelBatch = null
+                    modelListingSelected = emptySet()
+                },
                 onSave = ::saveListingSelection,
                 onQueueSelected = ::queueSelectedModelGalleries,
                 onStop = ::stopSearch,
                 onContinue = ::scan,
                 onOpen = ::openListingPublication,
-                onBack = { screen = GalleryPage.HOME }
+                onBack = {
+                    pendingModelBatch = null
+                    screen = GalleryPage.HOME
+                }
             )
+            pendingModelBatch?.let { preview ->
+                ModelBatchPreflightDialog(
+                    preview = preview,
+                    onConfirm = ::confirmModelBatchPreview,
+                    onCancel = {
+                        pendingModelBatch = null
+                        status = "Предварительная проверка закрыта. Очередь не создавалась."
+                    }
+                )
+            }
             return
         }
         if (items.isEmpty()) {

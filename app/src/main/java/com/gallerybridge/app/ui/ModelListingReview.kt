@@ -136,7 +136,7 @@ internal fun ModelListingReview(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Button(onClick = onQueueSelected, enabled = chosenPhotos > 0 && !busy) {
-                        Text("В очередь ($chosenPhotos)")
+                        Text("Проверить ($chosenPhotos)")
                     }
                     OutlinedButton(onClick = onSave, enabled = selected.isNotEmpty() && !busy) {
                         Text("В каталог")
