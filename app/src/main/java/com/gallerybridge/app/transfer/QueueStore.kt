@@ -50,8 +50,31 @@ object QueueStore {
         value.matches(Regex("[0-9a-f]{64}"))
 
     /** Legacy FAILED items have no outcome classification and must be reviewed. */
+    private const val WRITING = "WRITING"
+    private const val INTERRUPTED_WRITE =
+        "Запись могла прерваться. Проверьте файл в назначении перед повтором."
+
     internal fun restoreState(state: String, classified: Boolean): String =
-        if (state == "FAILED" && !classified) "BLOCKED" else state
+        if (state == WRITING || (state == "FAILED" && !classified)) "BLOCKED" else state
+
+    /** Persist this transition before the first destination write, never after it. */
+    internal fun markWriting(snapshot: Snapshot, index: Int, media: Media): Snapshot {
+        val old = snapshot.entries.getOrNull(index) ?: return snapshot
+        if (old.media != media || old.state !in setOf("PENDING", "FAILED")) return snapshot
+        val entries = snapshot.entries.toMutableList()
+        entries[index] = old.copy(state = WRITING, failureReason = INTERRUPTED_WRITE,
+            contentSha256 = "")
+        return snapshot.copy(entries = entries)
+    }
+
+    @Synchronized fun beginWrite(context: Context, id: Long, index: Int, media: Media) {
+        val before = readSnapshot(context, preserveWriting = true)
+            ?: throw CheckpointFailure("Очередь недоступна; запись файла отменена.")
+        if (before.id != id) throw CheckpointFailure("Очередь изменилась; запись файла отменена.")
+        val after = markWriting(before, index, media)
+        if (after === before) throw CheckpointFailure("Элемент очереди изменился; запись файла отменена.")
+        save(context, after)
+    }
 
     /**
      * Default resume uses all pending and classified failures. An explicit one-file
@@ -75,7 +98,12 @@ object QueueStore {
 
     private fun storage(context: Context) = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
-    @Synchronized fun load(context: Context): Snapshot? {
+    @Synchronized fun load(context: Context): Snapshot? =
+        readSnapshot(context, preserveWriting = false)
+
+    // Only the active writer's checkpoint may read the internal WRITING state.
+    // All public readers treat an interrupted or still-unconfirmed write as blocked.
+    private fun readSnapshot(context: Context, preserveWriting: Boolean): Snapshot? {
         val raw = storage(context).getString(KEY, null) ?: return null
         return try {
             val data = JSONObject(raw)
@@ -85,10 +113,14 @@ object QueueStore {
                     val x = list.getJSONObject(i)
                     add(Entry(Media(x.getString("url"), x.getString("name"),
                         Kind.valueOf(x.getString("kind")), x.optString("source"), x.optString("referrer")),
-                        restoreState(x.optString("state", "PENDING"), x.has("failureReason")),
-                        if (x.optString("state") == "FAILED" && !x.has("failureReason"))
-                            "Сбой из предыдущей версии. Проверьте назначение перед повтором."
-                        else x.optString("failureReason").take(240),
+                        if (preserveWriting && x.optString("state") == WRITING) WRITING
+                        else restoreState(x.optString("state", "PENDING"), x.has("failureReason")),
+                        when {
+                            x.optString("state") == WRITING -> INTERRUPTED_WRITE
+                            x.optString("state") == "FAILED" && !x.has("failureReason") ->
+                                "Сбой из предыдущей версии. Проверьте назначение перед повтором."
+                            else -> x.optString("failureReason").take(240)
+                        },
                         x.optString("contentSha256").takeIf(::validContentHash).orEmpty(),
                         GalleryKeys.canonical(x.optString("galleryUrl")).orEmpty(),
                         x.optString("gallerySourceId").take(30),
@@ -150,10 +182,12 @@ object QueueStore {
             "Неверный SHA-256 содержимого фотографии."
         }
         val entries = snapshot.entries.toMutableList()
-        entries[entryIndex] = old.copy(state = state,
-            failureReason = if (state == "FAILED" || state == "BLOCKED")
-                reason.replace("\n", " ").take(240) else "",
-            contentSha256 = if (state in setOf("DONE", "SKIPPED")) contentSha256 else "")
+        val safeState = if (old.state == WRITING && state == "FAILED") "BLOCKED" else state
+        entries[entryIndex] = old.copy(state = safeState,
+            failureReason = if (safeState == "FAILED" || safeState == "BLOCKED")
+                reason.ifBlank { if (old.state == WRITING) INTERRUPTED_WRITE else "" }
+                    .replace("\n", " ").take(240) else "",
+            contentSha256 = if (safeState in setOf("DONE", "SKIPPED")) contentSha256 else "")
         return snapshot.copy(entries = entries)
     }
 
@@ -161,7 +195,7 @@ object QueueStore {
         context: Context, id: Long, entryIndex: Int, media: Media, state: String,
         reason: String = "", contentSha256: String = ""
     ) {
-        val before = load(context)
+        val before = readSnapshot(context, preserveWriting = true)
             ?: throw CheckpointFailure("Сохранённая очередь недоступна; передача остановлена.")
         if (before.id != id) {
             throw CheckpointFailure("Очередь изменилась во время передачи; результат не записан.")

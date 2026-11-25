@@ -20,6 +20,24 @@ class QueueStoreTest {
         entries = media.map { QueueStore.Entry(it, "PENDING") }
     )
 
+    @Test fun writeIntentCannotBeRetriedAndOnlyAConfirmedResultCompletesIt() {
+        val original = queue(photo, photo.copy(name = "other.jpg"))
+        val writing = QueueStore.markWriting(original, 0, photo)
+        assertEquals("WRITING", writing.entries[0].state)
+        assertEquals("BLOCKED", QueueStore.restoreState("WRITING", true))
+        assertEquals(listOf(1), QueueStore.retryIndices(writing))
+        assertSame(writing, QueueStore.markWriting(writing, 0, photo))
+        val blocked = QueueStore.applyItemResult(writing, 0, photo, "FAILED")
+        assertEquals("BLOCKED", blocked.entries[0].state)
+        assertEquals(listOf(1), QueueStore.retryIndices(blocked))
+        val done = QueueStore.applyItemResult(writing, 0, photo, "DONE",
+            contentSha256 = "a".repeat(64))
+        assertEquals("DONE", done.entries[0].state)
+        assertEquals("a".repeat(64), done.entries[0].contentSha256)
+        assertEquals("PENDING", done.entries[1].state)
+        assertSame(original, QueueStore.markWriting(original, 0, photo.copy(name = "wrong.jpg")))
+    }
+
     @Test fun successfulPhotoCheckpointRetainsVerifiedSourceDigest() {
         val hash = "a".repeat(64)
         val done = QueueStore.applyItemResult(queue(photo), 0, photo, "DONE", contentSha256 = hash)

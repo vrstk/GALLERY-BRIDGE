@@ -61,6 +61,30 @@ class TransferService : Service() {
         const val KEY_DETAILS = "details"
         const val KEY_REVISION = "revision"
         private var currentSession = 0L
+        private var activeInProcess = false
+
+        /** Android can kill the process without onDestroy. A persisted running bit
+         * is not proof that a foreground service is still alive in this process. */
+        @Synchronized fun recoverInterruptedState(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            if (!activeInProcess && prefs.getBoolean(KEY_RUNNING, false)) {
+                prefs.edit().putBoolean(KEY_RUNNING, false)
+                    .putString(KEY_STATUS, "Передача прервана системой")
+                    .putString(KEY_DETAILS, "Очередь сохранена. Проверьте неподтверждённые записи и продолжите вручную.")
+                    .putLong(KEY_REVISION, System.currentTimeMillis()).apply()
+            }
+        }
+
+        @Synchronized private fun publishState(
+            context: Context, running: Boolean, status: String, details: String
+        ) {
+            activeInProcess = running
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(KEY_RUNNING, running)
+                .putString(KEY_STATUS, status)
+                .putString(KEY_DETAILS, details)
+                .putLong(KEY_REVISION, System.currentTimeMillis()).apply()
+        }
 
         fun begin(
             context: Context,
@@ -302,6 +326,11 @@ class TransferService : Service() {
                         showProgress(overall, queue.entries.size)
                     },
                     foldersPerFile = folders,
+                    onBeforeDestinationWrite = { index, item ->
+                        if (mySession != session || cancelRequested)
+                            throw CancellationException("Передача остановлена")
+                        QueueStore.beginWrite(applicationContext, queue.id, pending[index].index, item)
+                    },
                     onItemResult = { index, item, state, reason, digest ->
                         if (mySession == session && !cancelRequested) {
                             QueueStore.checkpoint(
@@ -375,12 +404,7 @@ class TransferService : Service() {
     }
 
     private fun save(running: Boolean, status: String, details: String) {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putBoolean(KEY_RUNNING, running)
-            .putString(KEY_STATUS, status)
-            .putString(KEY_DETAILS, details)
-            .putLong(KEY_REVISION, System.currentTimeMillis())
-            .apply()
+        publishState(this, running, status, details)
     }
 
     private fun openAppIntent(): PendingIntent {
@@ -449,6 +473,9 @@ class TransferService : Service() {
         job?.cancel()
         Services.cancelActiveTransfers()
         scope.cancel()
+        if (getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_RUNNING, false)) {
+            save(false, "Передача прервана системой", "Очередь сохранена — продолжите вручную.")
+        }
         super.onDestroy()
     }
 }

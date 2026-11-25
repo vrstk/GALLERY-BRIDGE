@@ -18,6 +18,39 @@ import org.junit.Test
 class QueueReviewTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun interruptedWriteRemainsBlockedAcrossActivityRecreation() {
+        val id = 352039L
+        val photo = Media("https://example.com/interrupted.jpg", "interrupted.jpg", Kind.PHOTO, "test")
+        val next = photo.copy(name = "next.jpg")
+        compose.runOnIdle {
+            QueueStore.save(compose.activity, QueueStore.Snapshot(
+                id = id, model = "Тест", title = "Прерванная запись", date = "",
+                target = "Mail WebDAV", root = "Models", account = "audit@example.com",
+                entries = listOf(QueueStore.Entry(photo, "PENDING"), QueueStore.Entry(next, "PENDING"))
+            ))
+            QueueStore.beginWrite(compose.activity, id, 0, photo)
+            compose.activity.getSharedPreferences(
+                com.gallerybridge.app.transfer.TransferService.PREFS, android.content.Context.MODE_PRIVATE
+            ).edit().putBoolean(com.gallerybridge.app.transfer.TransferService.KEY_RUNNING, true).commit()
+        }
+        try {
+            compose.activityRule.scenario.recreate()
+            compose.runOnIdle {
+                val restored = QueueStore.load(compose.activity)!!
+                assertEquals(listOf("BLOCKED", "PENDING"), restored.entries.map { it.state })
+                assertEquals(listOf(1), QueueStore.retryIndices(restored))
+                assertTrue(!compose.activity.getSharedPreferences(
+                    com.gallerybridge.app.transfer.TransferService.PREFS, android.content.Context.MODE_PRIVATE
+                ).getBoolean(com.gallerybridge.app.transfer.TransferService.KEY_RUNNING, false))
+                // The exact active writer could have saved a successful outcome instead.
+                QueueStore.checkpoint(compose.activity, id, 0, photo, "DONE", contentSha256 = "b".repeat(64))
+                assertEquals("DONE", QueueStore.load(compose.activity)!!.entries[0].state)
+            }
+        } finally {
+            compose.runOnIdle { QueueStore.clearIfId(compose.activity, id) }
+        }
+    }
+
     @Test fun completedMailQueueOffersReadOnlySha256Audit() {
         val id = 352038L
         val file = Media("https://example.com/verified.jpg", "verified.jpg", Kind.PHOTO, "test")

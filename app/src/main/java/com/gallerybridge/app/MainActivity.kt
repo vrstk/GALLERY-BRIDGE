@@ -461,6 +461,7 @@ class MainActivity : ComponentActivity() {
         }
         // Refresh durable state even when ViewModel survives Activity recreation.
         // A foreground transfer or Android component may have changed these stores.
+        TransferService.recoverInterruptedState(this)
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
         catalog = GalleryCatalogStore.load(this)
