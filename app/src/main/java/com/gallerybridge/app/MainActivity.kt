@@ -1266,12 +1266,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (queue.target == "Mail WebDAV") {
-                if (email.isBlank() || password.isBlank()) {
-                    error("Укажи почту и пароль приложения Mail для возобновления")
-                }
-                if (queue.account.isNotBlank() && queue.account != email.trim()) {
-                    error("Сохранённая очередь принадлежит другому аккаунту Mail: ${queue.account}")
-                }
+                TransferTargets.requireQueueCredentials(queue.target, queue.account, email, password)
                 if (rememberMailPassword) SecureMailCredentials.save(this, email, password)
             }
             require(TransferTargets.isSupported(queue.target)) {

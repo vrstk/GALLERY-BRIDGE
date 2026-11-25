@@ -76,6 +76,7 @@ class TransferService : Service() {
             allowRepeatedGallery: Boolean = false
         ) {
             require(TransferTargets.isSupported(target)) { "Устаревший способ передачи: $target" }
+            TransferTargets.requireQueueCredentials(target, email.trim(), email, password)
             require(PhotoOutcomeLedger.duplicateNames(files).isEmpty()) {
                 "Среди выбранных фотографий есть одинаковые имена файлов. Проверьте варианты перед передачей."
             }
@@ -195,6 +196,7 @@ class TransferService : Service() {
                     "Нет доступа к папке сохранённой очереди. Выберите исходную папку снова."
                 }
             }
+            TransferTargets.requireQueueCredentials(queue.target, queue.account, email, password)
             val intent = Intent(context, TransferService::class.java).setAction(ACTION_RESUME)
                 .putExtra(EXTRA_EMAIL, email).putExtra(EXTRA_PASSWORD, password)
                 .putExtra(EXTRA_RESUME_QUEUE_ID, queue.id)
@@ -277,6 +279,11 @@ class TransferService : Service() {
         job = scope.launch {
             try {
                 val src = intent ?: error("Не указано задание")
+                val email = src.getStringExtra(EXTRA_EMAIL).orEmpty().trim()
+                val password = src.getStringExtra(EXTRA_PASSWORD).orEmpty()
+                // Check the actual durable queue and credentials again inside the service
+                // before any network request, including ACTION_START and stale intents.
+                TransferTargets.requireQueueCredentials(queue.target, queue.account, email, password)
                 val pending = selectedIndices.map { index ->
                     IndexedValue(index, queue.entries[index])
                 }
@@ -284,8 +291,7 @@ class TransferService : Service() {
                 val folders = pending.map { QueueStore.foldersFor(it.value, queue) }
                 val result = Services.transfer(
                     applicationContext, files, queue.model, queue.title, queue.date,
-                    queue.target, src.getStringExtra(EXTRA_EMAIL).orEmpty(),
-                    src.getStringExtra(EXTRA_PASSWORD).orEmpty(), queue.root,
+                    queue.target, email, password, queue.root,
                     progress = { message ->
                         if (mySession != session || cancelRequested) return@transfer
                         save(true, message, "")
