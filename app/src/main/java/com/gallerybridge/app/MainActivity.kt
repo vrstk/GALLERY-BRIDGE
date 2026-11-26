@@ -37,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalDensity
@@ -1457,7 +1458,16 @@ class MainActivity : ComponentActivity() {
             scan()
         }
         val searchAllowed = !working && !transferRunning && !imageProbeRunning
-        BackHandler(enabled = screen != GalleryPage.HOME, onBack = ::backFromPage)
+        val catalogState = rememberSaveableStateHolder()
+        val catalogModel = rememberSaveable { mutableStateOf<String?>(null) }
+        val navigateBack = {
+            if (screen == GalleryPage.CATALOG && catalogModel.value != null) {
+                catalogModel.value = null
+            } else {
+                backFromPage()
+            }
+        }
+        BackHandler(enabled = screen != GalleryPage.HOME, onBack = navigateBack)
         // Persist edits and photo selection before Android may reclaim the process.
         // No password, authentication token, cloud queue or user file body is persisted.
         LaunchedEffect(url, model, title, date, screen, items, selected, recommendedUrls, openedPhoto) {
@@ -1501,7 +1511,7 @@ class MainActivity : ComponentActivity() {
                 }
             },
             onSettings = { openSettings() },
-            onBack = ::backFromPage,
+            onBack = navigateBack,
             actions = {
                 if (screen == GalleryPage.DOWNLOADS && items.isNotEmpty()) {
                     DownloadActions(selected.size, searchAllowed && selected.isNotEmpty()) {
@@ -1545,45 +1555,48 @@ class MainActivity : ComponentActivity() {
                     }
                     )
                 }
-                GalleryPage.CATALOG -> GalleryCatalog(
-                    entries = catalog,
-                    onBatchReview = ::batchBegin,
-                    queue = savedQueue,
-                    onQueue = { screen = GalleryPage.QUEUE },
-                    onOpen = { gallery ->
-                        setGalleryUrl(gallery.url)
-                        model = gallery.model
-                        title = gallery.title
-                        date = if (gallery.source == "elitebabes") "" else gallery.date
-                        screen = GalleryPage.HOME
-                    },
-                    onRemove = { gallery ->
-                        if (GalleryCatalogStore.remove(this@MainActivity, gallery.url)) {
-                            catalog = GalleryCatalogStore.load(this@MainActivity)
-                        }
-                    },
-                    onEdit = { gallery, fields ->
-                        try {
-                            GalleryMetadataStore.save(this@MainActivity, gallery.url, fields)
-                            check(GalleryCatalogStore.remember(this@MainActivity, gallery.url, fields))
-                            catalog = GalleryCatalogStore.load(this@MainActivity)
-                            if (GalleryKeys.same(url, gallery.url)) {
-                                model = fields.model
-                                title = fields.title
-                                date = fields.date
+                GalleryPage.CATALOG -> catalogState.SaveableStateProvider("catalog") {
+                    GalleryCatalog(
+                        entries = catalog,
+                        onBatchReview = ::batchBegin,
+                        queue = savedQueue,
+                        onQueue = { screen = GalleryPage.QUEUE },
+                        onOpen = { gallery ->
+                            setGalleryUrl(gallery.url)
+                            model = gallery.model
+                            title = gallery.title
+                            date = if (gallery.source == "elitebabes") "" else gallery.date
+                            screen = GalleryPage.HOME
+                        },
+                        onRemove = { gallery ->
+                            if (GalleryCatalogStore.remove(this@MainActivity, gallery.url)) {
+                                catalog = GalleryCatalogStore.load(this@MainActivity)
                             }
-                            true
-                        } catch (_: Exception) { false }
-                    },
-                    onExport = {
-                        val filename = "GalleryBridge-backup-" +
-                            SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) + ".json"
-                        catalogExportPicker.launch(filename)
-                    },
-                    onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
-                    backupStatus = catalogBackupStatus,
-                    historyCount = history.size
-                )
+                        },
+                        onEdit = { gallery, fields ->
+                            try {
+                                GalleryMetadataStore.save(this@MainActivity, gallery.url, fields)
+                                check(GalleryCatalogStore.remember(this@MainActivity, gallery.url, fields))
+                                catalog = GalleryCatalogStore.load(this@MainActivity)
+                                if (GalleryKeys.same(url, gallery.url)) {
+                                    model = fields.model
+                                    title = fields.title
+                                    date = fields.date
+                                }
+                                true
+                            } catch (_: Exception) { false }
+                        },
+                        onExport = {
+                            val filename = "GalleryBridge-backup-" +
+                                SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date()) + ".json"
+                            catalogExportPicker.launch(filename)
+                        },
+                        onImport = { catalogImportPicker.launch(arrayOf("application/json", "text/plain")) },
+                        backupStatus = catalogBackupStatus,
+                        historyCount = history.size,
+                        selectedModel = catalogModel
+                    )
+                }
                 GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }

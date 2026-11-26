@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performScrollTo
 import com.gallerybridge.app.core.CatalogGallery
 import com.gallerybridge.app.ui.GalleryCatalog
@@ -65,4 +66,37 @@ class GalleryCatalogModelsTest {
         compose.onNodeWithText("Моделей: 1", substring = true).assertIsDisplayed()
         compose.onNodeWithText("Leona Mia").performScrollTo().assertIsDisplayed()
     }
+    @Test fun modelSearchAndStatusFiltersKeepTheCurrentModelAndPreviousSearch() {
+        val recent = CatalogGallery("https://example.com/mia-a", "Leona Mia", "Открытая съёмка", "", 3)
+        val older = CatalogGallery("https://example.com/mia-b", "Leona Mia", "Архивная съёмка", "", 2)
+        val other = CatalogGallery("https://example.com/alba", "Alba", "Архивная съёмка", "", 1)
+        compose.setContent {
+            MaterialTheme {
+                GalleryCatalog(
+                    entries = listOf(recent, older, other), queue = null,
+                    onQueue = {}, onBatchReview = {}, onOpen = {},
+                    onRemove = {}, onEdit = { _, _ -> true },
+                    onExport = {}, onImport = {}, backupStatus = "", historyCount = 0
+                )
+            }
+        }
+
+        compose.onNodeWithTag("catalog-model-mode").performClick()
+        compose.onNodeWithTag("catalog-search").performTextReplacement("Leona")
+        compose.onNodeWithText("Leona Mia").performScrollTo().performClick()
+        compose.onNodeWithTag("catalog-search").performTextReplacement("Архивная")
+        compose.onNodeWithText("Показано: 1 из 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Архивная съёмка").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Alba").assertDoesNotExist()
+
+        compose.onNodeWithText("Фильтры").performScrollTo().performClick()
+        compose.onNodeWithTag("catalog-status-filter-errors").performScrollTo().performClick()
+        compose.onNodeWithText("Показано: 0 из 2", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("catalog-model-back").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("catalog-status-filter-all").performScrollTo().performClick()
+        compose.onNodeWithTag("catalog-model-back").performScrollTo().performClick()
+        compose.onNodeWithText("Моделей: 1", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Alba").assertDoesNotExist()
+    }
+
 }

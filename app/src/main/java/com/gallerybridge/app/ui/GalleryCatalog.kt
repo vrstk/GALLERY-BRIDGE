@@ -7,11 +7,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,12 +53,17 @@ internal fun GalleryCatalog(
     onExport: () -> Unit,
     onImport: () -> Unit,
     backupStatus: String,
-    historyCount: Int
+    historyCount: Int,
+    selectedModel: MutableState<String?> = rememberSaveable { mutableStateOf(null) }
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
+    var catalogQuery by rememberSaveable { mutableStateOf("") }
+    var modelQuery by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
     var browseModels by rememberSaveable { mutableStateOf(false) }
-    var chosenModel by rememberSaveable { mutableStateOf<String?>(null) }
+    var chosenModel by selectedModel
+    val publicationsScroll = rememberLazyListState()
+    val modelsScroll = rememberLazyListState()
+    val modelPublicationsScroll = rememberLazyListState()
     // Exactly one status filter is active; sorting and filtering are separate.
     var statusFilter by rememberSaveable { mutableStateOf(GalleryCatalogProgress.Filter.ALL.name) }
     var showFilters by rememberSaveable { mutableStateOf(false) }
@@ -76,43 +82,63 @@ internal fun GalleryCatalog(
     val activeStatusFilter = GalleryCatalogProgress.Filter.entries.firstOrNull {
         it.name == statusFilter
     } ?: GalleryCatalogProgress.Filter.ALL
-    val filtered = remember(entries, statuses, query, alphabetic, activeStatusFilter) {
-        GalleryCatalogFilter.apply(entries, query, alphabetic, false).filter { entry ->
+    val activeGroup = remember(entries, chosenModel) {
+        chosenModel?.let { key ->
+            GalleryCatalogModels.group(entries.filter { GalleryCatalogModels.key(it.model) == key })
+                .firstOrNull()
+        }
+    }
+    LaunchedEffect(chosenModel, activeGroup) {
+        if (chosenModel != null && activeGroup == null) chosenModel = null
+    }
+    val inModel = activeGroup != null
+    val showModelIndex = browseModels && !inModel
+    val scopeEntries = activeGroup?.entries ?: entries
+    val query = if (inModel) modelQuery else catalogQuery
+    val updateQuery: (String) -> Unit = { if (inModel) modelQuery = it else catalogQuery = it }
+    val filtered = remember(scopeEntries, statuses, query, alphabetic, activeStatusFilter) {
+        GalleryCatalogFilter.apply(scopeEntries, query, alphabetic, false).filter { entry ->
             statuses[entry.url]?.let {
                 GalleryCatalogProgress.matches(entry, it, activeStatusFilter)
             } == true
         }
     }
-    val modelGroups = remember(filtered) { GalleryCatalogModels.group(filtered) }
-    val activeGroup = modelGroups.firstOrNull { it.key == chosenModel }
-    // If records change or the search/filter hides a model, show the index instead.
-    val visibleEntries = if (browseModels) {
-        if (chosenModel == null) emptyList()
-        else GalleryCatalogModels.select(modelGroups, chosenModel!!)
-    } else filtered
-    val batchCandidates = remember(entries, queue) {
-        entries.filter { GalleryBatchSelection.eligible(it, queue) }
+    val modelGroups = remember(filtered, showModelIndex) {
+        if (showModelIndex) GalleryCatalogModels.group(filtered) else emptyList()
+    }
+    val batchScope = if (inModel) filtered else entries
+    val batchCandidates = remember(batchScope, queue) {
+        batchScope.filter { GalleryBatchSelection.eligible(it, queue) }
     }
     val selectedBatch = remember(entries, queue, batchSelection) {
         GalleryBatchSelection.plan(entries, batchSelection, queue)
     }
-    val attentionCount = remember(statuses) { statuses.values.count { it.needsAttention } }
-    val errorCount = remember(statuses) { statuses.values.count { it.hasErrors } }
+    val attentionCount = remember(scopeEntries, statuses) {
+        scopeEntries.count { statuses[it.url]?.needsAttention == true }
+    }
+    val errorCount = remember(scopeEntries, statuses) {
+        scopeEntries.count { statuses[it.url]?.hasErrors == true }
+    }
 
     LazyColumn(
         modifier = Modifier.widthIn(max = GalleryContentWidth).fillMaxSize(),
+        state = when {
+            inModel -> modelPublicationsScroll
+            showModelIndex -> modelsScroll
+            else -> publicationsScroll
+        },
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         item(key = "search") {
             OutlinedTextField(
-                value = query, onValueChange = { query = it; chosenModel = null },
-                label = { Text("Поиск по каталогу") },
+                value = query, onValueChange = updateQuery,
+                label = { Text(if (inModel) "Поиск у модели" else "Поиск по каталогу") },
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
                 shape = MaterialTheme.shapes.medium,
                 singleLine = true, modifier = Modifier.fillMaxWidth().testTag("catalog-search"),
                 trailingIcon = if (query.isNotEmpty()) {
-                    { TextButton(onClick = { query = ""; chosenModel = null }) { Text("Сброс") } }
+                    { TextButton(onClick = { updateQuery("") }) { Text("Сброс") } }
                 } else null
             )
         }
@@ -139,15 +165,14 @@ internal fun GalleryCatalog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    if (browseModels && activeGroup != null) activeGroup.label
-                    else if (browseModels) "Модели" else "Публикации",
+                    activeGroup?.label ?: if (showModelIndex) "Модели" else "Публикации",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    (if (browseModels && chosenModel == null)
+                    (if (showModelIndex)
                         "Моделей: ${modelGroups.size} · Публикаций: ${filtered.size}"
-                    else "Показано: ${visibleEntries.size} из ${entries.size}") +
+                    else "Показано: ${filtered.size} из ${scopeEntries.size}") +
                         (if (attentionCount > 0) " · Требуют внимания: $attentionCount" else "") +
                         (if (errorCount > 0) " · Ошибки: $errorCount" else ""),
                     style = MaterialTheme.typography.bodySmall,
@@ -155,7 +180,7 @@ internal fun GalleryCatalog(
                 )
             }
         }
-        if (browseModels && chosenModel != null) item(key = "model-back") {
+        if (inModel) item(key = "model-back") {
             TextButton(
                 modifier = Modifier.testTag("catalog-model-back"),
                 onClick = { chosenModel = null }
@@ -189,10 +214,7 @@ internal fun GalleryCatalog(
                     ).forEach { (filter, label) ->
                         FilterChip(
                             selected = activeStatusFilter == filter,
-                            onClick = {
-                                statusFilter = filter.name
-                                chosenModel = null
-                            },
+                            onClick = { statusFilter = filter.name },
                             label = { Text(label) },
                             modifier = Modifier.testTag(
                                 "catalog-status-filter-${filter.name.lowercase()}")
@@ -261,16 +283,20 @@ internal fun GalleryCatalog(
                 Column {
                     Text("По текущим фильтрам ничего не найдено.")
                     TextButton(onClick = {
-                        query = ""; alphabetic = false
+                        updateQuery("")
+                        alphabetic = false
                         statusFilter = GalleryCatalogProgress.Filter.ALL.name
-                        chosenModel = null
                     }) { Text("Сбросить фильтры") }
                 }
             }
-        } else if (browseModels && (chosenModel == null || activeGroup == null)) {
+        } else if (showModelIndex) {
             items(modelGroups, key = { "model:" + it.key }) { group ->
                 OutlinedCard(
-                    onClick = { chosenModel = group.key },
+                    onClick = {
+                        modelQuery = ""
+                        modelPublicationsScroll.requestScrollToItem(0)
+                        chosenModel = group.key
+                    },
                     modifier = Modifier.fillMaxWidth().testTag("catalog-model-row"),
                     shape = MaterialTheme.shapes.medium,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -295,12 +321,12 @@ internal fun GalleryCatalog(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                     }
                 }
             }
         } else {
-            items(visibleEntries, key = { it.url }) { entry ->
+            items(filtered, key = { it.url }) { entry ->
                 val progress = statuses[entry.url]
                     ?: GalleryCatalogProgress.resolve(entry, queueIndex)
                 var menuExpanded by remember(entry.url) { mutableStateOf(false) }
