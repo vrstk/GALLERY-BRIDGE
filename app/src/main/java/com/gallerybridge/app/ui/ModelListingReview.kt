@@ -2,10 +2,12 @@ package com.gallerybridge.app.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,12 +45,14 @@ internal fun ModelListingReview(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onOpen: (ModelListingSources.Publication) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    searchState: MutableState<String> = rememberSaveable { mutableStateOf("") },
+    listState: LazyListState = rememberLazyListState()
 ) {
     val photos = result.photos
     val videoCards = result.videoCards
     val saved = remember(existing) { existing.mapTo(HashSet()) { GalleryKeys.canonical(it.url) } }
-    var search by rememberSaveable { mutableStateOf("") }
+    var search by searchState
     val query = search.trim()
     val cards = remember(result) { result.allCards }
     val visible = remember(cards, query) {
@@ -64,7 +68,6 @@ internal fun ModelListingReview(
     val hiddenSelected = selected.size - visible.count { it.url in selected }
     val chosenPhotos = photos.count { it.url in selected }
     val chosenVideos = videoCards.count { it.url in selected }
-    val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     // The status/diagnostics and publication cards share ONE scroll container.
