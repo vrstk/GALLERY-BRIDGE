@@ -36,6 +36,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
@@ -1481,6 +1482,7 @@ class MainActivity : ComponentActivity() {
         }
         val searchAllowed = !working && !transferRunning && !imageProbeRunning
         val catalogState = rememberSaveableStateHolder()
+        val modelListingState = key(GalleryKeys.canonical(url)) { rememberSaveableStateHolder() }
         val catalogModel = rememberSaveable { mutableStateOf<String?>(null) }
         val navigateBack = {
             if (screen == GalleryPage.CATALOG && catalogModel.value != null) {
@@ -1641,7 +1643,7 @@ class MainActivity : ComponentActivity() {
                         selectedModel = catalogModel
                     )
                 }
-                GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch)
+                GalleryPage.DOWNLOADS -> DownloadsPage(searchAllowed, startSearch, modelListingState)
                 GalleryPage.QUEUE -> GalleryPageColumn { QueuePage() }
                 GalleryPage.HISTORY -> GalleryPageColumn { HistoryPage() }
                 GalleryPage.SETTINGS -> GalleryPageColumn { SettingsPage() }
@@ -1719,41 +1721,47 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
-    private fun DownloadsPage(searchAllowed: Boolean, startSearch: () -> Unit) {
+    private fun DownloadsPage(
+        searchAllowed: Boolean,
+        startSearch: () -> Unit,
+        modelListingState: SaveableStateHolder
+    ) {
         val listing = modelListing
         if (listing != null && items.isEmpty()) {
-            ModelListingReview(
-                result = listing, existing = catalog,
-                selected = modelListingSelected, message = status,
-                busy = working, scanning = scanning,
-                destination = target, onDestination = {
-                    pendingModelBatch = null
-                    target = it
-                },
-                onSelect = { link, checked ->
-                    pendingModelBatch = null
-                    modelListingSelected = if (checked) {
-                        modelListingSelected + link
-                    } else modelListingSelected - link
-                },
-                onSelectPhotos = { links ->
-                    pendingModelBatch = null
-                    modelListingSelected = modelListingSelected + links
-                },
-                onClear = {
-                    pendingModelBatch = null
-                    modelListingSelected = emptySet()
-                },
-                onSave = ::saveListingSelection,
-                onQueueSelected = ::queueSelectedModelGalleries,
-                onStop = ::stopSearch,
-                onContinue = ::scan,
-                onOpen = ::openListingPublication,
-                onBack = {
-                    pendingModelBatch = null
-                    screen = GalleryPage.HOME
-                }
-            )
+            modelListingState.SaveableStateProvider("model-listing") {
+                ModelListingReview(
+                    result = listing, existing = catalog,
+                    selected = modelListingSelected, message = status,
+                    busy = working, scanning = scanning,
+                    destination = target, onDestination = {
+                        pendingModelBatch = null
+                        target = it
+                    },
+                    onSelect = { link, checked ->
+                        pendingModelBatch = null
+                        modelListingSelected = if (checked) {
+                            modelListingSelected + link
+                        } else modelListingSelected - link
+                    },
+                    onSelectPhotos = { links ->
+                        pendingModelBatch = null
+                        modelListingSelected = modelListingSelected + links
+                    },
+                    onClear = {
+                        pendingModelBatch = null
+                        modelListingSelected = emptySet()
+                    },
+                    onSave = ::saveListingSelection,
+                    onQueueSelected = ::queueSelectedModelGalleries,
+                    onStop = ::stopSearch,
+                    onContinue = ::scan,
+                    onOpen = ::openListingPublication,
+                    onBack = {
+                        pendingModelBatch = null
+                        screen = GalleryPage.HOME
+                    }
+                )
+            }
             pendingModelBatch?.let { preview ->
                 ModelBatchPreflightDialog(
                     preview = preview,

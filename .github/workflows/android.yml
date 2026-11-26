@@ -303,29 +303,45 @@ jobs:
         with:
           name: GalleryBridge-signed-release-bundle
           path: candidate
-      - name: Obtain previous signed APK from verified versioned release
+      - name: Obtain the current Signed Preview as the upgrade baseline
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          CODE="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionCode"])')"
-          PREVIOUS="$((CODE - 1))"
-          mkdir -p previous
-          if [ "$PREVIOUS" -eq 32 ]; then
-            gh run download 43817956582 --repo "$GITHUB_REPOSITORY" \
-              --name GalleryBridge-preview-apk --dir previous
-            echo '875eec96bcf9c59ee887694a7d2d9bb58de93b3ea8a12012af78dc2f0400429f  previous/app-debug.apk' | sha256sum -c -
-          else
-            VERSION="0.${PREVIOUS}.0"
-            TAG="v${VERSION}-signed"
-            NAME="GalleryBridge-v${VERSION}-signed.apk"
-            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir previous
-            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir previous
-            python3 -c 'import hashlib,json,pathlib; d=json.load(open("previous/update.json")); f=pathlib.Path("previous/GalleryBridge-v%s-signed.apk" % d["versionName"]); assert d["packageName"] == "com.gallerybridge.app.preview.signed"; assert d["certificateSha256"] == "06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"; assert f.stat().st_size == d["size"]; assert hashlib.sha256(f.read_bytes()).hexdigest() == d["sha256"]'
-            mv "previous/$NAME" previous/app-debug.apk
-          fi
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs previous/app-debug.apk | \
+          gh release download preview-signed --repo "$GITHUB_REPOSITORY" --pattern update.json --dir baseline
+          VERSION="$(python3 - <<'PY'
+          import json, os, pathlib, re
+
+          previous = json.loads(pathlib.Path("baseline/update.json").read_text())
+          candidate = json.loads(pathlib.Path("candidate/update.json").read_text())
+          version = previous["versionName"]
+          code = previous["versionCode"]
+          assert re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version), "Invalid baseline version"
+          assert type(code) is int and 0 < code < candidate["versionCode"], "Baseline must precede the candidate"
+          assert previous["packageName"] == candidate["packageName"], "Baseline package differs"
+          assert previous["certificateSha256"] == candidate["certificateSha256"], "Baseline signer differs"
+          name = f"GalleryBridge-v{version}-signed.apk"
+          url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/v{version}-signed/{name}"
+          assert previous["apkUrl"] == url, "Baseline must reference its versioned APK"
+          print(version)
+          PY
+          )"
+          TAG="v${VERSION}-signed"
+          NAME="GalleryBridge-v${VERSION}-signed.apk"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir previous
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir previous
+          cmp baseline/update.json previous/update.json
+          python3 - "$NAME" <<'PY'
+          import hashlib, json, pathlib, sys
+
+          previous = json.loads(pathlib.Path("previous/update.json").read_text())
+          apk = pathlib.Path("previous") / sys.argv[1]
+          assert apk.stat().st_size == previous["size"], "Baseline APK size differs"
+          assert hashlib.sha256(apk.read_bytes()).hexdigest() == previous["sha256"], "Baseline APK digest differs"
+          PY
+          mv "previous/$NAME" previous/signed.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs previous/signed.apk | \
             grep -Fi '06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1'
       - name: In-place signed upgrade and private-data retention
         shell: bash
@@ -344,8 +360,8 @@ jobs:
           PACKAGE="com.gallerybridge.app.preview.signed"
           NEW_CODE="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionCode"])')"
           NEW_VERSION="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionName"])')"
-          PREVIOUS="$((NEW_CODE - 1))"
-          adb install previous/app-debug.apk
+          PREVIOUS="$(python3 -c 'import json; print(json.load(open("previous/update.json"))["versionCode"])')"
+          adb install previous/signed.apk
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$PREVIOUS "
           # The previous signed APK is also non-debuggable. The root shell below
           # is available exclusively on this CI emulator, never in the app.
