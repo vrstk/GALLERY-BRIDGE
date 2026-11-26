@@ -1,20 +1,43 @@
 package com.gallerybridge.app.update
 
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
 /** Same HTTPS allowlist for manifest requests and resumable APK streams. */
 internal object UpdateConnections {
-    fun connect(initial: String, startAt: Long = 0L): HttpURLConnection {
+    // HTTP 416 rejects the saved offset. Keep the part until a full HTTP 200
+    // stream is available, then let the existing writer replace its contents.
+    fun connect(
+        initial: String,
+        startAt: Long = 0L,
+        open: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
+    ): HttpURLConnection {
         require(startAt >= 0L)
+        val connection = connectOnce(initial, startAt, open)
+        if (startAt == 0L || connection.responseCode != 416) return connection
+        connection.disconnect()
+
+        val full = connectOnce(initial, 0L, open)
+        if (full.responseCode == HttpURLConnection.HTTP_OK) return full
+        val code = full.responseCode
+        full.disconnect()
+        throw IOException("GitHub HTTP $code вместо полной загрузки APK")
+    }
+
+    private fun connectOnce(
+        initial: String,
+        startAt: Long,
+        open: (URL) -> HttpURLConnection
+    ): HttpURLConnection {
         var address = initial
         repeat(6) {
             require(address == UpdatePolicy.API || address == UpdatePolicy.MANIFEST ||
                 UpdatePolicy.permittedUrl(address) || UpdatePolicy.permittedRedirect(address)) {
                 "Недопустимый HTTPS-источник"
             }
-            val connection = URL(address).openConnection() as HttpURLConnection
+            val connection = open(URL(address))
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 15_000
             connection.readTimeout = 30_000
@@ -30,9 +53,9 @@ internal object UpdateConnections {
                 require(UpdatePolicy.permittedRedirect(next)) { "Небезопасное перенаправление" }
                 address = next
             } else {
-                if (code !in 200..299) {
+                if (code !in 200..299 && !(code == 416 && startAt > 0)) {
                     connection.disconnect()
-                    throw java.io.IOException("GitHub HTTP $code")
+                    throw IOException("GitHub HTTP $code")
                 }
                 return connection
             }
