@@ -376,33 +376,36 @@ jobs:
           test "$APP_UID" -gt 10000
           adb shell mkdir -p "$DATA/files" "$DATA/shared_prefs"
           adb shell chown "$APP_UID:$APP_UID" "$DATA/files" "$DATA/shared_prefs"
-          mkdir -p upgrade-fixtures
-          printf '%s' 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED' > upgrade-fixtures/upgrade-sentinel.txt
-          printf '%s' '<map><string name="model">GB_UPGRADE_PREVIOUS</string><boolean name="dark" value="true" /></map>' > upgrade-fixtures/settings.xml
-          printf '%s' '<map><string name="galleries">[]</string></map>' > upgrade-fixtures/gallery_bridge_catalog_v1.xml
-          printf '%s' '<map><string name="records">[]</string></map>' > upgrade-fixtures/gallery_bridge_history.xml
-          printf '%s' '<map><string name="snapshot">{"id":32033,"model":"GB_UPGRADE_PREVIOUS","title":"Очередь 0.32","date":"2026-11-16","target":"Mail WebDAV","root":"Models","account":"","entries":[]}</string></map>' > upgrade-fixtures/gallery_bridge_queue.xml
-          adb push upgrade-fixtures/upgrade-sentinel.txt /data/local/tmp/upgrade-sentinel.txt
+          FIXTURES="$RUNNER_TEMP/gallery-upgrade-fixtures"
+          python3 .github/scripts/upgrade_fixtures.py write "$FIXTURES/expected"
+          adb push "$FIXTURES/expected/upgrade-sentinel.txt" /data/local/tmp/upgrade-sentinel.txt
           adb shell cp /data/local/tmp/upgrade-sentinel.txt "$DATA/files/upgrade-sentinel.txt"
           adb shell chown "$APP_UID:$APP_UID" "$DATA/files/upgrade-sentinel.txt"
-          for name in settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml; do
-            adb push "upgrade-fixtures/$name" "/data/local/tmp/$name"
+          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml)
+          for name in "${PREFS[@]}"; do
+            adb push "$FIXTURES/expected/$name" "/data/local/tmp/$name"
             adb shell cp "/data/local/tmp/$name" "$DATA/shared_prefs/$name"
             adb shell chown "$APP_UID:$APP_UID" "$DATA/shared_prefs/$name"
           done
-          adb shell cat "$DATA/files/upgrade-sentinel.txt" | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
+          verify_upgrade_data() {
+            local stage="$1" name
+            test "$(adb shell id -u | tr -d '\r')" = 0
+            mkdir -p "$FIXTURES/$stage"
+            adb exec-out cat "$DATA/files/upgrade-sentinel.txt" > "$FIXTURES/$stage/upgrade-sentinel.txt"
+            for name in "${PREFS[@]}"; do
+              adb exec-out cat "$DATA/shared_prefs/$name" > "$FIXTURES/$stage/$name"
+            done
+            echo "Verify app data ($stage)"
+            python3 .github/scripts/upgrade_fixtures.py verify "$FIXTURES/$stage"
+          }
+          verify_upgrade_data before-install
           adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
-          # Root ADB is used only by CI to inspect persisted files after upgrade.
-          test "$(adb shell id -u | tr -d '\r')" = 0
-          adb shell cat "$DATA/files/upgrade-sentinel.txt" | grep -Fx 'GALLERY_BRIDGE_UPGRADE_PREVIOUS_PRESERVED'
-          adb shell cat "$DATA/shared_prefs/settings.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
-          adb shell cat "$DATA/shared_prefs/gallery_bridge_catalog_v1.xml" | grep -F 'galleries'
-          adb shell cat "$DATA/shared_prefs/gallery_bridge_history.xml" | grep -F 'records'
-          adb shell cat "$DATA/shared_prefs/gallery_bridge_queue.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
+          verify_upgrade_data after-install
           adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
           sleep 3
-          adb shell cat "$DATA/shared_prefs/gallery_bridge_queue.xml" | grep -F 'GB_UPGRADE_PREVIOUS'
+          adb shell pidof "$PACKAGE"
+          verify_upgrade_data after-launch
       - uses: actions/upload-artifact@v4
         if: always()
         with:
