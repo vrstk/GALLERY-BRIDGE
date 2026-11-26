@@ -802,16 +802,29 @@ class MainActivity : ComponentActivity() {
         batchOpenFrom(0, QueueStore.load(this))
     }
 
-    private fun batchNext() {
+    private fun isCurrentBatchPublication(): Boolean =
+        batchReviewUrls.getOrNull(batchReviewIndex)?.let { GalleryKeys.same(url, it) } == true
+
+    private fun canNavigateBatch(queue: QueueStore.Snapshot?): Boolean =
+        !working && !scanning && !transferRunning && !imageProbeRunning &&
+            (queue?.remaining ?: 0) == 0
+
+    private fun batchNavigate(advance: Boolean) {
+        if (batchReviewUrls.isEmpty()) return
+        val current = isCurrentBatchPublication()
+        if (advance && !current) return
         val queue = QueueStore.load(this)
-        if (working || scanning || transferRunning || imageProbeRunning ||
-            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
-                .getBoolean(TransferService.KEY_RUNNING, false) || (queue?.remaining ?: 0) > 0
+        if (!canNavigateBatch(queue) || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false)
         ) {
-            batchReviewNotice = "Завершите или закройте сохранённую очередь перед переходом."
+            batchReviewNotice = "Дождитесь завершения операции или закройте сохранённую очередь."
             return
         }
-        batchOpenFrom(batchReviewIndex + 1, queue)
+        if (!advance && current) {
+            screen = if (items.isNotEmpty()) GalleryPage.DOWNLOADS else GalleryPage.HOME
+            return
+        }
+        batchOpenFrom(batchReviewIndex + if (advance) 1 else 0, queue)
     }
 
     private fun batchClose() {
@@ -1456,6 +1469,7 @@ class MainActivity : ComponentActivity() {
         upload()
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun Ui() {
         val keyboard = LocalSoftwareKeyboardController.current
@@ -1521,6 +1535,22 @@ class MainActivity : ComponentActivity() {
             onSettings = { openSettings() },
             onBack = navigateBack,
             actions = {
+                if (screen == GalleryPage.CATALOG && batchReviewUrls.isNotEmpty()) {
+                    FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = ::batchClose) { Text("Закончить просмотр") }
+                        TextButton(
+                            onClick = {
+                                keyboard?.hide()
+                                focus.clearFocus()
+                                batchNavigate(advance = false)
+                            },
+                            enabled = canNavigateBatch(savedQueue)
+                        ) { Text("Продолжить просмотр") }
+                    }
+                }
                 if (screen == GalleryPage.CATALOG && batchReviewUrls.isEmpty() &&
                     batchReviewNotice.isNotBlank()
                 ) {
@@ -1946,13 +1976,18 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun BatchReviewControls() {
+        val current = isCurrentBatchPublication()
+        val focus = LocalFocusManager.current
         GalleryBatchReviewBar(
             position = batchReviewIndex, total = batchReviewUrls.size,
-            publicationTitle = title,
+            publicationTitle = title.takeIf { current }.orEmpty(),
             notice = batchReviewNotice,
-            canAdvance = !working && !scanning && !transferRunning && !imageProbeRunning &&
-                (savedQueue?.remaining ?: 0) == 0,
-            onNext = ::batchNext,
+            paused = !current,
+            canNavigate = canNavigateBatch(savedQueue),
+            onNavigate = {
+                focus.clearFocus()
+                batchNavigate(advance = current)
+            },
             onClose = ::batchClose
         )
     }

@@ -18,7 +18,7 @@ import org.junit.Test
 class GalleryBatchReviewNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    @Test fun aRemovedPublicationDoesNotEndTheReview() {
+    @Test fun anotherLinkPausesReviewAndARemovedPublicationIsSkipped() {
         val catalog = (1..3).map { index ->
             CatalogGallery(
                 url = "https://example.com/gallery/batch-nav-fixture-$index",
@@ -38,6 +38,20 @@ class GalleryBatchReviewNavigationTest {
             compose.onNodeWithText("Просмотреть (3)").performScrollTo().performClick()
             compose.onNodeWithText("Начать просмотр").performClick()
             compose.onNodeWithText("Пакетный просмотр: 1 из 3").assertIsDisplayed()
+
+            compose.onNodeWithText("Ссылка на фотогалерею").performTextReplacement(
+                "https://example.com/gallery/outside-batch"
+            )
+            compose.onNodeWithText("Просмотр приостановлен. Открыта другая ссылка.")
+                .assertIsDisplayed()
+            compose.onNodeWithText("Следующая публикация").assertDoesNotExist()
+            compose.onNodeWithTag("nav-catalog").performClick()
+            compose.onNodeWithText("Продолжить просмотр").performClick()
+            compose.onNodeWithText("Пакетный просмотр: 1 из 3").assertIsDisplayed()
+            compose.runOnIdle {
+                val session = ViewModelProvider(compose.activity)[GallerySessionState::class.java]
+                assertEquals(catalog[0].url, session.url)
+            }
 
             assertTrue(GalleryCatalogStore.remove(context, catalog[1].url))
             compose.onNodeWithText("Следующая публикация").performClick()

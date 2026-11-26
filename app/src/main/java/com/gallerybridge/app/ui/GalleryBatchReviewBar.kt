@@ -7,12 +7,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /** Manual navigation only. This component does not scan or transfer anything. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GalleryBatchReviewBar(
     position: Int,
     total: Int,
-    canAdvance: Boolean,
-    onNext: () -> Unit,
+    paused: Boolean,
+    canNavigate: Boolean,
+    onNavigate: () -> Unit,
     onClose: () -> Unit,
     publicationTitle: String = "",
     notice: String = ""
@@ -24,14 +26,19 @@ internal fun GalleryBatchReviewBar(
             Text("Пакетный просмотр: ${position + 1} из $total",
                 style = MaterialTheme.typography.titleSmall)
             if (publicationTitle.isNotBlank()) Text(publicationTitle, style = MaterialTheme.typography.titleMedium)
+            if (paused) Text("Просмотр приостановлен. Открыта другая ссылка.",
+                style = MaterialTheme.typography.bodySmall)
             if (notice.isNotBlank()) Text(notice,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onClose) { Text("Закончить") }
-                Button(onClick = onNext, enabled = canAdvance) {
-                    Text(if (position + 1 >= total) "Вернуться в каталог"
-                        else "Следующая публикация")
+                Button(onClick = onNavigate, enabled = canNavigate) {
+                    Text(when {
+                        paused -> "Продолжить просмотр"
+                        position + 1 >= total -> "Вернуться в каталог"
+                        else -> "Следующая публикация"
+                    })
                 }
             }
         }
