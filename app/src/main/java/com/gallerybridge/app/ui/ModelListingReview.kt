@@ -6,6 +6,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,7 +36,7 @@ internal fun ModelListingReview(
     destination: String = "Папка Android",
     onDestination: (String) -> Unit = {},
     onSelect: (String, Boolean) -> Unit,
-    onSelectAllPhotos: () -> Unit,
+    onSelectPhotos: (Set<String>) -> Unit,
     onClear: () -> Unit,
     onSave: () -> Unit,
     onQueueSelected: () -> Unit,
@@ -42,7 +47,21 @@ internal fun ModelListingReview(
 ) {
     val photos = result.photos
     val videoCards = result.videoCards
-    val saved = existing.mapTo(HashSet()) { GalleryKeys.canonical(it.url) }
+    val saved = remember(existing) { existing.mapTo(HashSet()) { GalleryKeys.canonical(it.url) } }
+    var search by rememberSaveable { mutableStateOf("") }
+    val query = search.trim()
+    val cards = remember(result) { result.allCards }
+    val visible = remember(cards, query) {
+        if (query.isEmpty()) cards else cards.filter {
+            it.title.contains(query, ignoreCase = true) ||
+                it.studio.contains(query, ignoreCase = true) ||
+                it.displayedDate.contains(query, ignoreCase = true)
+        }
+    }
+    val visiblePhotoUrls = remember(visible) {
+        visible.filter { it.type == "photo" }.mapTo(linkedSetOf()) { it.url }
+    }
+    val hiddenSelected = selected.size - visible.count { it.url in selected }
     val chosenPhotos = photos.count { it.url in selected }
     val chosenVideos = videoCards.count { it.url in selected }
     val listState = rememberLazyListState()
@@ -66,15 +85,31 @@ internal fun ModelListingReview(
             ) {
                 Text("Галереи модели", style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Собрано: ${result.allCards.size} публикаций · Фото: ${photos.size} · Видео: " +
+                    "Собрано: ${cards.size} публикаций · Фото: ${photos.size} · Видео: " +
                         "${maxOf(videoCards.size, result.videos)} · Порций: ${result.loadedPages}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                if (result.allCards.isNotEmpty()) {
+                if (cards.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        label = { Text("Поиск по названию, студии или дате") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("model-listing-search"),
+                        trailingIcon = if (search.isNotEmpty()) {
+                            { TextButton(onClick = { search = "" }) { Text("Сброс") } }
+                        } else null
+                    )
+                    if (query.isNotEmpty()) {
+                        Text("Найдено: ${visible.size} из ${cards.size}",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (visible.isNotEmpty()) {
                     TextButton(onClick = {
                         coroutineScope.launch { listState.animateScrollToItem(1) }
                     }) {
-                        Text("К карточкам (${result.allCards.size})")
+                        Text("К карточкам (${visible.size})")
                     }
                 }
                 result.advertisedCount?.let {
@@ -82,12 +117,12 @@ internal fun ModelListingReview(
                 }
                 if (!scanning && result.incomplete) {
                     Text(
-                        if (result.advertisedCount == result.allCards.size)
-                            "Собраны все ${result.allCards.size} заявленных карточек, " +
+                        if (result.advertisedCount == cards.size)
+                            "Собраны все ${cards.size} заявленных карточек, " +
                                 "но сервер не подтвердил конец выдачи. " +
                                 "Каталог пока считается неполным."
                         else
-                            "Каталог НЕПОЛНЫЙ: собрано ${result.allCards.size} карточек. " +
+                            "Каталог НЕПОЛНЫЙ: собрано ${cards.size} карточек. " +
                                 "Ошибка или повтор порции не означает конец выдачи.",
                         color = MaterialTheme.colorScheme.error
                     )
@@ -120,8 +155,11 @@ internal fun ModelListingReview(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    TextButton(onClick = onSelectAllPhotos, enabled = !busy && photos.isNotEmpty()) {
-                        Text("Выбрать все фото")
+                    TextButton(
+                        onClick = { onSelectPhotos(visiblePhotoUrls) },
+                        enabled = !busy && visiblePhotoUrls.any { it !in selected }
+                    ) {
+                        Text(if (query.isEmpty()) "Выбрать все фото" else "Выбрать найденные фото")
                     }
                     TextButton(onClick = onClear, enabled = selected.isNotEmpty() && !busy) {
                         Text("Снять выбор")
@@ -130,6 +168,8 @@ internal fun ModelListingReview(
                 Text(
                     "Выбрано: фотогалерей $chosenPhotos, видео " +
                         "$chosenVideos. " +
+                        (if (query.isNotEmpty() && hiddenSelected > 0)
+                            "Вне поиска: $hiddenSelected. " else "") +
                         "Даты показаны на карточках сайта, " +
                         "это не подтверждённые даты публикации.",
                     style = MaterialTheme.typography.bodySmall
@@ -146,7 +186,13 @@ internal fun ModelListingReview(
                 HorizontalDivider()
             }
         }
-        itemsIndexed(result.allCards, key = { _, publication -> publication.url }) { index, publication ->
+        if (cards.isNotEmpty() && visible.isEmpty()) {
+            item(key = "model-listing-empty") {
+                Text("По этому запросу ничего не найдено.",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+        }
+        itemsIndexed(visible, key = { _, publication -> publication.url }) { index, publication ->
             val video = publication.type == "video"
             val already = GalleryKeys.canonical(publication.url) in saved
             OutlinedCard(

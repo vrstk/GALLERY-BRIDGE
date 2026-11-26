@@ -1736,9 +1736,9 @@ class MainActivity : ComponentActivity() {
                         modelListingSelected + link
                     } else modelListingSelected - link
                 },
-                onSelectAllPhotos = {
+                onSelectPhotos = { links ->
                     pendingModelBatch = null
-                    modelListingSelected = listing.photos.mapTo(linkedSetOf()) { it.url }
+                    modelListingSelected = modelListingSelected + links
                 },
                 onClear = {
                     pendingModelBatch = null

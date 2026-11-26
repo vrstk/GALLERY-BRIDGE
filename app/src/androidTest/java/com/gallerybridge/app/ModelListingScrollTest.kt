@@ -48,7 +48,7 @@ class ModelListingScrollTest {
                         onSelect = { url, checked ->
                             chosen.value = if (checked) chosen.value + url else chosen.value - url
                         },
-                        onSelectAllPhotos = { chosen.value = publications.map { it.url }.toSet() },
+                        onSelectPhotos = { chosen.value = chosen.value + it },
                         onClear = { chosen.value = emptySet() },
                         onSave = {}, onQueueSelected = {},
                         onStop = {}, onContinue = {}, onOpen = {}, onBack = {}
