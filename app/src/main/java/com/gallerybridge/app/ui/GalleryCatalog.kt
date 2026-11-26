@@ -24,6 +24,8 @@ import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.gallerybridge.app.R
@@ -106,13 +108,22 @@ internal fun GalleryCatalog(
     val modelGroups = remember(filtered, showModelIndex) {
         if (showModelIndex) GalleryCatalogModels.group(filtered) else emptyList()
     }
-    val batchScope = if (inModel) filtered else entries
-    val batchCandidates = remember(batchScope, queue) {
-        batchScope.filter { GalleryBatchSelection.eligible(it, queue) }
+    val eligibleBatchUrls = remember(entries, queueIndex) {
+        GalleryBatchSelection.eligibleUrls(entries, queueIndex)
     }
-    val selectedBatch = remember(entries, queue, batchSelection) {
-        GalleryBatchSelection.plan(entries, batchSelection, queue)
+    val selectedBatch = remember(eligibleBatchUrls, batchSelection) {
+        GalleryBatchSelection.plan(eligibleBatchUrls, batchSelection)
     }
+    val filteredUrls = remember(filtered) {
+        filtered.mapNotNull { GalleryKeys.canonical(it.url) }.distinct()
+    }
+    val batchAdditions = remember(filteredUrls, eligibleBatchUrls, selectedBatch) {
+        filteredUrls.asSequence()
+            .filter { it in eligibleBatchUrls && it !in selectedBatch }
+            .take(GalleryBatchSelection.LIMIT - selectedBatch.size)
+            .toList()
+    }
+    val hiddenBatchCount = selectedBatch.count { it !in filteredUrls }
     val attentionCount = remember(scopeEntries, statuses) {
         scopeEntries.count { statuses[it.url]?.needsAttention == true }
     }
@@ -253,17 +264,19 @@ internal fun GalleryCatalog(
         }
         if (showBatchTools && entries.isNotEmpty()) item(key = "batch") {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("До ${GalleryBatchSelection.LIMIT} публикаций. Каждая открывается вручную; передачи не запускаются.",
+                Text("Выбрано: ${selectedBatch.size} из ${GalleryBatchSelection.LIMIT}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hiddenBatchCount > 0) {
+                    Text("Вне текущего списка: $hiddenBatchCount",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        enabled = batchCandidates.isNotEmpty(),
-                        onClick = {
-                            batchSelection = batchCandidates.take(GalleryBatchSelection.LIMIT)
-                                .map { it.url }
-                        }
-                    ) { Text("Выбрать новые") }
+                        enabled = batchAdditions.isNotEmpty(),
+                        onClick = { batchSelection = selectedBatch + batchAdditions }
+                    ) { Text("Добавить из списка") }
                     TextButton(enabled = batchSelection.isNotEmpty(),
                         onClick = { batchSelection = emptyList() }) { Text("Снять выбор") }
                     Button(enabled = selectedBatch.isNotEmpty(),
@@ -350,17 +363,19 @@ internal fun GalleryCatalog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            if (showBatchTools && GalleryBatchSelection.eligible(entry, queue)) {
+                            val batchUrl = remember(entry.url) { GalleryKeys.canonical(entry.url) }
+                            if (showBatchTools && batchUrl != null && batchUrl in eligibleBatchUrls) {
+                                val checked = batchUrl in selectedBatch
                                 Checkbox(
-                                    checked = entry.url in batchSelection,
-                                    onCheckedChange = { checked ->
-                                        batchSelection = if (checked) {
-                                            (batchSelection + entry.url).distinct()
-                                                .take(GalleryBatchSelection.LIMIT)
-                                        } else batchSelection - entry.url
+                                    checked = checked,
+                                    onCheckedChange = { select ->
+                                        batchSelection = if (select) selectedBatch + batchUrl
+                                            else selectedBatch - batchUrl
                                     },
-                                    enabled = entry.url in batchSelection ||
-                                        batchSelection.size < GalleryBatchSelection.LIMIT
+                                    enabled = checked || selectedBatch.size < GalleryBatchSelection.LIMIT,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "Выбрать для просмотра: ${entry.title}"
+                                    }
                                 )
                             }
                             // Only the explicit catalog cover; never pass it to the queue.
@@ -495,16 +510,31 @@ internal fun GalleryCatalog(
             onDismissRequest = { showBatchConfirmation = false },
             title = { Text("Начать просмотр публикаций?") },
             text = {
-                Text(
-                    "Будут открыты ${selectedBatch.size} сохранённых публикаций по одной. " +
-                        "Это не скачивает фотографии, не изменяет очередь и не запускает передачи. " +
-                        "После каждого просмотра переходите к следующей вручную."
-                )
+                val byUrl = remember(entries) {
+                    entries.associateBy { GalleryKeys.canonical(it.url) }
+                }
+                Column(
+                    Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Публикации откроются по одной. Просмотр не запускает передачу файлов.")
+                    selectedBatch.forEach { url ->
+                        byUrl[url]?.let { entry ->
+                            Column {
+                                Text(entry.title.ifBlank { "Без названия" },
+                                    style = MaterialTheme.typography.bodyMedium)
+                                Text(entry.model.ifBlank { "Без имени" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
             },
             confirmButton = {
-                Button(onClick = {
+                Button(enabled = selectedBatch.isNotEmpty(), onClick = {
                     showBatchConfirmation = false
-                    if (selectedBatch.isNotEmpty()) onBatchReview(selectedBatch)
+                    onBatchReview(selectedBatch)
                 }) { Text("Начать просмотр") }
             },
             dismissButton = {

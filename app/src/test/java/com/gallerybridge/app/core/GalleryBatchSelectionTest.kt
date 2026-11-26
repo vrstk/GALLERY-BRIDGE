@@ -24,8 +24,14 @@ class GalleryBatchSelectionTest {
         val all = listOf(a, b, done)
         val picked = listOf(a.url, done.url, b.url)
         assertEquals(listOf(b.url), GalleryBatchSelection.plan(all, picked, active))
-        assertFalse(GalleryBatchSelection.eligible(done, null))
-        assertFalse(GalleryBatchSelection.eligible(a, active))
+    }
+
+    @Test fun excludesPublicationsAlreadyInMixedGalleryQueue() {
+        val batch = active.copy(sourceUrl = "", entries = listOf(
+            QueueStore.Entry(item, "PENDING", galleryUrl = "https://EXAMPLE.ORG/gallery/a/")
+        ))
+        assertEquals(listOf(b.url),
+            GalleryBatchSelection.plan(listOf(a, b), listOf(a.url, b.url), batch))
     }
 
     @Test fun selectionNeverImportsUnknownOrInsecureUrls() {
@@ -46,7 +52,6 @@ class GalleryBatchSelectionTest {
 
     @Test fun evenCompletedSavedQueueRequiresManualGalleryReview() {
         val completed = active.copy(entries = listOf(QueueStore.Entry(item, "DONE")))
-        assertFalse(GalleryBatchSelection.eligible(a, completed))
         assertEquals(listOf(b.url),
             GalleryBatchSelection.plan(listOf(a, b), listOf(a.url, b.url), completed))
     }
