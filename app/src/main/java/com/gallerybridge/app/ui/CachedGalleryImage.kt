@@ -2,10 +2,12 @@ package com.gallerybridge.app.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -17,17 +19,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import com.gallerybridge.app.R
 import com.gallerybridge.app.core.Media
 
-/**
- * The same image request and cache keys are used by mosaic, tiles and viewer.
- * Failures are not cached as successful previews. Retry is user initiated,
- * avoiding endless requests on a slow or unavailable network.
- */
+private enum class PreviewState { LOADING, READY, FAILED }
+
+/** Image loading and retries are independent of file selection and transfer. */
 @Composable
 internal fun CachedGalleryImage(
     media: Media,
@@ -36,46 +36,45 @@ internal fun CachedGalleryImage(
     onAspectRatio: (Float) -> Unit = {}
 ) {
     val context = LocalContext.current
-    var failed by remember(media.url) { mutableStateOf(false) }
+    var state by remember(media.url) { mutableStateOf(PreviewState.LOADING) }
     var retry by remember(media.url) { mutableIntStateOf(0) }
-    val request = remember(context, media.url, retry) {
+    val request = remember(context, media.url) {
         GalleryImageRequests.forUrl(context, media.url)
     }
-    val placeholder = painterResource(R.drawable.ic_gallery_bridge)
 
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        // A new composition key forces a fresh request when retry is tapped.
-        key(retry) {
+        // Recreate the image node on retry while keeping the same cache key.
+        key(media.url, retry) {
             AsyncImage(
                 model = request,
                 contentDescription = media.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = contentScale,
-                placeholder = placeholder,
-                error = placeholder,
-                onLoading = { failed = false },
+                onLoading = { state = PreviewState.LOADING },
                 onSuccess = { result ->
-                    failed = false
+                    state = PreviewState.READY
                     val size = result.painter.intrinsicSize
                     if (size.width > 0f && size.height > 0f) {
                         onAspectRatio(size.width / size.height)
                     }
                 },
-                onError = { failed = true }
+                onError = { state = PreviewState.FAILED }
             )
         }
-        if (failed) {
-            Surface(
-                shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-            ) {
-                TextButton(onClick = {
-                    failed = false
-                    retry += 1
-                }) {
-                    Text("Повторить", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+        when (state) {
+            PreviewState.LOADING -> CircularProgressIndicator(
+                modifier = Modifier.size(22.dp)
+                    .semantics { contentDescription = "Загрузка изображения: ${media.name}" },
+                strokeWidth = 2.dp
+            )
+            PreviewState.FAILED -> FilledTonalIconButton(onClick = {
+                state = PreviewState.LOADING
+                retry += 1
+            }) {
+                Icon(Icons.Filled.Refresh,
+                    contentDescription = "Повторить загрузку изображения: ${media.name}")
             }
+            PreviewState.READY -> Unit
         }
     }
 }
