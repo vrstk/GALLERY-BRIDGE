@@ -29,6 +29,16 @@ internal object GalleryBatchSelection {
         queue: QueueStore.Snapshot?
     ): List<String> = plan(eligibleUrls(entries, GalleryCatalogProgress.index(queue)), requested)
 
+    fun nextAvailableIndex(
+        urls: List<String>,
+        start: Int,
+        entries: List<CatalogGallery>,
+        queue: QueueStore.Snapshot?
+    ): Int? {
+        val eligible = eligibleUrls(entries, GalleryCatalogProgress.index(queue))
+        return (start until urls.size).firstOrNull { urls[it] in eligible }
+    }
+
     /** Keep selection order, remove canonical duplicates and ignore unavailable URLs. */
     fun plan(eligible: Set<String>, requested: Collection<String>): List<String> {
         return requested.asSequence()

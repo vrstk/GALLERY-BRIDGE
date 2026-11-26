@@ -66,6 +66,7 @@ internal class GallerySessionState(application: Application) : AndroidViewModel(
     var catalogBackupStatus by mutableStateOf("")
     var batchReviewUrls by mutableStateOf<List<String>>(emptyList())
     var batchReviewIndex by mutableIntStateOf(0)
+    var batchReviewNotice by mutableStateOf("")
     var pendingCatalogImport by mutableStateOf<GalleryPortableBackup.Payload?>(null)
     var screen by mutableStateOf(GalleryPage.HOME)
     var settingsDestination by mutableStateOf("Mail WebDAV")

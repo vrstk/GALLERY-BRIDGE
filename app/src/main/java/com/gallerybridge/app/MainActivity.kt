@@ -229,6 +229,9 @@ class MainActivity : ComponentActivity() {
     private var batchReviewIndex
         get() = session.batchReviewIndex
         set(value) { session.batchReviewIndex = value }
+    private var batchReviewNotice
+        get() = session.batchReviewNotice
+        set(value) { session.batchReviewNotice = value }
     private var pendingCatalogImport
         get() = session.pendingCatalogImport
         set(value) { session.pendingCatalogImport = value }
@@ -427,12 +430,12 @@ class MainActivity : ComponentActivity() {
         savedQueue = QueueStore.load(this)
         history = HistoryStore.load(this)
         catalog = GalleryCatalogStore.load(this)
-        batchReviewUrls = GalleryBatchSelection.plan(
-            catalog, savedInstanceState?.getStringArrayList("batchReviewUrls") ?: emptyList(),
-            savedQueue
-        )
+        // Keep saved positions stable. Eligibility is rechecked when advancing.
+        batchReviewUrls = savedInstanceState?.getStringArrayList("batchReviewUrls").orEmpty()
+            .mapNotNull(GalleryKeys::canonical).distinct().take(GalleryBatchSelection.LIMIT)
         batchReviewIndex = savedInstanceState?.getInt("batchReviewIndex", 0)
             ?.coerceIn(0, (batchReviewUrls.size - 1).coerceAtLeast(0)) ?: 0
+        batchReviewNotice = savedInstanceState?.getString("batchReviewNotice").orEmpty()
         transferRunning = getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
             .getBoolean(TransferService.KEY_RUNNING, false)
         val previousLink = savedInstanceState?.getString("galleryUrl")
@@ -641,6 +644,7 @@ class MainActivity : ComponentActivity() {
         outState.putString("openedPhoto", openedPhoto)
         outState.putStringArrayList("batchReviewUrls", ArrayList(batchReviewUrls))
         outState.putInt("batchReviewIndex", batchReviewIndex)
+        outState.putString("batchReviewNotice", batchReviewNotice)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -765,50 +769,54 @@ class MainActivity : ComponentActivity() {
         ImageQualityProbe.cancel()
     }
 
-    private fun batchOpenCurrent() {
-        val selectedUrl = batchReviewUrls.getOrNull(batchReviewIndex) ?: return
-        val fresh = GalleryBatchSelection.plan(
-            GalleryCatalogStore.load(this), listOf(selectedUrl), QueueStore.load(this)
-        )
-        if (fresh.isEmpty()) {
-            batchReviewUrls = emptyList()
-            status = "Пакетный просмотр изменился: запись больше недоступна."
-            screen = GalleryPage.CATALOG
-            return
-        }
-        setGalleryUrl(selectedUrl)
+    private fun openCatalogPublication(gallery: CatalogGallery) {
+        setGalleryUrl(gallery.url)
+        model = gallery.model
+        title = gallery.title
+        date = if (gallery.source == "elitebabes") {
+            GalleryMetadataStore.load(this, gallery.url)?.date.orEmpty()
+        } else gallery.date
         screen = GalleryPage.HOME
     }
 
-    private fun batchBegin(urls: List<String>) {
-        batchReviewUrls = GalleryBatchSelection.plan(
-            GalleryCatalogStore.load(this), urls, QueueStore.load(this)
-        )
-        batchReviewIndex = 0
-        if (batchReviewUrls.isNotEmpty()) batchOpenCurrent()
-    }
-
-    private fun batchNext() {
-        if (working || scanning || transferRunning || imageProbeRunning ||
-            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
-                .getBoolean(TransferService.KEY_RUNNING, false) ||
-            (QueueStore.load(this)?.remaining ?: 0) > 0
-        ) {
-            status = "Остановите передачу или завершите сохранённую очередь перед переходом."
-            return
-        }
-        if (batchReviewIndex + 1 >= batchReviewUrls.size) {
+    private fun batchOpenFrom(start: Int, queue: QueueStore.Snapshot?) {
+        catalog = GalleryCatalogStore.load(this)
+        val next = GalleryBatchSelection.nextAvailableIndex(batchReviewUrls, start, catalog, queue)
+        val skipped = (next ?: batchReviewUrls.size) - start
+        val notice = if (skipped > 0) "Пропущено недоступных для просмотра публикаций: $skipped." else ""
+        if (next == null) {
             batchReviewUrls = emptyList()
-            catalog = GalleryCatalogStore.load(this)
+            batchReviewNotice = notice
             screen = GalleryPage.CATALOG
             return
         }
-        batchReviewIndex += 1
-        batchOpenCurrent()
+        batchReviewIndex = next
+        batchReviewNotice = notice
+        val nextUrl = batchReviewUrls[next]
+        openCatalogPublication(catalog.first { GalleryKeys.same(it.url, nextUrl) })
+    }
+
+    private fun batchBegin(urls: List<String>) {
+        batchReviewUrls = urls
+        batchReviewIndex = 0
+        batchOpenFrom(0, QueueStore.load(this))
+    }
+
+    private fun batchNext() {
+        val queue = QueueStore.load(this)
+        if (working || scanning || transferRunning || imageProbeRunning ||
+            getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false) || (queue?.remaining ?: 0) > 0
+        ) {
+            batchReviewNotice = "Завершите или закройте сохранённую очередь перед переходом."
+            return
+        }
+        batchOpenFrom(batchReviewIndex + 1, queue)
     }
 
     private fun batchClose() {
         batchReviewUrls = emptyList()
+        batchReviewNotice = ""
         catalog = GalleryCatalogStore.load(this)
         screen = GalleryPage.CATALOG
     }
@@ -1513,6 +1521,18 @@ class MainActivity : ComponentActivity() {
             onSettings = { openSettings() },
             onBack = navigateBack,
             actions = {
+                if (screen == GalleryPage.CATALOG && batchReviewUrls.isEmpty() &&
+                    batchReviewNotice.isNotBlank()
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(batchReviewNotice, Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = { batchReviewNotice = "" }) { Text("Скрыть") }
+                    }
+                }
                 if (screen == GalleryPage.DOWNLOADS && items.isNotEmpty()) {
                     DownloadActions(selected.size, searchAllowed && selected.isNotEmpty()) {
                         keyboard?.hide()
@@ -1561,13 +1581,7 @@ class MainActivity : ComponentActivity() {
                         onBatchReview = ::batchBegin,
                         queue = savedQueue,
                         onQueue = { screen = GalleryPage.QUEUE },
-                        onOpen = { gallery ->
-                            setGalleryUrl(gallery.url)
-                            model = gallery.model
-                            title = gallery.title
-                            date = if (gallery.source == "elitebabes") "" else gallery.date
-                            screen = GalleryPage.HOME
-                        },
+                        onOpen = ::openCatalogPublication,
                         onRemove = { gallery ->
                             if (GalleryCatalogStore.remove(this@MainActivity, gallery.url)) {
                                 catalog = GalleryCatalogStore.load(this@MainActivity)
@@ -1935,6 +1949,7 @@ class MainActivity : ComponentActivity() {
         GalleryBatchReviewBar(
             position = batchReviewIndex, total = batchReviewUrls.size,
             publicationTitle = title,
+            notice = batchReviewNotice,
             canAdvance = !working && !scanning && !transferRunning && !imageProbeRunning &&
                 (savedQueue?.remaining ?: 0) == 0,
             onNext = ::batchNext,

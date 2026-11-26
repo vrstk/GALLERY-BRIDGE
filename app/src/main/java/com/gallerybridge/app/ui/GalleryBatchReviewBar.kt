@@ -14,7 +14,8 @@ internal fun GalleryBatchReviewBar(
     canAdvance: Boolean,
     onNext: () -> Unit,
     onClose: () -> Unit,
-    publicationTitle: String = ""
+    publicationTitle: String = "",
+    notice: String = ""
 ) {
     if (total == 0) return
     OutlinedCard(Modifier.fillMaxWidth()) {
@@ -23,8 +24,9 @@ internal fun GalleryBatchReviewBar(
             Text("Пакетный просмотр: ${position + 1} из $total",
                 style = MaterialTheme.typography.titleSmall)
             if (publicationTitle.isNotBlank()) Text(publicationTitle, style = MaterialTheme.typography.titleMedium)
-            Text("Каждую публикацию проверяйте отдельно. Загрузка файлов не запускается автоматически.",
-                style = MaterialTheme.typography.bodySmall)
+            if (notice.isNotBlank()) Text(notice,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onClose) { Text("Закончить") }
                 Button(onClick = onNext, enabled = canAdvance) {

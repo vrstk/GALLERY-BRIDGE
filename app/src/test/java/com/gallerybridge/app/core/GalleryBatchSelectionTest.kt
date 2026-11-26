@@ -34,6 +34,15 @@ class GalleryBatchSelectionTest {
             GalleryBatchSelection.plan(listOf(a, b), listOf(a.url, b.url), batch))
     }
 
+    @Test fun nextPublicationSkipsMissingAndQueuedEntriesWithoutShiftingOriginalPositions() {
+        val missing = "https://example.org/gallery/removed"
+        val urls = listOf(done.url, missing, a.url, b.url)
+        assertEquals(3, GalleryBatchSelection.nextAvailableIndex(urls, 1, listOf(a, b), active))
+        assertEquals(2, GalleryBatchSelection.nextAvailableIndex(urls, 1, listOf(a, b), null))
+        assertNull(GalleryBatchSelection.nextAvailableIndex(urls, 3, listOf(a), null))
+        assertNull(GalleryBatchSelection.nextAvailableIndex(urls, 4, listOf(b), null))
+    }
+
     @Test fun selectionNeverImportsUnknownOrInsecureUrls() {
         val picked = listOf("http://example.org/gallery/a", "https://example.org/other", b.url)
         assertEquals(listOf(b.url), GalleryBatchSelection.plan(listOf(a, b), picked, null))
