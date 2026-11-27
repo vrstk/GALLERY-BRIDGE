@@ -20,6 +20,29 @@ class UpdatePolicyTest {
         assertFalse(UpdatePolicy.isNewer(31, 32))
     }
     @Test fun validManifest() { assertEquals(33L, UpdatePolicy.parse(payload()).code) }
+    @Test fun manifestRejectsCoercedNumericValues() {
+        for (key in listOf("versionCode", "size")) {
+            for (value in listOf<Any>("33", 33.5, true, JSONObject.NULL, JSONObject())) {
+                rejects(JSONObject(payload()).put(key, value).toString())
+            }
+        }
+        rejects(payload().replace("\"versionCode\":33", "\"versionCode\":33.0"))
+        rejects(payload().replace("\"versionCode\":33", "\"versionCode\":3.3e1"))
+    }
+
+    @Test fun manifestRejectsNonStringSecurityFields() {
+        for (key in listOf("versionName", "packageName", "certificateSha256", "sha256", "apkUrl")) {
+            for (value in listOf<Any>(33, true, JSONObject.NULL, JSONObject())) {
+                rejects(JSONObject(payload()).put(key, value).toString())
+            }
+        }
+    }
+
+    @Test fun integerVersionCodeIsNotTruncatedToInt() {
+        val json = JSONObject(payload()).put("versionCode", 2147483648L).toString()
+        assertEquals(2147483648L, UpdatePolicy.parse(json).code)
+    }
+
     @Test fun wrongPackage() = rejects(payload(pkg = "com.invalid"))
     @Test fun wrongCertificate() = rejects(payload(cert = "b".repeat(64)))
     @Test fun invalidSha() = rejects(payload(hash = "corrupted"))
