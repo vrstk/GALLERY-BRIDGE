@@ -1,6 +1,5 @@
 package com.gallerybridge.app.core
 
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.jsoup.nodes.Document
 import java.time.LocalDate
 
@@ -39,22 +38,19 @@ object ModelListingSources {
     private val count = Regex("""\(([0-9]{1,5})\s+Galleries\)""", RegexOption.IGNORE_CASE)
 
     fun address(raw: String): Address? {
-        val u = raw.toHttpUrlOrNull() ?: return null
-        if (u.scheme != "https" || u.port != 443 ||
-            u.host !in setOf("elitebabes.com", "www.elitebabes.com") ||
-            u.query != null || u.fragment != null) return null
+        val u = SourceOrigins.modelIndex.parse(raw) ?: return null
+        if (u.query != null) return null
         val m = route.matchEntire(u.encodedPath) ?: return null
-        val page = m.groupValues[2].takeIf { it.isNotBlank() }?.toIntOrNull() ?: 1
+        val rawPage = m.groupValues[2]
+        val page = if (rawPage.isBlank()) 1 else rawPage.toIntOrNull() ?: return null
         return if (page in 1..MAX_PAGES) Address(m.groupValues[1], page) else null
     }
 
     fun accepts(raw: String): Boolean = address(raw) != null
 
     internal fun publicationUrl(raw: String): String? {
-        val u = raw.toHttpUrlOrNull() ?: return null
-        if (u.scheme != "https" || u.port != 443 ||
-            u.host !in setOf("elitebabes.com", "www.elitebabes.com") ||
-            u.query != null || u.fragment != null ||
+        val u = SourceOrigins.modelIndex.parse(raw) ?: return null
+        if (u.query != null ||
             u.encodedPath == "/" || u.encodedPath.startsWith("/model/") ||
             u.encodedPath.startsWith("/video/") || u.encodedPath.startsWith("/wp-")
         ) return null

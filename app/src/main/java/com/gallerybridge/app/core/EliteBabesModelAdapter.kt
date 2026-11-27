@@ -41,10 +41,9 @@ internal object EliteBabesModelAdapter {
     }
 
     fun validatedApiUrl(raw: String): String? {
-        val url = raw.replace("&amp;", "&").toHttpUrlOrNull() ?: return null
-        if (url.scheme != "https" || url.port != 443 ||
-            url.host !in setOf("elitebabes.com", "www.elitebabes.com") ||
-            url.encodedPath != "/gridapi/" || url.fragment != null ||
+        val url = SourceOrigins.modelIndex.parse(raw.replace("&amp;", "&")) ?: return null
+        if (url.encodedPath != "/gridapi/" ||
+            url.querySize != 3 ||
             url.queryParameterNames != setOf("content", "nr", "sort") ||
             url.queryParameter("content") != "model" ||
             url.queryParameter("nr")?.matches(Regex("[0-9]{1,10}")) != true ||
