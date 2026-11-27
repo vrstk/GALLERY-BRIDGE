@@ -1,11 +1,19 @@
 name: Build Android APK
 on:
   push:
+    branches: [main, codex/gallery-bridge-home]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+# Publish only the newest preview for a branch; concurrent older builds must
+# not replace the Release APK with stale code.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,14 +35,172 @@ jobs:
           gradle-version: '8.13'
       - name: Build and test
         run: gradle --no-daemon testDebugUnitTest assembleDebug
+      - name: Require persistent signing key for published preview
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          KEYSTORE_B64: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.GALLERY_BRIDGE_PREVIEW_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Persistent preview signing is not configured. Set all four GALLERY_BRIDGE_PREVIEW_* repository secrets before publishing an APK. See docs/SIGNING.md."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/gallerybridge-preview.jks"
+          test -s "$RUNNER_TEMP/gallerybridge-preview.jks"
+          keytool -list -keystore "$RUNNER_TEMP/gallerybridge-preview.jks" -storepass:env STORE_PASSWORD -alias "$KEY_ALIAS" >/dev/null
+          echo "GB_PREVIEW_KEYSTORE_FILE=$RUNNER_TEMP/gallerybridge-preview.jks" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "GB_PREVIEW_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+      - name: Build signed standalone APK
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: gradle --no-daemon clean -PgalleryBridgePreview=true testReleaseUnitTest assembleRelease
+      - name: Verify archive, signature fingerprint and signed package ID
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -s "$APK"
+          unzip -tq "$APK" | tail -n 1
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -q "application-debuggable"; then
+            echo "::error::Debuggable APK is forbidden in signed preview releases."
+            exit 1
+          fi
+          echo "Verified non-debuggable release variant"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/apk-signature.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | grep -F "name='com.gallerybridge.app.preview.signed'"
+          EXPECTED="06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
+          ACTUAL="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/apk-signature.txt" | head -n 1)"
+          if [ "${ACTUAL,,}" != "$EXPECTED" ]; then
+            echo "::error::APK signer certificate mismatch. Publishing blocked: the key changed."
+            exit 1
+          fi
+          echo "Verified signing certificate SHA-256: $ACTUAL"
+          sha256sum "$APK"
+      - name: Generate manifest from verified signed APK
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, shutil, subprocess
+          apk = pathlib.Path("app/build/outputs/apk/release/app-release.apk")
+          gradle = pathlib.Path("app/build.gradle.kts").read_text()
+          aapt = subprocess.check_output([os.environ["ANDROID_HOME"] + "/build-tools/36.0.0/aapt",
+              "dump", "badging", str(apk)], text=True)
+          result = re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", aapt, re.M)
+          assert result, "APK package and version not found"
+          package, version_code, version_name = result.groups()
+          assert package == "com.gallerybridge.app.preview.signed"
+          assert int(version_code) == int(re.search(r'versionCode\s*=\s*(\d+)', gradle).group(1))
+          assert version_name == re.search(r'versionName\s*=\s*"([^"]+)"', gradle).group(1)
+          cert = "06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1"
+          signed = subprocess.check_output([os.environ["ANDROID_HOME"] + "/build-tools/36.0.0/apksigner",
+              "verify", "--print-certs", str(apk)], text=True)
+          match = re.search(r"Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]{64})", signed)
+          assert match and match.group(1).lower() == cert, "Signing certificate changed"
+          name = f"GalleryBridge-v{version_name}-signed.apk"
+          url = f"https://github.com/vrstk/GALLERY-BRIDGE/releases/download/v{version_name}-signed/{name}"
+          dist = pathlib.Path("release-bundle")
+          dist.mkdir(exist_ok=True)
+          shutil.copy2(apk, dist / name)
+          notes_file = pathlib.Path("docs/release-notes") / f"{version_name}.txt"
+          assert notes_file.is_file(), f"Missing release notes for {version_name}"
+          notes = notes_file.read_text(encoding="utf-8").strip()
+          assert 10 <= len(notes) <= 2000, "Release notes must be 10-2000 characters"
+          data = dict(versionCode=int(version_code), versionName=version_name, packageName=package,
+              apkUrl=url, size=apk.stat().st_size,
+              sha256=hashlib.sha256(apk.read_bytes()).hexdigest(),
+              certificateSha256=cert,
+              changes=notes)
+          (dist / "update.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+          print("Signed release candidate:", version_name, version_code, data["sha256"])
+          PY
       - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        with:
+          name: GalleryBridge-signed-release-bundle
+          path: release-bundle/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/codex/gallery-bridge-home' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        with:
+          name: GalleryBridge-preview-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/main'
         with:
           name: GalleryBridge-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      # Public repo: publish an APK download that works without an Actions artifact login.
-      # Github Actions artifact links are not consistently downloadable on mobile.
+  android-ui:
+    # Never publish a signed APK unless the Android UI suite passes on this SHA.
+    if: github.event_name == 'pull_request' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home')
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Install Android SDK and prepare the emulator
+        run: |
+          set -euo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' platform-tools emulator 'system-images;android-35;default;x86_64'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/gallery-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name gallery-ui --package 'system-images;android-35;default;x86_64' --device pixel_4 \
+            --path "$ANDROID_AVD_HOME/gallery-ui.avd"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx gallery-ui
+      - name: Test Home, search, navigation and theme on Android
+        run: |
+          set -euo pipefail
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd gallery-ui -no-window -no-audio -no-snapshot \
+            -gpu swiftshader_indirect -no-metrics -no-boot-anim > "$RUNNER_TEMP/gallery-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 180 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
+            tail -n 60 "$RUNNER_TEMP/gallery-emulator.log"
+            exit 1
+          fi
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          gradle --no-daemon -PgalleryBridgePreview=true connectedDebugAndroidTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-ui-results
+          path: |
+            app/build/outputs/androidTest-results/connected/
+            ${{ runner.temp }}/gallery-emulator.log
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-debug-apk
       - name: Publish public APK in GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,7 +211,7 @@ jobs:
           test -n "$VERSION"
           TAG="v$VERSION"
           FILE="GalleryBridge-v$VERSION.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$FILE"
+          mv app-debug.apk "$FILE"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$FILE" --clobber
           else
@@ -54,3 +220,280 @@ jobs:
               --title "Gallery Bridge $TAG" \
               --notes "Тестовая Android APK GALLERY BRIDGE $TAG. Скачайте APK в разделе Assets. Сборка с отладочной подписью; для постоянных обновлений нужна стабильная подпись."
           fi
+
+  install-smoke:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android emulator
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            'platforms;android-35' platform-tools emulator 'system-images;android-35;default;x86_64'
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/gallery-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name gallery-install --package 'system-images;android-35;default;x86_64' \
+            --device pixel_4 --path "$ANDROID_AVD_HOME/gallery-install.avd"
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-preview-apk
+      - name: Install and launch preview package on Android
+        run: |
+          set -euo pipefail
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd gallery-install -no-window -no-audio \
+            -no-snapshot -gpu swiftshader_indirect -no-metrics -no-boot-anim \
+            > "$RUNNER_TEMP/gallery-install-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 210 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
+            tail -n 70 "$RUNNER_TEMP/gallery-install-emulator.log"
+            exit 1
+          fi
+          adb shell input keyevent KEYCODE_WAKEUP
+          adb shell wm dismiss-keyguard
+          adb install -r app-release.apk
+          PACKAGE="com.gallerybridge.app.preview.signed"
+          adb shell pm path "$PACKAGE" | grep -F "package:"
+          # A successful launch command alone does not establish that the app stayed alive.
+          bash .github/scripts/assert_signed_launch.sh "$PACKAGE" "$RUNNER_TEMP/gallery-install-launch.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-install-smoke-log
+          path: |
+            ${{ runner.temp }}/gallery-install-emulator.log
+            ${{ runner.temp }}/gallery-install-launch.log
+
+  upgrade-smoke:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install emulator and signing tools
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' \
+            'build-tools;36.0.0' platform-tools emulator 'system-images;android-35;default;x86_64'
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/upgrade-avds"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          echo no | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+            --name gallery-upgrade --package 'system-images;android-35;default;x86_64' \
+            --device pixel_4 --path "$ANDROID_AVD_HOME/gallery-upgrade.avd"
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-signed-release-bundle
+          path: candidate
+      - name: Obtain the current Signed Preview as the upgrade baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download preview-signed --repo "$GITHUB_REPOSITORY" --pattern update.json --dir baseline
+          VERSION="$(python3 - <<'PY'
+          import json, os, pathlib, re
+
+          previous = json.loads(pathlib.Path("baseline/update.json").read_text())
+          candidate = json.loads(pathlib.Path("candidate/update.json").read_text())
+          version = previous["versionName"]
+          code = previous["versionCode"]
+          assert re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version), "Invalid baseline version"
+          assert type(code) is int and 0 < code < candidate["versionCode"], "Baseline must precede the candidate"
+          assert previous["packageName"] == candidate["packageName"], "Baseline package differs"
+          assert previous["certificateSha256"] == candidate["certificateSha256"], "Baseline signer differs"
+          name = f"GalleryBridge-v{version}-signed.apk"
+          url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/v{version}-signed/{name}"
+          assert previous["apkUrl"] == url, "Baseline must reference its versioned APK"
+          print(version)
+          PY
+          )"
+          TAG="v${VERSION}-signed"
+          NAME="GalleryBridge-v${VERSION}-signed.apk"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$NAME" --dir previous
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern update.json --dir previous
+          cmp baseline/update.json previous/update.json
+          python3 - "$NAME" <<'PY'
+          import hashlib, json, pathlib, sys
+
+          previous = json.loads(pathlib.Path("previous/update.json").read_text())
+          apk = pathlib.Path("previous") / sys.argv[1]
+          assert apk.stat().st_size == previous["size"], "Baseline APK size differs"
+          assert hashlib.sha256(apk.read_bytes()).hexdigest() == previous["sha256"], "Baseline APK digest differs"
+          PY
+          mv "previous/$NAME" previous/signed.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs previous/signed.apk | \
+            grep -Fi '06f59535fa8cb13507a2d77305daed1b81016459bc5884b5d837c3823f9664a1'
+      - name: In-place signed upgrade and private-data retention
+        shell: bash
+        run: |
+          set -euo pipefail
+          adb start-server
+          "$ANDROID_HOME/emulator/emulator" -avd gallery-upgrade -no-window -no-audio \
+            -no-snapshot -gpu swiftshader_indirect -no-metrics -no-boot-anim \
+            > "$RUNNER_TEMP/gallery-upgrade-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          if ! timeout 210 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do kill -0 "$1" || exit 1; sleep 2; done' bash "$emulator_pid"; then
+            tail -n 70 "$RUNNER_TEMP/gallery-upgrade-emulator.log"
+            exit 1
+          fi
+          PACKAGE="com.gallerybridge.app.preview.signed"
+          NEW_CODE="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionCode"])')"
+          NEW_VERSION="$(python3 -c 'import json; print(json.load(open("candidate/update.json"))["versionName"])')"
+          PREVIOUS="$(python3 -c 'import json; print(json.load(open("previous/update.json"))["versionCode"])')"
+          adb install previous/signed.apk
+          adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$PREVIOUS "
+          # The previous signed APK is also non-debuggable. The root shell below
+          # is available exclusively on this CI emulator, never in the app.
+          adb root
+          adb wait-for-device
+          test "$(adb shell id -u | tr -d '\r')" = 0 || {
+            echo "::error::CI emulator does not support read-only upgrade inspection"
+            exit 1
+          }
+          DATA="/data/user/0/$PACKAGE"
+          APP_UID="$(adb shell stat -c '%u' "$DATA" | tr -d '\r')"
+          test "$APP_UID" -gt 10000
+          adb shell mkdir -p "$DATA/files" "$DATA/shared_prefs"
+          adb shell chown "$APP_UID:$APP_UID" "$DATA/files" "$DATA/shared_prefs"
+          FIXTURES="$RUNNER_TEMP/gallery-upgrade-fixtures"
+          python3 .github/scripts/upgrade_fixtures.py write "$FIXTURES/expected"
+          adb push "$FIXTURES/expected/upgrade-sentinel.txt" /data/local/tmp/upgrade-sentinel.txt
+          adb shell cp /data/local/tmp/upgrade-sentinel.txt "$DATA/files/upgrade-sentinel.txt"
+          adb shell chown "$APP_UID:$APP_UID" "$DATA/files/upgrade-sentinel.txt"
+          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml transfer_state.xml gallery_bridge_photo_outcomes_v1.xml gallery_bridge_updater.xml)
+          for name in "${PREFS[@]}"; do
+            adb push "$FIXTURES/expected/$name" "/data/local/tmp/$name"
+            adb shell cp "/data/local/tmp/$name" "$DATA/shared_prefs/$name"
+            adb shell chown "$APP_UID:$APP_UID" "$DATA/shared_prefs/$name"
+          done
+          verify_upgrade_data() {
+            local stage="$1" name
+            test "$(adb shell id -u | tr -d '\r')" = 0
+            mkdir -p "$FIXTURES/$stage"
+            adb exec-out cat "$DATA/files/upgrade-sentinel.txt" > "$FIXTURES/$stage/upgrade-sentinel.txt"
+            for name in "${PREFS[@]}"; do
+              adb exec-out cat "$DATA/shared_prefs/$name" > "$FIXTURES/$stage/$name"
+            done
+            echo "Verify app data ($stage)"
+            local -a verification_flags=()
+            if [[ "$stage" == "after-launch" ]]; then
+              verification_flags+=(--after-launch)
+            fi
+            python3 .github/scripts/upgrade_fixtures.py verify "$FIXTURES/$stage" "${verification_flags[@]}"
+          }
+          verify_upgrade_data before-install
+          adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
+          adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
+          verify_upgrade_data after-install
+          bash .github/scripts/assert_signed_launch.sh "$PACKAGE" "$RUNNER_TEMP/gallery-upgrade-launch.log"
+          # SharedPreferences writes the recovered state asynchronously.
+          for attempt in {1..20}; do
+            if adb exec-out cat "$DATA/shared_prefs/transfer_state.xml" | grep -Fq 'name="running" value="false"'; then
+              break
+            fi
+            sleep 1
+          done
+          adb shell pidof "$PACKAGE"
+          verify_upgrade_data after-launch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-upgrade-smoke-log
+          path: |
+            ${{ runner.temp }}/gallery-upgrade-emulator.log
+            ${{ runner.temp }}/gallery-upgrade-launch.log
+
+  publish-preview:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
+    needs: [build, android-ui, install-smoke, upgrade-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: GalleryBridge-signed-release-bundle
+          path: release-bundle
+      - name: Verify immutable release, then advance preview-signed channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-bundle
+          VERSION="$(python3 -c 'import json; print(json.load(open("update.json"))["versionName"])')"
+          TAG="v${VERSION}-signed"
+          APK="GalleryBridge-v${VERSION}-signed.apk"
+          test -s "$APK"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          d = json.load(open("update.json"))
+          f = pathlib.Path(f"GalleryBridge-v{d['versionName']}-signed.apk")
+          assert f.stat().st_size == d["size"]
+          assert hashlib.sha256(f.read_bytes()).hexdigest() == d["sha256"]
+          assert d["apkUrl"] == f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/v{d['versionName']}-signed/{f.name}"
+          PY
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Versioned release already exists; refusing to overwrite signed APK"
+            exit 1
+          fi
+          gh release create "$TAG" "$APK" update.json --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Gallery Bridge Signed $VERSION" \
+            --notes "Проверенная подписанная APK GALLERY BRIDGE $VERSION."
+          EXPECTED="$(python3 -c 'import json; print(json.load(open("update.json"))["sha256"])')"
+          DIGEST="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name | endswith(".apk")) | .digest')"
+          test "$DIGEST" = "sha256:$EXPECTED" || { echo "::error::Published APK digest mismatch"; exit 1; }
+          JSON_HASH="$(sha256sum update.json | cut -d ' ' -f1)"
+          VERSIONED_JSON_DIGEST="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "update.json") | .digest')"
+          test "$VERSIONED_JSON_DIGEST" = "sha256:$JSON_HASH" || {
+            echo "::error::Versioned manifest digest mismatch"; exit 1;
+          }
+          # Existing direct preview APK address remains available for manual installation.
+          cp "$APK" GalleryBridge-preview-signed.apk
+          if gh release view preview-signed --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload preview-signed GalleryBridge-preview-signed.apk --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create preview-signed GalleryBridge-preview-signed.apk --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --prerelease --title "Gallery Bridge Signed Preview" \
+              --notes "Постоянный подписанный Preview-канал."
+          fi
+          # LAST: updater always follows the versioned immutable APK URL, not the mutable alias.
+          gh release upload preview-signed update.json --clobber --repo "$GITHUB_REPOSITORY"
+          ALIAS_DIGEST="$(gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "GalleryBridge-preview-signed.apk") | .digest')"
+          test "$ALIAS_DIGEST" = "sha256:$EXPECTED" || { echo "::error::Preview APK digest mismatch"; exit 1; }
+          ALIAS_JSON_DIGEST="$(gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "update.json") | .digest')"
+          test "$ALIAS_JSON_DIGEST" = "sha256:$JSON_HASH" || {
+            echo "::error::Preview manifest digest mismatch"; exit 1;
+          }
+          gh release view preview-signed --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | {name, size, digest, url}'

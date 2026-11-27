@@ -130,10 +130,69 @@ object SafDestination {
     }
 
     /**
+     * Read-only lookup for integrity verification, using the same stable IDs
+     * saved during transfer. Never create folders during verification.
+     */
+    fun existingFileForAudit(ctx: Context, rootUri: String, folders: List<String>, filename: String): Uri {
+        val tree = Uri.parse(rootUri)
+        require(tree.scheme == "content") { "Папка Android недоступна" }
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        var parentId = rootId
+        val parts = mutableListOf<String>()
+        for (part in folders) {
+            val name = Paths.clean(part)
+            parts += name
+            val cached = store(ctx).getString(cacheKey(rootUri, parts), null)
+            if (cached != null && cached != PENDING) {
+                val resolved = metadata(ctx, tree, cached)
+                if (resolved?.name == name && resolved.mime == DIRECTORY) {
+                    parentId = cached
+                    continue
+                }
+            }
+            val found = children(ctx, tree, parentId).filter { it.name == name && it.mime == DIRECTORY }
+            require(found.size == 1) { "Нет однозначной папки: $name (${found.size} совпадений)" }
+            parentId = found.single().id
+        }
+        val files = children(ctx, tree, parentId)
+            .filter { it.name == Paths.clean(filename) && it.mime != DIRECTORY }
+        require(files.size == 1) {
+            "Нет однозначного файла: ${Paths.clean(filename)} (${files.size} совпадений)"
+        }
+        return documentUri(tree, files.single().id)
+    }
+
+    /**
      * Check destination before downloading from the source. A visible zero-byte
      * cloud file must be investigated, not silently skipped as complete.
      * Unknown size (null) is explicitly not a content-integrity guarantee.
      */
+    /** Read-only lookup; never create or silently select one of multiple same-name files. */
+    fun fileForRead(ctx: Context, folder: Uri, filename: String): Uri? = try {
+        val name = Paths.clean(filename)
+        val parentId = DocumentsContract.getDocumentId(folder)
+        val found = children(ctx, folder, parentId).filter { it.name == name }
+        if (found.size > 1) throw ExistingFileVerifier.Unverified(
+            "Неоднозначное имя файла в Android-папке; повтор заблокирован."
+        )
+        if (found.isEmpty()) null
+        else {
+            val entry = found.single()
+            if (entry.mime == DIRECTORY || entry.size == 0L) {
+                throw ExistingFileVerifier.Unverified(
+                    "Вместо фотографии обнаружена папка либо пустой файл."
+                )
+            }
+            documentUri(folder, entry.id)
+        }
+    } catch (e: ExistingFileVerifier.Unverified) {
+        throw e
+    } catch (e: Exception) {
+        throw ExistingFileVerifier.Unverified(
+            "Не удалось однозначно проверить содержимое папки Android.", e
+        )
+    }
+
     fun fileExists(ctx: Context, folder: Uri, filename: String): Boolean {
         val name = Paths.clean(filename)
         val parentId = DocumentsContract.getDocumentId(folder)
@@ -152,22 +211,44 @@ object SafDestination {
         if (fileExists(ctx, folder, name)) return false
         val created = DocumentsContract.createDocument(
             ctx.contentResolver, folder, mime, name
-        ) ?: error("Не удалось создать " + name)
+        ) ?: throw SafWritePolicy.UncertainWrite(
+            "Провайдер не подтвердил создание файла $name. Проверьте папку перед повторной попыткой."
+        )
+        var copied = false
         try {
             val output = ctx.contentResolver.openOutputStream(created, "w")
                 ?: error("Нет потока записи для " + name)
             output.use { stream ->
                 local.inputStream().use { input -> input.copyTo(stream) }
             }
+            copied = true
             val actual = metadata(ctx, folder, DocumentsContract.getDocumentId(created))
-            require(actual?.name == name) {
-                "Имя файла изменено провайдером; ожидалось " + name
-            }
+            SafWritePolicy.validate(name, local.length(), actual?.name, actual?.size)
         } catch (e: Exception) {
-            try { DocumentsContract.deleteDocument(ctx.contentResolver, created) } catch (_: Exception) {}
-            throw e
+            if (!copied) {
+                // Best-effort removal of a partial write. If the provider cannot
+                // confirm deletion, the user must inspect the folder manually.
+                val removed = runCatching {
+                    DocumentsContract.deleteDocument(ctx.contentResolver, created)
+                }.getOrDefault(false)
+                throw SafWritePolicy.UncertainWrite(
+                    if (removed) "Запись $name прервалась; частичный файл удалён. " +
+                        "Очередь остановлена для безопасного повтора."
+                    else "Запись $name прервалась, но удаление частичного файла не подтверждено. " +
+                        "Проверьте папку перед повтором.",
+                    e
+                )
+            }
+            // After the stream closes, do not delete a possibly complete file
+            // just because the provider's metadata is temporarily unavailable.
+            if (e is SafWritePolicy.UncertainWrite) throw e
+            throw SafWritePolicy.UncertainWrite(
+                "Файл $name передан провайдеру, но его состояние не подтверждено. " +
+                    "Файл оставлен без перезаписи; проверьте папку.",
+                e
+            )
         }
-        // Accepted by provider, but not necessarily synced to the remote server.
+        // Accepted by the Android provider, but not necessarily synced remotely.
         return true
     }
 }
