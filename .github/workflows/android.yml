@@ -381,7 +381,7 @@ jobs:
           adb push "$FIXTURES/expected/upgrade-sentinel.txt" /data/local/tmp/upgrade-sentinel.txt
           adb shell cp /data/local/tmp/upgrade-sentinel.txt "$DATA/files/upgrade-sentinel.txt"
           adb shell chown "$APP_UID:$APP_UID" "$DATA/files/upgrade-sentinel.txt"
-          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml)
+          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml transfer_state.xml)
           for name in "${PREFS[@]}"; do
             adb push "$FIXTURES/expected/$name" "/data/local/tmp/$name"
             adb shell cp "/data/local/tmp/$name" "$DATA/shared_prefs/$name"
@@ -396,14 +396,24 @@ jobs:
               adb exec-out cat "$DATA/shared_prefs/$name" > "$FIXTURES/$stage/$name"
             done
             echo "Verify app data ($stage)"
-            python3 .github/scripts/upgrade_fixtures.py verify "$FIXTURES/$stage"
+            local -a verification_flags=()
+            if [[ "$stage" == "after-launch" ]]; then
+              verification_flags+=(--after-launch)
+            fi
+            python3 .github/scripts/upgrade_fixtures.py verify "$FIXTURES/$stage" "${verification_flags[@]}"
           }
           verify_upgrade_data before-install
           adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
           verify_upgrade_data after-install
           adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
-          sleep 3
+          # SharedPreferences writes the recovered state asynchronously.
+          for attempt in {1..20}; do
+            if adb exec-out cat "$DATA/shared_prefs/transfer_state.xml" | grep -Fq 'name="running" value="false"'; then
+              break
+            fi
+            sleep 1
+          done
           adb shell pidof "$PACKAGE"
           verify_upgrade_data after-launch
       - uses: actions/upload-artifact@v4
