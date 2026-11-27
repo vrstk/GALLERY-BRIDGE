@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.ContentScale
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,6 +35,7 @@ import com.gallerybridge.app.core.GalleryBatchSelection
 import com.gallerybridge.app.core.GalleryCatalogFilter
 import com.gallerybridge.app.core.GalleryCatalogProgress
 import com.gallerybridge.app.core.GalleryCatalogModels
+import com.gallerybridge.app.core.CatalogFavorites
 import com.gallerybridge.app.transfer.QueueStore
 import com.gallerybridge.app.core.GalleryFields
 import com.gallerybridge.app.core.GalleryKeys
@@ -63,6 +65,10 @@ internal fun GalleryCatalog(
     var alphabetic by rememberSaveable { mutableStateOf(false) }
     var browseModels by rememberSaveable { mutableStateOf(false) }
     var modelCountSort by rememberSaveable { mutableStateOf(false) }
+    var favoritesOnly by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    var favorites by remember(context) { mutableStateOf(CatalogFavorites.load(context)) }
+    var favoriteError by remember { mutableStateOf("") }
     var chosenModel by selectedModel
     val publicationsScroll = rememberLazyListState()
     val modelsScroll = rememberLazyListState()
@@ -99,11 +105,13 @@ internal fun GalleryCatalog(
     val scopeEntries = activeGroup?.entries ?: entries
     val query = if (inModel) modelQuery else catalogQuery
     val updateQuery: (String) -> Unit = { if (inModel) modelQuery = it else catalogQuery = it }
-    val filtered = remember(scopeEntries, statuses, query, alphabetic, activeStatusFilter) {
+    val filtered = remember(scopeEntries, statuses, query, alphabetic, activeStatusFilter,
+        showModelIndex, favoritesOnly, favorites) {
         GalleryCatalogFilter.apply(scopeEntries, query, alphabetic, false).filter { entry ->
-            statuses[entry.url]?.let {
-                GalleryCatalogProgress.matches(entry, it, activeStatusFilter)
-            } == true
+            (!showModelIndex || !favoritesOnly || GalleryCatalogModels.key(entry.model) in favorites) &&
+                statuses[entry.url]?.let {
+                    GalleryCatalogProgress.matches(entry, it, activeStatusFilter)
+                } == true
         }
     }
     val modelGroups = remember(filtered, showModelIndex, alphabetic, modelCountSort) {
@@ -189,6 +197,15 @@ internal fun GalleryCatalog(
                 )
             }
         }
+        if (showModelIndex) item(key = "favorites-filter") {
+            FilterChip(selected = favoritesOnly, onClick = { favoritesOnly = !favoritesOnly },
+                label = { Text("Только избранные") },
+                modifier = Modifier.testTag("catalog-favorites-only"))
+        }
+        if (favoriteError.isNotBlank()) item(key = "favorite-error") {
+            Text(favoriteError, color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall)
+        }
         item(key = "status") {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
@@ -270,7 +287,7 @@ internal fun GalleryCatalog(
                     }
                     Text(
                         "Копия: каталог, до 40 записей истории и тема. " +
-                            "Без паролей, очередей и фотографий. Храните JSON в защищённом месте.",
+                            "Без паролей, очередей, избранных моделей и фотографий. Храните JSON в защищённом месте.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -318,6 +335,7 @@ internal fun GalleryCatalog(
                         updateQuery("")
                         alphabetic = false
                         modelCountSort = false
+                        favoritesOnly = false
                         statusFilter = GalleryCatalogProgress.Filter.ALL.name
                     }) { Text("Сбросить фильтры") }
                 }
@@ -354,6 +372,29 @@ internal fun GalleryCatalog(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (CatalogFavorites.canFavorite(group.key)) {
+                            val marked = group.key in favorites
+                            IconButton(
+                                onClick = {
+                                    try {
+                                        favorites = CatalogFavorites.set(context, group.key, !marked)
+                                        favoriteError = ""
+                                    } catch (e: Exception) {
+                                        favoriteError = e.message ?: "Не удалось сохранить избранное."
+                                    }
+                                },
+                                modifier = Modifier.testTag("catalog-favorite:" + group.key)
+                                    .semantics {
+                                        contentDescription = if (marked)
+                                            "Убрать из избранного: ${group.label}"
+                                        else "В избранное: ${group.label}"
+                                    }
+                            ) {
+                                Text(if (marked) "★" else "☆",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.titleLarge)
+                            }
+                        }
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                     }
                 }

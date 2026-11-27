@@ -77,6 +77,36 @@ class GalleryCatalogModelsTest {
         }
     }
 
+    @Test fun favoriteFilterDoesNotOpenOrEditPublications() {
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val key = "qa model alpha"
+        val original = com.gallerybridge.app.core.CatalogFavorites.load(context)
+        val entries = listOf(
+            CatalogGallery("https://example.com/qa-alpha", "QA Model Alpha", "A", "", 20),
+            CatalogGallery("https://example.com/qa-beta", "QA Model Beta", "B", "", 10))
+        var opened = 0
+        try {
+            com.gallerybridge.app.core.CatalogFavorites.set(context, key, false)
+            compose.setContent {
+                MaterialTheme {
+                    GalleryCatalog(entries = entries, queue = null, onQueue = {},
+                        onBatchReview = {}, onOpen = { opened++ }, onRemove = {},
+                        onEdit = { _, _ -> true }, onExport = {}, onImport = {},
+                        backupStatus = "", historyCount = 0)
+                }
+            }
+            compose.onNodeWithTag("catalog-model-mode").performClick()
+            compose.onNodeWithTag("catalog-favorite:" + key).performScrollTo().performClick()
+            compose.onNodeWithTag("catalog-favorites-only").performScrollTo().performClick()
+            compose.onNodeWithText("Моделей: 1", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("QA Model Alpha").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("QA Model Beta").assertDoesNotExist()
+            compose.runOnIdle { assertEquals(0, opened) }
+        } finally {
+            com.gallerybridge.app.core.CatalogFavorites.set(context, key, key in original)
+        }
+    }
+
     @Test fun searchFiltersModelGroupsWithoutMutatingEntries() {
         val first = CatalogGallery("https://example.com/one", "Leona Mia", "Только здесь", "", 3)
         val second = CatalogGallery("https://example.com/two", "Alba", "Другая", "", 2)
