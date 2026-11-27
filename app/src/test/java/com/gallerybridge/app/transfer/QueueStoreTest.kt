@@ -7,6 +7,7 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class QueueStoreTest {
+    private val hash = "a".repeat(64)
     private val photo = Media("https://example.com/photo.jpg", "first.jpg", Kind.PHOTO, "test")
 
     private fun queue(vararg media: Media): QueueStore.Snapshot = QueueStore.Snapshot(
@@ -22,11 +23,11 @@ class QueueStoreTest {
 
     @Test fun writeIntentCannotBeRetriedAndOnlyAConfirmedResultCompletesIt() {
         val original = queue(photo, photo.copy(name = "other.jpg"))
-        val writing = QueueStore.markWriting(original, 0, photo)
+        val writing = QueueStore.markWriting(original, 0, photo, hash)
         assertEquals("WRITING", writing.entries[0].state)
         assertEquals("BLOCKED", QueueStore.restoreState("WRITING", true))
         assertEquals(listOf(1), QueueStore.retryIndices(writing))
-        assertSame(writing, QueueStore.markWriting(writing, 0, photo))
+        assertSame(writing, QueueStore.markWriting(writing, 0, photo, hash))
         val blocked = QueueStore.applyItemResult(writing, 0, photo, "FAILED")
         assertEquals("BLOCKED", blocked.entries[0].state)
         assertEquals(listOf(1), QueueStore.retryIndices(blocked))
@@ -35,7 +36,20 @@ class QueueStoreTest {
         assertEquals("DONE", done.entries[0].state)
         assertEquals("a".repeat(64), done.entries[0].contentSha256)
         assertEquals("PENDING", done.entries[1].state)
-        assertSame(original, QueueStore.markWriting(original, 0, photo.copy(name = "wrong.jpg")))
+        assertSame(original, QueueStore.markWriting(original, 0, photo.copy(name = "wrong.jpg"), hash))
+    }
+
+    @Test fun blockedWriteRetainsItsDigestAndOnlyMatchingReadbackCompletesIt() {
+        val original = queue(photo, photo.copy(name = "other.jpg"))
+        val writing = QueueStore.markWriting(original, 0, photo, hash)
+        assertEquals(hash, writing.entries[0].contentSha256)
+        val blocked = QueueStore.applyItemResult(writing, 0, photo, "BLOCKED")
+        assertEquals(hash, blocked.entries[0].contentSha256)
+        assertSame(blocked, QueueStore.confirmBlocked(blocked, 0, "b".repeat(64)))
+        val confirmed = QueueStore.confirmBlocked(blocked, 0, hash)
+        assertEquals(listOf("DONE", "PENDING"), confirmed.entries.map { it.state })
+        assertEquals(hash, confirmed.entries[0].contentSha256)
+        assertEquals("", QueueStore.allowRetry(blocked, 0, photo).entries[0].contentSha256)
     }
 
     @Test fun successfulPhotoCheckpointRetainsVerifiedSourceDigest() {

@@ -58,20 +58,21 @@ object QueueStore {
         if (state == WRITING || (state == "FAILED" && !classified)) "BLOCKED" else state
 
     /** Persist this transition before the first destination write, never after it. */
-    internal fun markWriting(snapshot: Snapshot, index: Int, media: Media): Snapshot {
+    internal fun markWriting(snapshot: Snapshot, index: Int, media: Media, digest: String): Snapshot {
+        require(validContentHash(digest))
         val old = snapshot.entries.getOrNull(index) ?: return snapshot
         if (old.media != media || old.state !in setOf("PENDING", "FAILED")) return snapshot
         val entries = snapshot.entries.toMutableList()
         entries[index] = old.copy(state = WRITING, failureReason = INTERRUPTED_WRITE,
-            contentSha256 = "")
+            contentSha256 = digest)
         return snapshot.copy(entries = entries)
     }
 
-    @Synchronized fun beginWrite(context: Context, id: Long, index: Int, media: Media) {
+    @Synchronized fun beginWrite(context: Context, id: Long, index: Int, media: Media, digest: String) {
         val before = readSnapshot(context, preserveWriting = true)
             ?: throw CheckpointFailure("Очередь недоступна; запись файла отменена.")
         if (before.id != id) throw CheckpointFailure("Очередь изменилась; запись файла отменена.")
-        val after = markWriting(before, index, media)
+        val after = markWriting(before, index, media, digest)
         if (after === before) throw CheckpointFailure("Элемент очереди изменился; запись файла отменена.")
         save(context, after)
     }
@@ -187,7 +188,11 @@ object QueueStore {
             failureReason = if (safeState == "FAILED" || safeState == "BLOCKED")
                 reason.ifBlank { if (old.state == WRITING) INTERRUPTED_WRITE else "" }
                     .replace("\n", " ").take(240) else "",
-            contentSha256 = if (safeState in setOf("DONE", "SKIPPED")) contentSha256 else "")
+            contentSha256 = when (safeState) {
+                "DONE", "SKIPPED" -> contentSha256
+                "BLOCKED" -> old.contentSha256
+                else -> ""
+            })
         return snapshot.copy(entries = entries)
     }
 
@@ -223,7 +228,7 @@ object QueueStore {
         val old = snapshot.entries.getOrNull(index) ?: return snapshot
         if (old.media != media || old.state != "BLOCKED") return snapshot
         val entries = snapshot.entries.toMutableList()
-        entries[index] = old.copy(state = "PENDING", failureReason = "")
+        entries[index] = old.copy(state = "PENDING", failureReason = "", contentSha256 = "")
         return snapshot.copy(entries = entries)
     }
 
@@ -233,6 +238,32 @@ object QueueStore {
         val after = allowRetry(before, index, media)
         if (after == before) return false
         save(context, after)
+        return true
+    }
+
+    internal fun confirmBlocked(snapshot: Snapshot, index: Int, readbackSha256: String): Snapshot {
+        val entry = snapshot.entries.getOrNull(index) ?: return snapshot
+        if (entry.state != "BLOCKED" || entry.media.kind != Kind.PHOTO ||
+            !validContentHash(readbackSha256) || entry.contentSha256 != readbackSha256
+        ) return snapshot
+        val entries = snapshot.entries.toMutableList()
+        entries[index] = entry.copy(state = "DONE", failureReason = "")
+        return snapshot.copy(entries = entries)
+    }
+
+    @Synchronized fun confirmBlockedReadback(
+        context: Context, expected: Snapshot, index: Int, readbackSha256: String
+    ): Boolean {
+        val current = load(context) ?: return false
+        if (current != expected) return false
+        val confirmed = confirmBlocked(current, index, readbackSha256)
+        if (confirmed === current) return false
+        save(context, confirmed)
+        try {
+            PhotoOutcomeLedger.remember(context, confirmed)
+        } catch (_: Exception) {
+            throw CheckpointFailure("Файл подтверждён и очередь сохранена. Журнал фотографий не обновился.")
+        }
         return true
     }
 

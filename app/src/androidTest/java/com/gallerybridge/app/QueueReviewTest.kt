@@ -28,7 +28,7 @@ class QueueReviewTest {
                 target = "Mail WebDAV", root = "Models", account = "audit@example.com",
                 entries = listOf(QueueStore.Entry(photo, "PENDING"), QueueStore.Entry(next, "PENDING"))
             ))
-            QueueStore.beginWrite(compose.activity, id, 0, photo)
+            QueueStore.beginWrite(compose.activity, id, 0, photo, "a".repeat(64))
             compose.activity.getSharedPreferences(
                 com.gallerybridge.app.transfer.TransferService.PREFS, android.content.Context.MODE_PRIVATE
             ).edit().putBoolean(com.gallerybridge.app.transfer.TransferService.KEY_RUNNING, true).commit()
@@ -42,9 +42,12 @@ class QueueReviewTest {
                 assertTrue(!compose.activity.getSharedPreferences(
                     com.gallerybridge.app.transfer.TransferService.PREFS, android.content.Context.MODE_PRIVATE
                 ).getBoolean(com.gallerybridge.app.transfer.TransferService.KEY_RUNNING, false))
-                // The exact active writer could have saved a successful outcome instead.
-                QueueStore.checkpoint(compose.activity, id, 0, photo, "DONE", contentSha256 = "b".repeat(64))
-                assertEquals("DONE", QueueStore.load(compose.activity)!!.entries[0].state)
+                val digest = "a".repeat(64)
+                assertEquals(digest, restored.entries[0].contentSha256)
+                assertTrue(!QueueStore.confirmBlockedReadback(compose.activity, restored, 0, "b".repeat(64)))
+                assertTrue(QueueStore.confirmBlockedReadback(compose.activity, restored, 0, digest))
+                assertTrue(!QueueStore.confirmBlockedReadback(compose.activity, restored, 0, digest))
+                assertEquals(listOf("DONE", "PENDING"), QueueStore.load(compose.activity)!!.entries.map { it.state })
             }
         } finally {
             compose.runOnIdle { QueueStore.clearIfId(compose.activity, id) }

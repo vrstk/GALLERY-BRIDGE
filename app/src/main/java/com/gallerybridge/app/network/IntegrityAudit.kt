@@ -126,6 +126,42 @@ object IntegrityAudit {
         return digest to declared
     }
 
+    private data class DestinationReadback(
+        val digest: Digest, val declaredBytes: Long?, val document: Uri? = null
+    )
+
+    private suspend fun readDestination(
+        context: Context, queue: QueueStore.Snapshot, entry: QueueStore.Entry, authorization: String
+    ): DestinationReadback {
+        if (queue.target == "Mail WebDAV") {
+            val (digest, bytes) = mailReadback(
+                ReadbackAuditPolicy.remoteSegments(queue, entry), authorization
+            )
+            return DestinationReadback(digest, bytes)
+        }
+        val uri = SafDestination.existingFileForAudit(
+            context, queue.root, ReadbackAuditPolicy.folders(queue, entry), entry.media.name
+        )
+        val stream = context.contentResolver.openInputStream(uri)
+            ?: error("Провайдер Android не разрешил чтение файла.")
+        return DestinationReadback(hash(stream), null, uri)
+    }
+
+    internal suspend fun verifyBlocked(
+        context: Context, queue: QueueStore.Snapshot, entry: QueueStore.Entry,
+        email: String, password: String
+    ): String? = withContext(Dispatchers.IO) {
+        require(ReadbackAuditPolicy.canVerifyBlocked(queue, entry))
+        val authorization = if (queue.target == "Mail WebDAV") {
+            require(ReadbackAuditPolicy.authorizedAccount(queue, email, password))
+            Credentials.basic(email.trim(), password)
+        } else ""
+        val (digest, declaredBytes) = readDestination(context, queue, entry, authorization)
+        digest.sha256.takeIf {
+            ReadbackAuditPolicy.matches(entry.contentSha256, it, digest.bytes, declaredBytes)
+        }
+    }
+
     private fun imageDimensions(context: Context, uri: Uri): String = try {
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use {
@@ -178,27 +214,8 @@ object IntegrityAudit {
                     )
                     continue
                 }
-                // Use EXACTLY the same per-gallery path as Services.transfer.
-                val path = ReadbackAuditPolicy.folders(queue, entry)
-                val destination: Digest
-                val reportedSize: Long?
-                var safUri: Uri? = null
-                if (queue.target == "Mail WebDAV") {
-                    val result = mailReadback(
-                        ReadbackAuditPolicy.remoteSegments(queue, entry),
-                        authorization
-                    )
-                    destination = result.first
-                    reportedSize = result.second
-                } else {
-                    safUri = SafDestination.existingFileForAudit(
-                        context, queue.root, path, item.name
-                    )
-                    val stream = context.contentResolver.openInputStream(safUri)
-                        ?: error("Провайдер Android не разрешил чтение файла.")
-                    destination = hash(stream)
-                    reportedSize = null
-                }
+                val (destination, reportedSize, safUri) =
+                    readDestination(context, queue, entry, authorization)
                 if (ReadbackAuditPolicy.matches(
                         expected, destination.sha256, destination.bytes, reportedSize
                     )

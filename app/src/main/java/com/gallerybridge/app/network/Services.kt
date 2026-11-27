@@ -546,7 +546,7 @@ object Services {
         progress: suspend (String) -> Unit,
         onItemResult: suspend (Int, Media, String, String, String) -> Unit = { _, _, _, _, _ -> },
         foldersPerFile: List<List<String>>? = null,
-        onBeforeDestinationWrite: suspend (Int, Media) -> Unit
+        onBeforeDestinationWrite: suspend (Int, Media, String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         var uploaded = 0
         var skipped = 0
@@ -626,7 +626,7 @@ object Services {
                     try {
                         val sourceDigest = PhotoContentDigest.sha256(local)
                         coroutineContext.ensureActive()
-                        onBeforeDestinationWrite(index, item)
+                        onBeforeDestinationWrite(index, item, sourceDigest)
                         destinationWriteStarted = true
                         coroutineContext.ensureActive()
                         webDavUpload.put(destination, mailAuth, local.asRequestBody(mime.toMediaType())).use { response ->
@@ -680,7 +680,7 @@ object Services {
                         try {
                             val sourceDigest = PhotoContentDigest.sha256(local)
                             coroutineContext.ensureActive()
-                            onBeforeDestinationWrite(index, item)
+                            onBeforeDestinationWrite(index, item, sourceDigest)
                             destinationWriteStarted = true
                             coroutineContext.ensureActive()
                             if (SafDestination.uploadFile(context, destFolder, item.name, local, mime)) {

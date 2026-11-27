@@ -326,10 +326,10 @@ class TransferService : Service() {
                         showProgress(overall, queue.entries.size)
                     },
                     foldersPerFile = folders,
-                    onBeforeDestinationWrite = { index, item ->
+                    onBeforeDestinationWrite = { index, item, digest ->
                         if (mySession != session || cancelRequested)
                             throw CancellationException("Передача остановлена")
-                        QueueStore.beginWrite(applicationContext, queue.id, pending[index].index, item)
+                        QueueStore.beginWrite(applicationContext, queue.id, pending[index].index, item, digest)
                     },
                     onItemResult = { index, item, state, reason, digest ->
                         if (mySession == session && !cancelRequested) {

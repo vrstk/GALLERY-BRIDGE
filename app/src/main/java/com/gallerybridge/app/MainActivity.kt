@@ -1275,6 +1275,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun beginResumeTransfer() {
+        if (auditing) return
         try {
             val queue = QueueStore.load(this) ?: error("Очередь не найдена")
             require(queue.entries.filter { it.state != "DONE" && it.state != "SKIPPED" }
@@ -1380,9 +1381,49 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun verifyBlockedFile(queueId: Long, index: Int) {
+        if (auditing || working || transferRunning || getSharedPreferences(TransferService.PREFS, MODE_PRIVATE)
+                .getBoolean(TransferService.KEY_RUNNING, false)) return
+        val queue = QueueStore.load(this)?.takeIf { it.id == queueId } ?: return
+        val entry = queue.entries.getOrNull(index) ?: return
+        if (!ReadbackAuditPolicy.canVerifyBlocked(queue, entry)) return
+        val account = email.trim()
+        val appPassword = password
+        if (queue.target == "Mail WebDAV" && !ReadbackAuditPolicy.authorizedAccount(queue, account, appPassword)) {
+            auditReport = "Укажите пароль приложения для исходного аккаунта Mail."
+            return
+        }
+        auditing = true
+        auditReport = ""
+        auditProgress = "Проверка SHA-256: ${entry.media.name}"
+        scope.launch {
+            try {
+                val digest = IntegrityAudit.verifyBlocked(applicationContext, queue, entry, account, appPassword)
+                auditReport = when {
+                    digest == null -> "SHA-256 или размер не совпал. Файл остался на ручной проверке."
+                    !QueueStore.confirmBlockedReadback(applicationContext, queue, index, digest) ->
+                        "Очередь изменилась во время проверки. Обновите экран."
+                    queue.target == "Папка Android" ->
+                        "Файл подтверждён по SHA-256. Облачная синхронизация не проверялась."
+                    else -> "Файл подтверждён по SHA-256 из Mail WebDAV."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: QueueStore.CheckpointFailure) {
+                auditReport = e.message.orEmpty()
+            } catch (_: Exception) {
+                auditReport = "Файл недоступен для проверки или превышает 32 МиБ."
+            } finally {
+                savedQueue = QueueStore.load(applicationContext)
+                auditing = false
+                auditProgress = ""
+            }
+        }
+    }
+
     private fun resumeUpload(singleFailedIndex: Int? = null) {
         val queue = QueueStore.load(this) ?: return
-        if (transferRunning || working || queue.remaining == 0) return
+        if (transferRunning || working || auditing || queue.remaining == 0) return
         if (singleFailedIndex != null && QueueStore.retryIndices(queue, singleFailedIndex).isEmpty()) {
             transferStatus = "Эта фотография больше не доступна для безопасного повтора. Обновите очередь."
             return
@@ -2415,7 +2456,7 @@ class MainActivity : ComponentActivity() {
                     OutlinedTextField(password, {password=it}, label={Text("Пароль приложения Mail")}, visualTransformation=PasswordVisualTransformation(), modifier=Modifier.fillMaxWidth())
                 }
             }
-            Button(onClick={ resumeUpload() }, enabled = !working && queue.retryable > 0, modifier=Modifier.fillMaxWidth()) { Text("Продолжить безопасно: ${queue.retryable} файлов") }
+            Button(onClick={ resumeUpload() }, enabled = !working && !auditing && queue.retryable > 0, modifier=Modifier.fillMaxWidth()) { Text("Продолжить безопасно: ${queue.retryable} файлов") }
             OutlinedButton(
                 onClick = { showCloseQueueConfirmation = true },
                 enabled = !working && !auditing,
@@ -2455,10 +2496,10 @@ class MainActivity : ComponentActivity() {
                             "Файлы и очередь не изменяются. Лимит: 32 МиБ на файл.",
                     style=MaterialTheme.typography.bodySmall
                 )
-                if (auditProgress.isNotBlank()) Text(auditProgress, style=MaterialTheme.typography.bodySmall)
-                if (auditReport.isNotBlank()) Text(auditReport, style=MaterialTheme.typography.bodySmall)
             }
         }
+        if (auditProgress.isNotBlank()) Text(auditProgress, style=MaterialTheme.typography.bodySmall)
+        if (auditReport.isNotBlank()) Text(auditReport, style=MaterialTheme.typography.bodySmall)
         TransferReport()
         HorizontalDivider()
         FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
@@ -2512,8 +2553,14 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         if (item.state == "BLOCKED") {
+                            if (ReadbackAuditPolicy.canVerifyBlocked(queue, item)) {
+                                TextButton(onClick = { verifyBlockedFile(queue.id, index) },
+                                    enabled = !transferRunning && !working && !auditing) {
+                                    Text("Сверить файл по SHA-256")
+                                }
+                            }
                             TextButton(onClick = { pendingUnblock = queue.id to index },
-                                enabled = !transferRunning && !working) {
+                                enabled = !transferRunning && !working && !auditing) {
                                 Text("Разрешить повтор после проверки")
                             }
                         }

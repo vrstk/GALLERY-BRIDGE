@@ -1,5 +1,6 @@
 package com.gallerybridge.app.network
 
+import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Paths
 import com.gallerybridge.app.transfer.QueueStore
 
@@ -11,6 +12,14 @@ internal object ReadbackAuditPolicy {
     fun eligible(queue: QueueStore.Snapshot): Boolean =
         queue.remaining == 0 && queue.entries.isNotEmpty() &&
             queue.target in setOf("Папка Android", "Mail WebDAV")
+
+    fun canVerifyBlocked(queue: QueueStore.Snapshot, entry: QueueStore.Entry): Boolean =
+        entry.state == "BLOCKED" && entry.media.kind == Kind.PHOTO &&
+            storedDigest(entry) != null && when (queue.target) {
+                "Mail WebDAV" -> queue.account.isNotBlank()
+                "Папка Android" -> queue.root.isNotBlank()
+                else -> false
+            }
 
     fun authorizedAccount(queue: QueueStore.Snapshot, email: String, password: String): Boolean =
         queue.target == "Mail WebDAV" &&
