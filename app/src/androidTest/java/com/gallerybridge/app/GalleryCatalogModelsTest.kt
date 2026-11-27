@@ -48,6 +48,35 @@ class GalleryCatalogModelsTest {
         }
     }
 
+    @Test fun modelIndexCanChangeSortWithoutOpeningOrEditingRecords() {
+        val entries = listOf(
+            CatalogGallery("https://example.com/a", "Zeta", "A", "", 30),
+            CatalogGallery("https://example.com/b", "Alpha", "B", "", 20),
+            CatalogGallery("https://example.com/c", "Alpha", "C", "", 10)
+        )
+        var opened = 0
+        var edited = 0
+        compose.setContent {
+            MaterialTheme {
+                GalleryCatalog(entries = entries, queue = null,
+                    onQueue = {}, onBatchReview = {}, onOpen = { opened++ },
+                    onRemove = {}, onEdit = { _, _ -> edited++; true },
+                    onExport = {}, onImport = {}, backupStatus = "", historyCount = 0)
+            }
+        }
+        compose.onNodeWithTag("catalog-model-mode").performClick()
+        compose.onNodeWithTag("catalog-sort-recent").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("catalog-sort-count").performScrollTo().performClick()
+        compose.onNodeWithText("Alpha").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("catalog-sort-name").performScrollTo().performClick()
+        compose.onNodeWithText("Zeta").performScrollTo().assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(0, opened)
+            assertEquals(0, edited)
+            assertEquals(3, entries.size)
+        }
+    }
+
     @Test fun searchFiltersModelGroupsWithoutMutatingEntries() {
         val first = CatalogGallery("https://example.com/one", "Leona Mia", "Только здесь", "", 3)
         val second = CatalogGallery("https://example.com/two", "Alba", "Другая", "", 2)

@@ -62,6 +62,7 @@ internal fun GalleryCatalog(
     var modelQuery by rememberSaveable { mutableStateOf("") }
     var alphabetic by rememberSaveable { mutableStateOf(false) }
     var browseModels by rememberSaveable { mutableStateOf(false) }
+    var modelCountSort by rememberSaveable { mutableStateOf(false) }
     var chosenModel by selectedModel
     val publicationsScroll = rememberLazyListState()
     val modelsScroll = rememberLazyListState()
@@ -105,8 +106,15 @@ internal fun GalleryCatalog(
             } == true
         }
     }
-    val modelGroups = remember(filtered, showModelIndex) {
-        if (showModelIndex) GalleryCatalogModels.group(filtered) else emptyList()
+    val modelGroups = remember(filtered, showModelIndex, alphabetic, modelCountSort) {
+        if (showModelIndex) GalleryCatalogModels.sorted(
+            GalleryCatalogModels.group(filtered),
+            when {
+                modelCountSort -> GalleryCatalogModels.Sort.COUNT
+                alphabetic -> GalleryCatalogModels.Sort.NAME
+                else -> GalleryCatalogModels.Sort.RECENT
+            }
+        ) else emptyList()
     }
     val eligibleBatchUrls = remember(entries, queueIndex) {
         GalleryBatchSelection.eligibleUrls(entries, queueIndex)
@@ -155,10 +163,21 @@ internal fun GalleryCatalog(
         }
         item(key = "sorting") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !alphabetic, onClick = { alphabetic = false },
-                    label = { Text("Недавно добавлены") })
-                FilterChip(selected = alphabetic, onClick = { alphabetic = true },
-                    label = { Text("По модели А–Я") })
+                FilterChip(
+                    selected = !alphabetic && !(showModelIndex && modelCountSort),
+                    onClick = { alphabetic = false; if (showModelIndex) modelCountSort = false },
+                    label = { Text(if (showModelIndex) "Недавно обновлены" else "Недавно добавлены") },
+                    modifier = Modifier.testTag("catalog-sort-recent"))
+                FilterChip(
+                    selected = alphabetic && !(showModelIndex && modelCountSort),
+                    onClick = { alphabetic = true; if (showModelIndex) modelCountSort = false },
+                    label = { Text("По модели А–Я") },
+                    modifier = Modifier.testTag("catalog-sort-name"))
+                if (showModelIndex) FilterChip(
+                    selected = modelCountSort,
+                    onClick = { modelCountSort = true },
+                    label = { Text("По числу публикаций") },
+                    modifier = Modifier.testTag("catalog-sort-count"))
                 FilterChip(
                     selected = browseModels,
                     onClick = {
@@ -298,6 +317,7 @@ internal fun GalleryCatalog(
                     TextButton(onClick = {
                         updateQuery("")
                         alphabetic = false
+                        modelCountSort = false
                         statusFilter = GalleryCatalogProgress.Filter.ALL.name
                     }) { Text("Сбросить фильтры") }
                 }

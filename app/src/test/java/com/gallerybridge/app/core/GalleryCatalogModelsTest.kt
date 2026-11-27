@@ -41,6 +41,19 @@ class GalleryCatalogModelsTest {
         assertEquals(emptyList<CatalogGallery>(), GalleryCatalogModels.select(groups, "not-found"))
     }
 
+    @Test fun sortByRecentAndCountIsStableAndReadOnly() {
+        val newest = CatalogGallery("https://example.org/new", "Zeta", "Новая", "", 100)
+        val blank = CatalogGallery("https://example.org/blank", "", "Без имени", "", 200)
+        val entries = listOf(a1, a2, b, newest, blank)
+        val groups = GalleryCatalogModels.group(entries)
+        assertEquals(listOf("Zeta", "Leona Mia", "Alba", "Без имени"),
+            GalleryCatalogModels.sorted(groups, GalleryCatalogModels.Sort.RECENT).map { it.label })
+        assertEquals(listOf("Leona Mia", "Alba", "Zeta", "Без имени"),
+            GalleryCatalogModels.sorted(groups, GalleryCatalogModels.Sort.COUNT).map { it.label })
+        assertEquals(listOf("Alba", "Leona Mia", "Zeta", "Без имени"), groups.map { it.label })
+        assertEquals(listOf(a1, a2), GalleryCatalogModels.select(groups, "leona mia"))
+    }
+
     @Test fun acceptsFilteredInputWithoutReintroducingUnmatchedEntries() {
         val group = GalleryCatalogModels.group(listOf(a1, b))
         val selected = GalleryCatalogModels.select(group, "leona mia")
