@@ -1,72 +1,52 @@
 package com.gallerybridge.app.network
 
-import com.sun.net.httpserver.HttpExchange
-import com.sun.net.httpserver.HttpServer
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.util.concurrent.atomic.AtomicInteger
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.Assert.*
 import org.junit.Test
 
 class WebDavUploadTest {
     @Test fun lostResponseAfterReceivingFileDoesNotRepeatPut() {
-        withServer({ exchange -> exchange.close() }) { upload, url, attempts ->
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            val upload = WebDavUpload(OkHttpClient())
             assertThrows(IOException::class.java) {
-                upload.put(url, "Basic fixture", "photo".toRequestBody()).close()
+                upload.put(server.url("/file.jpg"), "Basic fixture", "photo".toRequestBody()).close()
             }
-            assertEquals(1, attempts.get())
+            val request = checkNotNull(server.takeRequest(1, TimeUnit.SECONDS))
+            assertEquals("PUT", request.method)
+            assertEquals("photo", request.body.readUtf8())
+            assertEquals(1, server.requestCount)
         }
     }
 
     @Test fun retryAfterZeroDoesNotRepeatPut() {
-        withServer({ exchange ->
-            exchange.responseHeaders.add("Retry-After", "0")
-            exchange.sendResponseHeaders(503, -1)
-        }) { upload, url, attempts ->
-            upload.put(url, "Basic fixture", "photo".toRequestBody()).use {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+            server.enqueue(MockResponse().setResponseCode(204))
+            val upload = WebDavUpload(OkHttpClient())
+            upload.put(server.url("/file.jpg"), "Basic fixture", "photo".toRequestBody()).use {
                 assertEquals(503, it.code)
             }
-            assertEquals(1, attempts.get())
+            assertEquals(1, server.requestCount)
         }
     }
 
-    @Test fun existingFilePreconditionIsPassedThrough() {
-        withServer({ exchange ->
-            val status = if (exchange.requestHeaders.getFirst("If-None-Match") == "*") 412 else 204
-            exchange.sendResponseHeaders(status, -1)
-        }) { upload, url, attempts ->
-            upload.put(url, "Basic fixture", "photo".toRequestBody()).use {
+    @Test fun existingFilePreconditionIsSentAndRejectionIsPassedThrough() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setResponseCode(412))
+            val upload = WebDavUpload(OkHttpClient())
+            upload.put(server.url("/file.jpg"), "Basic fixture", "photo".toRequestBody()).use {
                 assertEquals(412, it.code)
-                assertEquals("*", it.request.header("If-None-Match"))
             }
-            assertEquals(1, attempts.get())
-        }
-    }
-
-    private fun withServer(
-        respond: (HttpExchange) -> Unit,
-        test: (WebDavUpload, HttpUrl, AtomicInteger) -> Unit
-    ) {
-        val attempts = AtomicInteger()
-        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        server.createContext("/file.jpg") { exchange ->
-            try {
-                exchange.requestBody.use { it.readBytes() }
-                attempts.incrementAndGet()
-                respond(exchange)
-            } finally {
-                exchange.close()
-            }
-        }
-        server.start()
-        try {
-            test(WebDavUpload(OkHttpClient()), "http://127.0.0.1:${server.address.port}/file.jpg".toHttpUrl(), attempts)
-        } finally {
-            server.stop(0)
+            val request = checkNotNull(server.takeRequest(1, TimeUnit.SECONDS))
+            assertEquals("*", request.getHeader("If-None-Match"))
+            assertEquals(1, server.requestCount)
         }
     }
 }
