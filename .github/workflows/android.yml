@@ -264,13 +264,17 @@ jobs:
           adb shell input keyevent KEYCODE_WAKEUP
           adb shell wm dismiss-keyguard
           adb install -r app-release.apk
-          adb shell pm path com.gallerybridge.app.preview.signed | grep -F "package:"
-          adb shell monkey -p com.gallerybridge.app.preview.signed -c android.intent.category.LAUNCHER 1
+          PACKAGE="com.gallerybridge.app.preview.signed"
+          adb shell pm path "$PACKAGE" | grep -F "package:"
+          # A successful launch command alone does not establish that the app stayed alive.
+          bash .github/scripts/assert_signed_launch.sh "$PACKAGE" "$RUNNER_TEMP/gallery-install-launch.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-install-smoke-log
-          path: ${{ runner.temp }}/gallery-install-emulator.log
+          path: |
+            ${{ runner.temp }}/gallery-install-emulator.log
+            ${{ runner.temp }}/gallery-install-launch.log
 
   upgrade-smoke:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
@@ -406,7 +410,7 @@ jobs:
           adb install -r "candidate/GalleryBridge-v$NEW_VERSION-signed.apk"
           adb shell dumpsys package "$PACKAGE" | grep -F "versionCode=$NEW_CODE "
           verify_upgrade_data after-install
-          adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1
+          bash .github/scripts/assert_signed_launch.sh "$PACKAGE" "$RUNNER_TEMP/gallery-upgrade-launch.log"
           # SharedPreferences writes the recovered state asynchronously.
           for attempt in {1..20}; do
             if adb exec-out cat "$DATA/shared_prefs/transfer_state.xml" | grep -Fq 'name="running" value="false"'; then
@@ -420,7 +424,9 @@ jobs:
         if: always()
         with:
           name: android-upgrade-smoke-log
-          path: ${{ runner.temp }}/gallery-upgrade-emulator.log
+          path: |
+            ${{ runner.temp }}/gallery-upgrade-emulator.log
+            ${{ runner.temp }}/gallery-upgrade-launch.log
 
   publish-preview:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/codex/gallery-bridge-home'
