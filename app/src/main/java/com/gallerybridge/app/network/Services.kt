@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit
 
 object Services {
     private val http = OkHttpClient.Builder().followRedirects(true).build()
+    private val webDavUpload = WebDavUpload(http)
 
     /** Abort already-running OkHttp network calls when the user presses Stop. */
     fun cancelActiveTransfers() { http.dispatcher.cancelAll() }
@@ -628,9 +629,10 @@ object Services {
                         onBeforeDestinationWrite(index, item)
                         destinationWriteStarted = true
                         coroutineContext.ensureActive()
-                        mailCall(Request.Builder().url(destination)
-                            .header("Authorization", mailAuth)
-                            .put(local.asRequestBody(mime.toMediaType())).build()).use { response ->
+                        webDavUpload.put(destination, mailAuth, local.asRequestBody(mime.toMediaType())).use { response ->
+                            if (response.code == 412) throw WebDavResourcePolicy.UnsafeResource(
+                                "Файл появился после проверки. Mail WebDAV отклонил перезапись."
+                            )
                             if (response.code !in listOf(200, 201, 204)) {
                                 error("Mail WebDAV PUT: HTTP ${response.code}")
                             }
@@ -745,6 +747,12 @@ object Services {
                     stoppedReason = "Проверка Mail WebDAV выявила неопределённое или повреждённое состояние. " +
                         "Очередь остановлена без перезаписи существующих файлов."
                     if (failures.size < 20) failures.add(item.name + ": " + e.message)
+                    break
+                }
+                if (destinationWriteStarted) {
+                    stoppedReason = "Запись файла началась, но её результат не подтверждён. " +
+                        "Остальная очередь сохранена. Проверьте файл в месте назначения."
+                    if (failures.size < 20) failures.add(item.name + ": " + reason)
                     break
                 }
                 if (folderConflict) {
