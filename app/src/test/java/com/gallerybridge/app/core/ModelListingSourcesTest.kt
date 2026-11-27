@@ -127,19 +127,21 @@ class ModelListingSourcesTest {
         assertTrue(result.incomplete)
         assertEquals(1,result.errors.size)
     }
-    @Test fun completeDeclaredListingRequiresContiguousFullBatchesAndUniqueFinalRemainder() {
-        val pages = (1..22).map { n ->
-            val cards = (1..(if (n == 22) 12 else 20)).map { k ->
-                val id = (n - 1) * 20 + k
+    private fun apiPages(total: Int): List<ModelListingSources.Page> =
+        (1..total).chunked(20).mapIndexed { index, ids ->
+            val cards = ids.map { id ->
                 ModelListingSources.Publication("https://www.elitebabes.com/gallery-$id/",
-                    "Happy", "", "Example", sourceId = id.toString(),
-                    type = if (id <= 361) "photo" else "video")
+                    "Example gallery", "", "Example", sourceId = id.toString(),
+                    type = if (id <= total - 41) "photo" else "video")
             }
             val videos = cards.filter { it.type == "video" }
-            ModelListingSources.Page(ModelListingSources.Address("example", n), "Example",
+            ModelListingSources.Page(ModelListingSources.Address("example", index + 1), "Example",
                 cards.filter { it.type == "photo" }, videos.size, cards.size, emptyMap(),
-                true, 432, "https://www.elitebabes.com/gridapi/?content=model&nr=1&sort=oldest", videos)
+                true, total, "https://www.elitebabes.com/gridapi/?content=model&nr=1&sort=oldest", videos)
         }
+
+    @Test fun completeDeclaredListingRequiresContiguousUniqueBatches() {
+        val pages = apiPages(432)
         assertTrue(ModelListingSources.coversDeclaredListing(pages))
         assertFalse(ModelListingSources.combine(pages).incomplete)
         assertFalse(ModelListingSources.coversDeclaredListing(pages.dropLast(1)))
@@ -147,5 +149,24 @@ class ModelListingSourcesTest {
         val last = pages.last()
         assertFalse(ModelListingSources.coversDeclaredListing(pages.dropLast(1) +
             last.copy(videoCards = List(12) { last.videoCards.first() })))
+    }
+
+    @Test fun exactMultipleOfPageSizeFinishesWithoutAnotherApiBatch() {
+        val pages = apiPages(420)
+        assertEquals(21, pages.size)
+        assertEquals(20, pages.last().cardCount)
+        assertTrue(ModelListingSources.coversDeclaredListing(pages))
+        val result = ModelListingSources.combine(pages)
+        assertFalse(result.incomplete)
+        assertEquals(379, result.photos.size)
+        assertEquals(41, result.videoCards.size)
+        assertTrue(ModelListingSources.combine(pages.dropLast(1)).incomplete)
+        assertTrue(ModelListingSources.combine(pages, errors = listOf("Сбой сети")).incomplete)
+
+        val last = pages.last()
+        val repeated = last.copy(videoCards = listOf(pages[19].videoCards.last()) + last.videoCards.drop(1))
+        assertFalse(ModelListingSources.coversDeclaredListing(pages.dropLast(1) + repeated))
+        val missing = pages.filterIndexed { index, _ -> index != 12 }
+        assertFalse(ModelListingSources.coversDeclaredListing(missing + last))
     }
 }

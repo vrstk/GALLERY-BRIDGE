@@ -128,14 +128,15 @@ object ModelListingSources {
         return if (address(next) == Address(expected, number)) number to next else null
     }
 
-    // A short final batch corroborates the advertised count. Require the entire
-    // sequence and distinct publication URLs, including on a resumed scan.
+    // Confirm coverage by the advertised count. The last batch may be full
+    // when that count is a multiple of the page size. Require a contiguous
+    // sequence of distinct publications, including on a resumed scan.
     fun coversDeclaredListing(pages: List<Page>): Boolean {
         val first = pages.firstOrNull() ?: return false
         val expected = first.advertisedCount ?: return false
         if (pages.size < 2 || first.apiUrl.isBlank() || expected <= 0 ||
             pages.sumOf { it.cardCount } != expected ||
-            pages.last().cardCount !in 1 until first.cardCount) return false
+            pages.last().cardCount !in 1..first.cardCount) return false
         val urls = mutableSetOf<String>()
         val ids = mutableSetOf<String>()
         return pages.withIndex().all { (index, page) ->
