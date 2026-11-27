@@ -2,6 +2,7 @@ package com.gallerybridge.app.transfer
 
 import android.content.Context
 import com.gallerybridge.app.core.Kind
+import com.gallerybridge.app.core.GalleryCatalogStore
 import com.gallerybridge.app.core.GalleryKeys
 import com.gallerybridge.app.core.Media
 import com.gallerybridge.app.core.PreparedGallery
@@ -259,11 +260,28 @@ object QueueStore {
         val confirmed = confirmBlocked(current, index, readbackSha256)
         if (confirmed === current) return false
         save(context, confirmed)
-        try {
-            PhotoOutcomeLedger.remember(context, confirmed)
-        } catch (_: Exception) {
-            throw CheckpointFailure("Файл подтверждён и очередь сохранена. Журнал фотографий не обновился.")
+        // The queue is authoritative. Try all dependent stores so a failed
+        // history write does not suppress catalog or per-photo accounting.
+        val outcome = if (confirmed.remaining == 0) "Завершено" else "Частично"
+        val failedStores = buildList {
+            if (runCatching { PhotoOutcomeLedger.remember(context, confirmed) }.isFailure) {
+                add("журнал фотографий")
+            }
+            if (!runCatching {
+                    HistoryStore.record(context, confirmed, outcome, updateCatalog = false)
+                }.getOrDefault(false)) add("история")
+            val catalogSaved = runCatching {
+                if (confirmed.entries.any { it.galleryUrl.isNotBlank() }) {
+                    GalleryCatalogStore.recordBatchTransfer(context, confirmed)
+                } else if (confirmed.sourceUrl.isNotBlank()) {
+                    GalleryCatalogStore.recordTransfer(context, confirmed, outcome)
+                } else true
+            }.getOrDefault(false)
+            if (!catalogSaved) add("каталог")
         }
+        if (failedStores.isNotEmpty()) throw CheckpointFailure(
+            "Файл подтверждён и очередь сохранена. Не удалось обновить: ${failedStores.joinToString()}."
+        )
         return true
     }
 

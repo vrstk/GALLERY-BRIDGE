@@ -1415,6 +1415,8 @@ class MainActivity : ComponentActivity() {
                 auditReport = "Файл недоступен для проверки или превышает 32 МиБ."
             } finally {
                 savedQueue = QueueStore.load(applicationContext)
+                history = HistoryStore.load(applicationContext)
+                catalog = GalleryCatalogStore.load(applicationContext)
                 auditing = false
                 auditProgress = ""
             }

@@ -66,7 +66,10 @@ object HistoryStore {
         return planned
     }
 
-    @Synchronized fun record(context: Context, queue: QueueStore.Snapshot, outcome: String): Boolean {
+    @Synchronized fun record(
+        context: Context, queue: QueueStore.Snapshot, outcome: String,
+        updateCatalog: Boolean = true
+    ): Boolean {
         val now = System.currentTimeMillis()
         val list = listOf(
             Record(
@@ -96,7 +99,7 @@ object HistoryStore {
         val persisted = context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putString(KEY, arr.toString()).commit()
         // The catalog is supplementary: its failure must not invalidate durable history.
-        if (persisted && queue.sourceUrl.isNotBlank()) {
+        if (persisted && updateCatalog && queue.sourceUrl.isNotBlank()) {
             runCatching { GalleryCatalogStore.recordTransfer(context, queue, outcome) }
         }
         return persisted

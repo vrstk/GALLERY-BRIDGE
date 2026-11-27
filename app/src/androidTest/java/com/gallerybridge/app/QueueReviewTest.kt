@@ -1,7 +1,10 @@
 package com.gallerybridge.app
 
+import android.content.Context
+import com.gallerybridge.app.core.GalleryCatalogStore
 import com.gallerybridge.app.core.Kind
 import com.gallerybridge.app.core.Media
+import com.gallerybridge.app.transfer.HistoryStore
 import com.gallerybridge.app.transfer.QueueStore
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -22,11 +25,15 @@ class QueueReviewTest {
         val id = 352039L
         val photo = Media("https://example.com/interrupted.jpg", "interrupted.jpg", Kind.PHOTO, "test")
         val next = photo.copy(name = "next.jpg")
+        val source = "https://example.com/gallery-review-352039"
+        val historyPrefs = compose.activity.getSharedPreferences("gallery_bridge_history", Context.MODE_PRIVATE)
+        val previousHistory = historyPrefs.getString("records", null)
         compose.runOnIdle {
             QueueStore.save(compose.activity, QueueStore.Snapshot(
                 id = id, model = "Тест", title = "Прерванная запись", date = "",
                 target = "Mail WebDAV", root = "Models", account = "audit@example.com",
-                entries = listOf(QueueStore.Entry(photo, "PENDING"), QueueStore.Entry(next, "PENDING"))
+                entries = listOf(QueueStore.Entry(photo, "PENDING"), QueueStore.Entry(next, "PENDING")),
+                sourceUrl = source
             ))
             QueueStore.beginWrite(compose.activity, id, 0, photo, "a".repeat(64))
             compose.activity.getSharedPreferences(
@@ -44,13 +51,27 @@ class QueueReviewTest {
                 ).getBoolean(com.gallerybridge.app.transfer.TransferService.KEY_RUNNING, false))
                 val digest = "a".repeat(64)
                 assertEquals(digest, restored.entries[0].contentSha256)
+                assertTrue(HistoryStore.record(compose.activity, restored, "Прервано"))
                 assertTrue(!QueueStore.confirmBlockedReadback(compose.activity, restored, 0, "b".repeat(64)))
+                assertEquals("Прервано", HistoryStore.load(compose.activity).single { it.id == id }.outcome)
                 assertTrue(QueueStore.confirmBlockedReadback(compose.activity, restored, 0, digest))
                 assertTrue(!QueueStore.confirmBlockedReadback(compose.activity, restored, 0, digest))
                 assertEquals(listOf("DONE", "PENDING"), QueueStore.load(compose.activity)!!.entries.map { it.state })
+                val record = HistoryStore.load(compose.activity).single { it.id == id }
+                assertEquals(1, record.uploaded)
+                assertEquals(0, record.failed)
+                assertEquals("Частично", record.outcome)
+                val gallery = GalleryCatalogStore.load(compose.activity).single { it.url == source }
+                assertEquals(1, gallery.completed)
+                assertEquals(2, gallery.total)
+                assertEquals("Частично", gallery.outcome)
             }
         } finally {
-            compose.runOnIdle { QueueStore.clearIfId(compose.activity, id) }
+            compose.runOnIdle {
+                QueueStore.clearIfId(compose.activity, id)
+                GalleryCatalogStore.remove(compose.activity, source)
+                historyPrefs.edit().putString("records", previousHistory).commit()
+            }
         }
     }
 
