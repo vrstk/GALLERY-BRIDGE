@@ -55,8 +55,11 @@ object QueueStore {
     private const val INTERRUPTED_WRITE =
         "Запись могла прерваться. Проверьте файл в назначении перед повтором."
 
+    private val knownStates = setOf("PENDING", "FAILED", "DONE", "SKIPPED", "BLOCKED", WRITING)
+
     internal fun restoreState(state: String, classified: Boolean): String =
-        if (state == WRITING || (state == "FAILED" && !classified)) "BLOCKED" else state
+        if (state !in knownStates || state == WRITING || (state == "FAILED" && !classified))
+            "BLOCKED" else state
 
     /** Persist this transition before the first destination write, never after it. */
     internal fun markWriting(snapshot: Snapshot, index: Int, media: Media, digest: String): Snapshot {
@@ -113,13 +116,16 @@ object QueueStore {
             val entries = buildList {
                 for (i in 0 until list.length()) {
                     val x = list.getJSONObject(i)
+                    val savedState = x.optString("state", "")
                     add(Entry(Media(x.getString("url"), x.getString("name"),
                         Kind.valueOf(x.getString("kind")), x.optString("source"), x.optString("referrer")),
-                        if (preserveWriting && x.optString("state") == WRITING) WRITING
-                        else restoreState(x.optString("state", "PENDING"), x.has("failureReason")),
+                        if (preserveWriting && savedState == WRITING) WRITING
+                        else restoreState(savedState, x.has("failureReason")),
                         when {
-                            x.optString("state") == WRITING -> INTERRUPTED_WRITE
-                            x.optString("state") == "FAILED" && !x.has("failureReason") ->
+                            savedState !in knownStates ->
+                                "Состояние файла в сохранённой очереди неизвестно. Проверьте назначение перед повтором."
+                            savedState == WRITING -> INTERRUPTED_WRITE
+                            savedState == "FAILED" && !x.has("failureReason") ->
                                 "Сбой из предыдущей версии. Проверьте назначение перед повтором."
                             else -> x.optString("failureReason").take(240)
                         },

@@ -169,6 +169,16 @@ class QueueStoreTest {
         assertEquals("PENDING", QueueStore.restoreState("PENDING", false))
     }
 
+    @Test fun missingOrUnrecognizedStateRequiresManualReview() {
+        for (state in listOf("", "null", "UNKNOWN", "pending", "DONE ")) {
+            assertEquals("BLOCKED", QueueStore.restoreState(state, false))
+            assertEquals("BLOCKED", QueueStore.restoreState(state, true))
+        }
+        for (state in listOf("PENDING", "FAILED", "DONE", "SKIPPED", "BLOCKED")) {
+            assertEquals(state, QueueStore.restoreState(state, true))
+        }
+    }
+
     @Test fun safeFailureCanBeRetriedAndClearsReason() {
         val failed = QueueStore.applyItemResult(queue(photo), 0, photo,
             "FAILED", "Временная ошибка сети")
