@@ -44,7 +44,15 @@ TRANSFER_STATUS = "Передача выполняется в фоне"
 RECOVERED_STATUS = "Передача прервана системой"
 
 SETTINGS = {"model": MODEL, "dark": False, "mailRoot": ROOT, "transferTarget": TARGET}
+# Existing records from an earlier queue must survive independently of the active queue.
+PHOTO_OUTCOMES = [
+    {"token": hashlib.sha256(b"previous photo token").hexdigest(), "state": "DONE",
+     "at": UPDATED_AT, "contentSha256": hashlib.sha256(b"previous photo bytes").hexdigest()},
+    {"token": hashlib.sha256(b"skipped photo token").hexdigest(), "state": "SKIPPED",
+     "at": UPDATED_AT - 1, "contentSha256": ""},
+]
 DATASETS = {
+    "gallery_bridge_photo_outcomes_v1.xml": ("records", PHOTO_OUTCOMES),
     "gallery_bridge_catalog_v1.xml": ("galleries", CATALOG),
     "gallery_bridge_history.xml": ("records", HISTORY),
     "gallery_bridge_queue.xml": ("snapshot", QUEUE),
@@ -66,6 +74,12 @@ def write_fixtures(directory):
     ET.SubElement(transfer, "string", name="status").text = TRANSFER_STATUS
     ET.SubElement(transfer, "long", name="revision", value=str(UPDATED_AT))
     ET.ElementTree(transfer).write(directory / "transfer_state.xml", encoding="utf-8", xml_declaration=True)
+
+    updater = ET.Element("map")
+    ET.SubElement(updater, "boolean", name="automatic", value="false")
+    for name in ("lastSuccess", "lastAttempt"):
+        ET.SubElement(updater, "long", name=name, value=str(UPDATED_AT))
+    ET.ElementTree(updater).write(directory / "gallery_bridge_updater.xml", encoding="utf-8", xml_declaration=True)
 
     for filename, (name, data) in DATASETS.items():
         prefs = ET.Element("map")
@@ -96,6 +110,13 @@ def verify_fixtures(directory, after_launch):
     for filename, (name, data) in DATASETS.items():
         stored = read_prefs(filename).findtext(f"./string[@name='{name}']")
         check(json.loads(stored) if stored else None, data, filename)
+
+    updater = read_prefs("gallery_bridge_updater.xml")
+    automatic = updater.find("./boolean[@name='automatic']")
+    check(automatic.get("value") if automatic is not None else None, "false", "updater opt-out")
+    for name in ("lastSuccess", "lastAttempt"):
+        value = updater.find(f"./long[@name='{name}']")
+        check(value.get("value") if value is not None else None, str(UPDATED_AT), f"updater {name}")
 
     transfer = read_prefs("transfer_state.xml")
     running = transfer.find("./boolean[@name='running']")

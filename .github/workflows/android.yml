@@ -381,7 +381,7 @@ jobs:
           adb push "$FIXTURES/expected/upgrade-sentinel.txt" /data/local/tmp/upgrade-sentinel.txt
           adb shell cp /data/local/tmp/upgrade-sentinel.txt "$DATA/files/upgrade-sentinel.txt"
           adb shell chown "$APP_UID:$APP_UID" "$DATA/files/upgrade-sentinel.txt"
-          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml transfer_state.xml)
+          PREFS=(settings.xml gallery_bridge_catalog_v1.xml gallery_bridge_history.xml gallery_bridge_queue.xml transfer_state.xml gallery_bridge_photo_outcomes_v1.xml gallery_bridge_updater.xml)
           for name in "${PREFS[@]}"; do
             adb push "$FIXTURES/expected/$name" "/data/local/tmp/$name"
             adb shell cp "/data/local/tmp/$name" "$DATA/shared_prefs/$name"
